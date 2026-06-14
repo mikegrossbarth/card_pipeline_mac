@@ -1,0 +1,24 @@
+{
+  "companies": [
+    {
+      "name": "Arena Club",
+      "value_source": "comps",
+      "rules": "/Users/yourname/Library/CloudStorage/GoogleDrive-your.email@gmail.com/My Drive/CARD_PIPELINE/ASSIGNMENT RULES/arena-club-rules.xlsx",
+      "payout": "/Users/yourname/Library/CloudStorage/GoogleDrive-your.email@gmail.com/My Drive/CARD_PIPELINE/ASSIGNMENT RULES/arena-club-payout.xlsx"
+    },
+    {
+      "name": "Courtyard",
+      "value_source": "card_ladder",
+      "rules": "/Users/yourname/Library/CloudStorage/GoogleDrive-your.email@gmail.com/My Drive/CARD_PIPELINE/ASSIGNMENT RULES/courtyard-rules.txt",
+      "payout": {
+        "path": "/Users/yourname/Library/CloudStorage/GoogleDrive-your.email@gmail.com/My Drive/CARD_PIPELINE/ASSIGNMENT RULES/courtyard-payout.csv"
+      }
+    },
+    {
+      "name": "ALT",
+      "value_source": "comps",
+      "accept_all": true,
+      "rate": 0.76
+    }
+  ]
+}

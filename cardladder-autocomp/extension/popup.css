@@ -1,0 +1,69 @@
+body {
+  margin: 0;
+  width: 360px;
+  font: 13px Arial, sans-serif;
+  color: #172033;
+  background: #f6f8fb;
+}
+
+main {
+  padding: 14px;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+input,
+button {
+  font: inherit;
+}
+
+#queueFile {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+button {
+  border: 1px solid #b8c2d1;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #edf3ff;
+}
+
+label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+label input {
+  width: 90px;
+}
+
+pre {
+  min-height: 120px;
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  white-space: pre-wrap;
+  background: #ffffff;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+}
