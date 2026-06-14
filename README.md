@@ -106,6 +106,8 @@ Use the `Receive` tab for physically receiving cards and source matching. Use th
 
 Assignment companies are local in `assignment_companies.json`. The manager supports manual rules, local files, Google Keep exports, workbook/CSV files, Google Sheets through OAuth, manual payout tiers, payout files, and linked `Payouts` tabs.
 
+The company list in Assignment Rules can be filtered by name and by All, Active, or Inactive status.
+
 Example Mac source paths:
 
 ```json

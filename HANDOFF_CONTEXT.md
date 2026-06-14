@@ -22,6 +22,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - Updated `.env.example` and example company paths to macOS Google Drive paths.
 - Updated Card Ladder extension docs to use POSIX-style paths.
 - Updated local identity fallback to use `LUCAS_DISPLAY_NAME`, then `$USER`, then `$USERNAME`.
+- Added Assignment Rules company list filters for name, active companies, and inactive companies.
 - Removed copied generated `work/` cache content and Python cache folders from the Mac copy.
 
 ## Project Layout

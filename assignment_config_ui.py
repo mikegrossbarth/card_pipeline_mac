@@ -65,6 +65,8 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.payout_rows: list[dict[str, tk.StringVar]] = []
 
         self.company_name = tk.StringVar()
+        self.company_filter_text = tk.StringVar()
+        self.company_filter_state = tk.StringVar(value="all")
         self.use_card_ladder_value = tk.BooleanVar(value=False)
         self.rule_source_mode = tk.StringVar(value="manual")
         self.rule_source_path = tk.StringVar()
@@ -78,6 +80,7 @@ class AssignmentRulesDialog(tk.Toplevel):
 
         self._configure_styles()
         self._build_ui()
+        self.company_filter_text.trace_add("write", lambda *_args: self._refresh_company_list())
         self._refresh_company_list()
         if self.companies:
             self._select_company(0)
@@ -129,10 +132,23 @@ class AssignmentRulesDialog(tk.Toplevel):
         side = ttk.Frame(shell, style="AssignPanel.TFrame", padding=12)
         side.grid(row=1, column=0, sticky="ns", padx=(0, 12))
         ttk.Label(side, text="Companies", style="AssignTitle.TLabel").pack(anchor=tk.W)
+        filter_entry = ttk.Entry(side, textvariable=self.company_filter_text, style="Assign.TEntry")
+        filter_entry.pack(fill=tk.X, pady=(8, 6))
+        filter_modes = ttk.Frame(side, style="AssignPanel.TFrame")
+        filter_modes.pack(fill=tk.X)
+        for value, label in (("all", "All"), ("active", "Active"), ("inactive", "Inactive")):
+            ttk.Radiobutton(
+                filter_modes,
+                text=label,
+                value=value,
+                variable=self.company_filter_state,
+                command=self._refresh_company_list,
+                style="Assign.TRadiobutton",
+            ).pack(side=tk.LEFT, padx=(0, 8))
         self.company_list = tk.Frame(
             side,
             width=280,
-            height=620,
+            height=560,
             bg="#1f1f1f",
             highlightthickness=1,
             highlightbackground="#333333",
@@ -326,15 +342,42 @@ class AssignmentRulesDialog(tk.Toplevel):
         for child in self.company_list.winfo_children():
             child.destroy()
         self.company_rows = []
+        visible_count = 0
         for index, company in enumerate(self.companies):
+            if not self._company_matches_filter(company):
+                continue
             self._add_company_row(index, company)
+            visible_count += 1
+        if not visible_count:
+            empty_label = tk.Label(
+                self.company_list,
+                text="No matching companies",
+                bg="#1f1f1f",
+                fg="#b3b3b3",
+                anchor=tk.W,
+                padx=10,
+                pady=10,
+            )
+            empty_label.pack(fill=tk.X)
+
+    def _company_matches_filter(self, company: dict[str, Any]) -> bool:
+        needle = self.company_filter_text.get().strip().lower()
+        if needle and needle not in str(company.get("name") or "Untitled").lower():
+            return False
+        state = self.company_filter_state.get()
+        active = company.get("active") is not False
+        if state == "active" and not active:
+            return False
+        if state == "inactive" and active:
+            return False
+        return True
 
     def _add_company_row(self, index: int, company: dict[str, Any]) -> None:
         active = company.get("active") is not False
         selected = index == self.selected_index
         bg = "#242424" if selected else "#1f1f1f"
         row = tk.Frame(self.company_list, bg=bg, padx=5, pady=4)
-        row.pack(fill=tk.X, padx=4, pady=(4 if index == 0 else 0, 0))
+        row.pack(fill=tk.X, padx=4, pady=(4 if not self.company_rows else 0, 0))
         active_button = tk.Button(
             row,
             text="Active" if active else "Inactive",
