@@ -198,6 +198,39 @@ class CYLookupTests(unittest.TestCase):
         self.assertEqual(row.cy_value, 87.5)
         self.assertIn("CY value: $87.50", row.notes)
 
+    def test_cy_lookup_waits_until_cardladder_finishes(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="11111111",
+            grader="PSA",
+            card_title="Card One PSA 10",
+        )
+        state.set_rows([row])
+        state.cardladder_running = True
+
+        with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
+                patch.object(bridge_server, "lookup_cy_buy_price", return_value=(87.5, "ok")) as lookup:
+            state.post_cardladder_result(
+                {
+                    "excelRow": 2,
+                    "certNumber": "11111111",
+                    "value": "$100",
+                    "status": "ok",
+                    "ocr": {"comps": [{"price": "$90", "date_sold": "2026-06-01"}]},
+                }
+            )
+            time.sleep(0.05)
+            lookup.assert_not_called()
+            self.assertIsNone(row.cy_value)
+
+            state.finish_cardladder({})
+            deadline = time.time() + 2
+            while row.cy_value is None and time.time() < deadline:
+                time.sleep(0.01)
+
+        self.assertEqual(row.cy_value, 87.5)
+
     def test_cy_lookup_is_disabled_off_mac(self) -> None:
         self.assertFalse(bridge_server.cy_lookup_enabled("win32"))
         self.assertFalse(bridge_server.cy_lookup_enabled("linux"))

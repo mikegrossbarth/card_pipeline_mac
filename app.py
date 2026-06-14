@@ -18,6 +18,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 ROOT = Path(__file__).resolve().parent
+APP_DEBUG_LOG = ROOT / "work" / "lucas-debug.log"
 ENGINE_DIR = ROOT / "comp_engine"
 if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
@@ -158,6 +159,16 @@ def load_app_settings() -> dict[str, object]:
 
 def save_app_settings(settings: dict[str, object]) -> None:
     atomic_write_json(SETTINGS_PATH, settings)
+
+
+def app_debug_log(message: str) -> None:
+    try:
+        APP_DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with APP_DEBUG_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(f"[{stamp}] {message}\n")
+    except Exception:
+        pass
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
@@ -310,6 +321,7 @@ COLUMN_WIDTHS = {
 class CardPipelineApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
+        app_debug_log("app_start")
         self.title(f"{APP_TITLE} - {APP_SUBTITLE}")
         self.geometry("1420x820")
         self.minsize(1120, 680)
@@ -330,6 +342,7 @@ class CardPipelineApp(tk.Tk):
         self.state.on_update = lambda: self.events.put("comp_refresh")
         self.bridge = BridgeServer(self.state)
         self.bridge.start()
+        app_debug_log(f"bridge_started started={self.bridge.started} port={self.bridge.port} error={self.bridge.error}")
         self.bridge_status_text = (
             f"Card Ladder bridge running at http://127.0.0.1:{self.bridge.port}"
             if self.bridge.started
@@ -3071,11 +3084,14 @@ class CardPipelineApp(tk.Tk):
         return ""
 
     def run_all_comps(self) -> None:
+        app_debug_log(f"run_all_comps_clicked rows={len(self.state.rows)}")
         if not self.state.rows:
+            app_debug_log("run_all_comps_blocked reason=no_rows")
             messagebox.showinfo("No comp sheet loaded", "Choose and load a working sheet in the Comp tab first.")
             return
         extension_warning = self._cardladder_extension_warning()
         if extension_warning:
+            app_debug_log("run_all_comps_blocked reason=extension_warning")
             messagebox.showwarning("Reload Card Ladder extension", extension_warning)
             self.status_var.set("Reload the Card Ladder Chrome extension before comping.")
             return
@@ -3090,6 +3106,7 @@ class CardPipelineApp(tk.Tk):
                 message = "No rows have both a cert number and company ready for Card Ladder."
             else:
                 message = "No rows are missing comp data. Switch Run Scope to Recomp All if you want to refresh every row."
+            app_debug_log(f"run_all_comps_blocked reason=no_eligible requery_all={requery_all}")
             messagebox.showinfo("No eligible rows", message)
             self.status_var.set(message)
             return
@@ -3099,6 +3116,7 @@ class CardPipelineApp(tk.Tk):
         self._refresh_table()
         self.after(12000, lambda queued_command_id=command_id: self._warn_if_extension_not_checked_in(queued_command_id))
         self.status_var.set(f"Queued {len(eligible)} Card Ladder row(s) using {self.comp_scope_label.get()} with {self.comp_strategy_label.get()} as command #{command_id}.")
+        app_debug_log(f"run_all_comps_queued command={command_id} eligible={len(eligible)}")
 
     def _warn_if_extension_not_checked_in(self, command_id: int) -> None:
         extension_warning = self._cardladder_extension_warning()

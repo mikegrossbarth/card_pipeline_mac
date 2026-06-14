@@ -23,6 +23,7 @@ BRIDGE_VERSION = "2026-06-01-cardladder-result-log-v3"
 EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-10-no-results-ocr-fallback-v3"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
+DEBUG_LOG = DEBUG_DIR / "bridge.log"
 COMP_STRATEGY_AVERAGE = "average_last_5"
 COMP_STRATEGY_HIGH = "highest_last_5"
 COMP_STRATEGY_LOW = "lowest_last_5"
@@ -55,6 +56,7 @@ class BridgeState:
         self.comp_strategy = COMP_STRATEGY_AVERAGE
         self.on_update: Callable[[], None] | None = None
         self.cy_lookup_inflight: set[int] = set()
+        self.cy_lookup_pending: set[int] = set()
 
     def set_rows(self, rows: list[WorkbookRow]) -> None:
         with self.lock:
@@ -86,6 +88,7 @@ class BridgeState:
             if not queue:
                 self.command = None
                 self.cardladder_running = False
+                debug_log(f"start_all_comps command={self.command_id} eligible=0 requery_all={requery_all}")
                 return self.command_id
             self.command = {
                 "id": self.command_id,
@@ -96,6 +99,7 @@ class BridgeState:
             }
             self.cardladder_running = True
             self.cancel_requested = False
+            debug_log(f"start_all_comps command={self.command_id} queued={len(queue)} requery_all={requery_all}")
             return self.command_id
 
     def request_cancel(self) -> None:
@@ -117,6 +121,12 @@ class BridgeState:
                 self.extension_manifest_version = metadata.get("manifestVersion") or self.extension_manifest_version
                 self.extension_name = metadata.get("extensionName") or self.extension_name
                 self.extension_url = metadata.get("extensionUrl") or self.extension_url
+                debug_log(
+                    "extension_poll "
+                    f"version={self.extension_version or 'unknown'} "
+                    f"manifest={self.extension_manifest_version or 'unknown'} "
+                    f"name={self.extension_name or 'unknown'}"
+                )
             return {"instanceId": self.instance_id, "command": self.command}
 
     def acknowledge_command(self, command_id: int) -> None:
@@ -144,25 +154,42 @@ class BridgeState:
                 target_row = next((row for row in self.rows if row.cert_number == cert), None)
             if target_row is not None:
                 self._apply_cardladder_result_to_row(target_row, result)
-                cy_lookup = self._prepare_cy_lookup(target_row)
+                cy_lookup = self._queue_or_prepare_cy_lookup(target_row)
+                debug_log(f"cardladder_result row={target_row.excel_row} cert={target_row.cert_number} cy_lookup={bool(cy_lookup)}")
+            else:
+                debug_log(f"cardladder_result no_target excel_row={excel_row} cert={cert}")
         if cy_lookup:
             threading.Thread(target=self._cy_lookup_worker, args=cy_lookup, daemon=True).start()
         if self.on_update:
             self.on_update()
 
-    def _prepare_cy_lookup(self, row: WorkbookRow) -> tuple[int, str, str] | None:
+    def _cy_lookup_candidate(self, row: WorkbookRow) -> tuple[int, str, str] | None:
         if not cy_lookup_enabled():
+            debug_log(f"cy_lookup_skip row={row.excel_row} reason=disabled")
             return None
         if row.cy_value is not None:
+            debug_log(f"cy_lookup_skip row={row.excel_row} reason=has_value")
             return None
         if row.excel_row in self.cy_lookup_inflight:
+            debug_log(f"cy_lookup_skip row={row.excel_row} reason=inflight")
             return None
         cert_number = str(row.cert_number or "").strip()
         slab_type = clean_grader(row.grader)
         if not cert_number or slab_type not in {"PSA", "BGS", "CGC", "SGC"}:
+            debug_log(f"cy_lookup_skip row={row.excel_row} reason=missing_or_unsupported cert={cert_number} slab={slab_type}")
+            return None
+        return row.excel_row, cert_number, slab_type
+
+    def _queue_or_prepare_cy_lookup(self, row: WorkbookRow) -> tuple[int, str, str] | None:
+        candidate = self._cy_lookup_candidate(row)
+        if candidate is None:
+            return None
+        if self.cardladder_running:
+            self.cy_lookup_pending.add(row.excel_row)
+            debug_log(f"cy_lookup_pending row={row.excel_row} cert={row.cert_number}")
             return None
         self.cy_lookup_inflight.add(row.excel_row)
-        return row.excel_row, cert_number, slab_type
+        return candidate
 
     def _cy_lookup_worker(self, excel_row: int, cert_number: str, slab_type: str) -> None:
         value = None
@@ -171,6 +198,7 @@ class BridgeState:
             value, message = lookup_cy_buy_price(cert_number, slab_type)
         except Exception as error:
             message = str(error)
+            debug_log(f"cy_lookup_error row={excel_row} cert={cert_number} slab={slab_type} error={message}")
         with self.lock:
             self.cy_lookup_inflight.discard(excel_row)
             row = next((candidate for candidate in self.rows if candidate.excel_row == excel_row), None)
@@ -178,8 +206,10 @@ class BridgeState:
                 if value is not None:
                     row.cy_value = value
                     row.notes = append_note(row.notes, f"CY value: ${value:,.2f}")
+                    debug_log(f"cy_lookup_ok row={excel_row} cert={cert_number} value={value}")
                 elif message:
                     row.notes = append_note(row.notes, f"CY lookup: {message}")
+                    debug_log(f"cy_lookup_unavailable row={excel_row} cert={cert_number} message={message}")
         if self.on_update:
             self.on_update()
 
@@ -238,12 +268,27 @@ class BridgeState:
         row.notes = str(result.get("error") or result.get("status") or "")
 
     def finish_cardladder(self, payload: dict) -> None:
+        cy_lookups: list[tuple[int, str, str]] = []
         with self.lock:
             self.cardladder_running = False
             self.cancel_requested = False
             for row in self.rows:
                 if row.status == "Queued":
                     row.status = "Card Ladder not found"
+            pending_rows = [
+                row
+                for row in self.rows
+                if row.excel_row in self.cy_lookup_pending
+            ]
+            self.cy_lookup_pending.clear()
+            for row in pending_rows:
+                candidate = self._cy_lookup_candidate(row)
+                if candidate is not None:
+                    self.cy_lookup_inflight.add(row.excel_row)
+                    cy_lookups.append(candidate)
+            debug_log(f"finish_cardladder pending_cy={len(cy_lookups)}")
+        for cy_lookup in cy_lookups:
+            threading.Thread(target=self._cy_lookup_worker, args=cy_lookup, daemon=True).start()
         if self.on_update:
             self.on_update()
 
@@ -312,6 +357,16 @@ def append_note(existing: str, note: str) -> str:
     if not note or note in existing:
         return existing
     return f"{existing}; {note}" if existing else note
+
+
+def debug_log(message: str) -> None:
+    try:
+        DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with DEBUG_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(f"[{stamp}] {message}\n")
+    except Exception:
+        pass
 
 
 def is_blank_card_title(card_title: str, grader: str) -> bool:
