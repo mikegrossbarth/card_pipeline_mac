@@ -76,6 +76,14 @@ COMPS_AVERAGE_HEADERS = (
     "compsaverage",
     "compaverage",
 )
+CY_VALUE_HEADERS = (
+    "cyvalue",
+    "cybuyprice",
+    "courtyardvalue",
+    "courtyardbuyprice",
+    "cardyardvalue",
+    "cardyardbuyprice",
+)
 COMP_DETAILS_HEADERS = ("cardladdercompdetails", "compdetails", "cardladdercompsdetail", "compsdetails")
 BEST_COMPANY_HEADERS = ("bestcompany", "assignedcompany", "companyassignment")
 ESTIMATED_PAYOUT_HEADERS = ("estimatedpayout", "estpayout", "payout")
@@ -89,6 +97,7 @@ SIMPLE_HEADER_ALIASES = (
     + PURCHASE_PRICE_HEADERS
     + CARD_LADDER_VALUE_HEADERS
     + COMPS_AVERAGE_HEADERS
+    + CY_VALUE_HEADERS
     + BEST_COMPANY_HEADERS
     + ESTIMATED_PAYOUT_HEADERS
 )
@@ -109,6 +118,7 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
             purchase_price = parse_money(_cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, 3))
             card_ladder_value = parse_money(_cell_by_header(sheet, row_index, headers, CARD_LADDER_VALUE_HEADERS, None))
             comps_average = parse_money(_cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, None))
+            cy_value = parse_money(_cell_by_header(sheet, row_index, headers, CY_VALUE_HEADERS, None))
             comp_details = clean_part(_cell_by_header(sheet, row_index, headers, COMP_DETAILS_HEADERS, None))
             best_company = clean_part(_cell_by_header(sheet, row_index, headers, BEST_COMPANY_HEADERS, None))
             estimated_payout = parse_money(_cell_by_header(sheet, row_index, headers, ESTIMATED_PAYOUT_HEADERS, None))
@@ -126,6 +136,7 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
                     "purchase_price": purchase_price,
                     "card_ladder_value": card_ladder_value,
                     "card_ladder_comps_average": comps_average,
+                    "cy_value": cy_value,
                     "card_ladder_comps": comp_details,
                     "best_company": best_company,
                     "estimated_payout": estimated_payout,
@@ -224,6 +235,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
         "Purchase Price",
         "Card Ladder Value",
         "Comps",
+        "CY Value",
         "Card Ladder Comp Details",
         "Card Ladder Screenshot",
         "Best Company",
@@ -241,6 +253,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
                 row.existing_value,
                 row.card_ladder_value,
                 row.card_ladder_comps_average,
+                row.cy_value,
                 row.card_ladder_comps,
                 row.card_ladder_screenshot,
                 row.best_company,
@@ -257,7 +270,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
         cell.font = header_font
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    widths = [18, 22, 62, 16, 18, 14, 58, 42, 18, 18, 20, 38]
+    widths = [18, 22, 62, 16, 18, 14, 14, 58, 42, 18, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[chr(64 + index)].width = width
     workbook.save(path)
@@ -314,6 +327,7 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
         "Purchase Price",
         "Card Ladder Value",
         "Comps",
+        "CY Value",
         "Best Company",
         "Estimated Payout",
         "Status",
@@ -322,6 +336,7 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
     if path.exists():
         workbook = load_workbook(path)
         sheet = workbook.active
+        ensure_company_sheet_cy_column(sheet)
         existing_certs = existing_sheet_certs(sheet)
     else:
         workbook = Workbook()
@@ -354,6 +369,7 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
                 purchase_price,
                 getattr(row, "card_ladder_value", None),
                 getattr(row, "card_ladder_comps_average", None),
+                getattr(row, "cy_value", None),
                 getattr(row, "best_company", ""),
                 sale_price,
                 getattr(row, "status", ""),
@@ -375,6 +391,7 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
                 "sale_price": sale_price,
                 "card_ladder_value": parse_money(getattr(row, "card_ladder_value", None)),
                 "comps": parse_money(getattr(row, "card_ladder_comps_average", None)),
+                "cy_value": parse_money(getattr(row, "cy_value", None)),
                 "best_company": clean_part(getattr(row, "best_company", "")),
                 "status": clean_part(getattr(row, "status", "")),
                 "notes": clean_part(getattr(row, "notes", "")),
@@ -409,9 +426,29 @@ def style_company_sheet_header(sheet) -> None:
         cell.fill = header_fill
         cell.font = header_font
     sheet.freeze_panes = "A2"
-    widths = [14, 28, 22, 22, 14, 62, 16, 18, 14, 18, 18, 20, 38]
+    widths = [14, 28, 22, 22, 14, 62, 16, 18, 14, 14, 18, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
+
+
+def ensure_company_sheet_cy_column(sheet) -> None:
+    headers = _header_map_for_row(sheet, 1)
+    if any(header in headers for header in CY_VALUE_HEADERS):
+        return
+    comps_col = None
+    for header in COMPS_AVERAGE_HEADERS:
+        if header in headers:
+            comps_col = headers[header]
+            break
+    if not comps_col:
+        return
+    insert_at = comps_col + 1
+    sheet.insert_cols(insert_at)
+    cell = sheet.cell(1, insert_at)
+    cell.value = "CY Value"
+    cell.fill = PatternFill("solid", fgColor="111827")
+    cell.font = Font(color="FFFFFF", bold=True)
+    sheet.column_dimensions[cell.column_letter].width = 14
 
 
 def read_company_profit_records(directory: Path) -> list[dict[str, Any]]:
@@ -449,9 +486,10 @@ def read_company_profit_records(directory: Path) -> list[dict[str, Any]]:
                         "sale_price": sale,
                         "card_ladder_value": parse_money(_cell_by_header(sheet, row_index, headers, CARD_LADDER_VALUE_HEADERS, 8)),
                         "comps": parse_money(_cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, 9)),
-                        "best_company": clean_part(_cell_by_header(sheet, row_index, headers, BEST_COMPANY_HEADERS, 10)) or company,
-                        "status": clean_part(_cell_by_header(sheet, row_index, headers, STATUS_HEADERS, 12)),
-                        "notes": clean_part(_cell_by_header(sheet, row_index, headers, NOTES_HEADERS, 13)),
+                        "cy_value": parse_money(_cell_by_header(sheet, row_index, headers, CY_VALUE_HEADERS, 10)),
+                        "best_company": clean_part(_cell_by_header(sheet, row_index, headers, BEST_COMPANY_HEADERS, 11)) or company,
+                        "status": clean_part(_cell_by_header(sheet, row_index, headers, STATUS_HEADERS, 13)),
+                        "notes": clean_part(_cell_by_header(sheet, row_index, headers, NOTES_HEADERS, 14)),
                     }
                 )
         finally:

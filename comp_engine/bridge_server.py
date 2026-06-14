@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
+import sys
 import threading
 import time
 import uuid
@@ -11,7 +13,10 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
+from urllib.request import urlopen
+from urllib.parse import urlencode
 
 from cardladder_ocr import extract_cl_value_from_data_url
 from workbook_io import WorkbookRow
@@ -20,6 +25,8 @@ BRIDGE_VERSION = "2026-06-01-cardladder-result-log-v3"
 EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-10-no-results-ocr-fallback-v3"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
+CY_BUY_PRICE_URL = os.environ.get("LUCAS_CY_BUY_PRICE_URL", "http://127.0.0.1:3333/cy-buy-price")
+CY_LOOKUP_TIMEOUT_SECONDS = float(os.environ.get("LUCAS_CY_LOOKUP_TIMEOUT", "45"))
 COMP_STRATEGY_AVERAGE = "average_last_5"
 COMP_STRATEGY_HIGH = "highest_last_5"
 COMP_STRATEGY_LOW = "lowest_last_5"
@@ -49,6 +56,7 @@ class BridgeState:
         self.cancel_requested = False
         self.comp_strategy = COMP_STRATEGY_AVERAGE
         self.on_update: Callable[[], None] | None = None
+        self.cy_lookup_inflight: set[int] = set()
 
     def set_rows(self, rows: list[WorkbookRow]) -> None:
         with self.lock:
@@ -125,6 +133,7 @@ class BridgeState:
             json.dumps(result, indent=2),
             encoding="utf-8",
         )
+        cy_lookup: tuple[int, str, str] | None = None
         with self.lock:
             result_extension_version = str(result.get("extensionVersion") or "")
             if result_extension_version:
@@ -137,6 +146,42 @@ class BridgeState:
                 target_row = next((row for row in self.rows if row.cert_number == cert), None)
             if target_row is not None:
                 self._apply_cardladder_result_to_row(target_row, result)
+                cy_lookup = self._prepare_cy_lookup(target_row)
+        if cy_lookup:
+            threading.Thread(target=self._cy_lookup_worker, args=cy_lookup, daemon=True).start()
+        if self.on_update:
+            self.on_update()
+
+    def _prepare_cy_lookup(self, row: WorkbookRow) -> tuple[int, str, str] | None:
+        if not cy_lookup_enabled():
+            return None
+        if row.cy_value is not None:
+            return None
+        if row.excel_row in self.cy_lookup_inflight:
+            return None
+        cert_number = str(row.cert_number or "").strip()
+        slab_type = clean_grader(row.grader)
+        if not cert_number or slab_type not in {"PSA", "BGS", "CGC", "SGC"}:
+            return None
+        self.cy_lookup_inflight.add(row.excel_row)
+        return row.excel_row, cert_number, slab_type
+
+    def _cy_lookup_worker(self, excel_row: int, cert_number: str, slab_type: str) -> None:
+        value = None
+        message = ""
+        try:
+            value, message = lookup_cy_buy_price(cert_number, slab_type)
+        except Exception as error:
+            message = str(error)
+        with self.lock:
+            self.cy_lookup_inflight.discard(excel_row)
+            row = next((candidate for candidate in self.rows if candidate.excel_row == excel_row), None)
+            if row is not None and str(row.cert_number or "").strip() == cert_number:
+                if value is not None:
+                    row.cy_value = value
+                    row.notes = append_note(row.notes, f"CY value: ${value:,.2f}")
+                elif message:
+                    row.notes = append_note(row.notes, f"CY lookup: {message}")
         if self.on_update:
             self.on_update()
 
@@ -231,6 +276,51 @@ def parse_value(value) -> float | None:
         return float(str(value).replace("$", "").replace(",", "").strip())
     except ValueError:
         return None
+
+
+def cy_lookup_enabled(platform: str | None = None) -> bool:
+    if os.environ.get("LUCAS_DISABLE_CY_LOOKUP", "").strip().lower() in {"1", "true", "yes"}:
+        return False
+    return (platform or sys.platform) == "darwin"
+
+
+def lookup_cy_buy_price(cert_number: str, slab_type: str, endpoint: str | None = None) -> tuple[float | None, str]:
+    cert_number = str(cert_number or "").strip()
+    slab_type = clean_grader(slab_type)
+    if not cert_number:
+        return None, "missing cert number"
+    if slab_type not in {"PSA", "BGS", "CGC", "SGC"}:
+        return None, f"unsupported slab type {slab_type or 'unknown'}"
+    base_url = (endpoint or CY_BUY_PRICE_URL).strip()
+    query = urlencode({"cert_number": cert_number, "slab_type": slab_type})
+    separator = "&" if "?" in base_url else "?"
+    request_url = f"{base_url}{separator}{query}"
+    try:
+        with urlopen(request_url, timeout=CY_LOOKUP_TIMEOUT_SECONDS) as response:
+            payload = json.loads(response.read().decode("utf-8") or "{}")
+    except HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        return None, f"live-comps backend returned HTTP {error.code}: {body[:180]}"
+    except URLError as error:
+        return None, f"live-comps backend unavailable: {error.reason}"
+    except TimeoutError:
+        return None, "live-comps backend timed out"
+    except json.JSONDecodeError:
+        return None, "live-comps backend returned invalid JSON"
+    value = parse_value(payload.get("cy_buy_price"))
+    if value is not None:
+        return value, str(payload.get("message") or "CY lookup OK")
+    status = str(payload.get("status") or "").strip()
+    message = str(payload.get("message") or payload.get("detail") or "CY value unavailable").strip()
+    return None, f"{status}: {message}" if status else message
+
+
+def append_note(existing: str, note: str) -> str:
+    existing = str(existing or "").strip()
+    note = str(note or "").strip()
+    if not note or note in existing:
+        return existing
+    return f"{existing}; {note}" if existing else note
 
 
 def is_blank_card_title(card_title: str, grader: str) -> bool:

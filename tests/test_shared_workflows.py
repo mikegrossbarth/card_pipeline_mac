@@ -19,9 +19,10 @@ if str(PHOTO_APP) not in sys.path:
 
 import app
 import assignment_engine
+import bridge_server
 import google_sheets_import
 from comp_engine.workbook_io import WorkbookRow
-from intake_io import append_company_sheet_rows, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_working_sheet
+from intake_io import append_company_sheet_rows, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
 
 
@@ -124,6 +125,7 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
                 existing_value=50,
                 card_ladder_value=100,
                 card_ladder_comps_average=100,
+                cy_value=88,
                 best_company="Arena Club",
                 estimated_payout=90,
                 company_pile=True,
@@ -138,8 +140,67 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
 
             profit_records = read_company_profit_records(company_dir)
             self.assertEqual(len(profit_records), 1)
+            self.assertEqual(profit_records[0]["cy_value"], 88.0)
             self.assertEqual(profit_records[0]["purchase_price"], 50.0)
             self.assertEqual(profit_records[0]["sale_price"], 90.0)
+
+    def test_pipeline_output_round_trips_cy_value(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "comps.xlsx"
+            rows = [
+                WorkbookRow(
+                    excel_row=2,
+                    cert_number="11111111",
+                    grader="PSA",
+                    card_title="Card One PSA 10",
+                    existing_value=50,
+                    card_ladder_value=100,
+                    card_ladder_comps_average=95,
+                    cy_value=87.5,
+                    status="Card Ladder OK",
+                )
+            ]
+
+            write_pipeline_output(path, rows, {2: "source"})
+            reloaded = read_simple_spreadsheet(path)
+
+            self.assertEqual(reloaded[0]["cy_value"], 87.5)
+
+
+class CYLookupTests(unittest.TestCase):
+    def test_cardladder_result_triggers_cy_lookup_on_mac(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="11111111",
+            grader="PSA",
+            card_title="Card One PSA 10",
+        )
+        state.set_rows([row])
+
+        with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
+                patch.object(bridge_server, "lookup_cy_buy_price", return_value=(87.5, "ok")):
+            state.post_cardladder_result(
+                {
+                    "excelRow": 2,
+                    "certNumber": "11111111",
+                    "value": "$100",
+                    "status": "ok",
+                    "ocr": {"comps": [{"price": "$90", "date_sold": "2026-06-01"}]},
+                }
+            )
+
+            deadline = time.time() + 2
+            while row.cy_value is None and time.time() < deadline:
+                time.sleep(0.01)
+
+        self.assertEqual(row.card_ladder_value, 100)
+        self.assertEqual(row.cy_value, 87.5)
+        self.assertIn("CY value: $87.50", row.notes)
+
+    def test_cy_lookup_is_disabled_off_mac(self) -> None:
+        self.assertFalse(bridge_server.cy_lookup_enabled("win32"))
+        self.assertFalse(bridge_server.cy_lookup_enabled("linux"))
 
 
 class GoogleSheetCacheTests(unittest.TestCase):
