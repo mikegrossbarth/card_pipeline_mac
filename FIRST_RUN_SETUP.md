@@ -165,7 +165,7 @@ To create a Finder app launcher:
 ./create_macos_app.sh
 ```
 
-Then double-click `LUCAS.app`. Keep `LUCAS.app` beside the project folder; it launches the local project and `.venv`.
+Then double-click `LUCAS.app`. You can keep it in the project folder or copy it to your Desktop; it launches this project path and local `.venv`. If launch fails, check `~/Desktop/LUCAS-launch.log`.
 
 ## Step 7: Choose The Working Folder
 

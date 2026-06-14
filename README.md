@@ -35,7 +35,7 @@ You can also double-click `Run Card Pipeline.command` after the file has execute
 ./create_macos_app.sh
 ```
 
-That creates `LUCAS.app` beside the project folder. Keep it beside the project because it launches the local `.venv` and source files.
+That creates `LUCAS.app` in the project folder. You can keep it there or copy it to your Desktop; it launches this project path and local `.venv`. If launch fails, check `~/Desktop/LUCAS-launch.log`.
 
 ## Local Configuration
 
