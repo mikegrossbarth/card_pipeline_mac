@@ -84,6 +84,9 @@ class CYMacOSAdapter(CYAdapter):
         self._osascript(f'tell application "{self.app_name}" to activate')
         time.sleep(self._timing('after_activate', 250))
 
+    def close_app(self):
+        self._osascript(f'tell application "{self.app_name}" to quit')
+
     def _position_window_right(self):
         script = f'''
         tell application "Finder"

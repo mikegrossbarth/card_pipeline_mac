@@ -231,6 +231,24 @@ class CYLookupTests(unittest.TestCase):
 
         self.assertEqual(row.cy_value, 87.5)
 
+    def test_cy_only_batch_closes_app_after_last_lookup(self) -> None:
+        state = bridge_server.BridgeState()
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="11111111", grader="PSA", card_title="Card One PSA 10"),
+        ]
+        state.set_rows(rows)
+
+        with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
+                patch.object(bridge_server, "lookup_cy_buy_price", return_value=(87.5, "ok")), \
+                patch.object(bridge_server, "close_cy_adapter") as close_cy:
+            state.start_cy_lookups(rows)
+            deadline = time.time() + 2
+            while any(row.cy_value is None for row in rows) and time.time() < deadline:
+                time.sleep(0.01)
+
+        self.assertEqual([row.cy_value for row in rows], [87.5])
+        close_cy.assert_called_once()
+
     def test_cy_lookup_is_disabled_off_mac(self) -> None:
         self.assertFalse(bridge_server.cy_lookup_enabled("win32"))
         self.assertFalse(bridge_server.cy_lookup_enabled("linux"))

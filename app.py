@@ -114,6 +114,9 @@ COMP_STRATEGY_DISPLAY = {
 }
 COMP_SCOPE_EMPTY = "Empty Comps Only"
 COMP_SCOPE_ALL = "Recomp All"
+COMP_SOURCE_BOTH = "Card Ladder + CY"
+COMP_SOURCE_CARD_LADDER = "Card Ladder"
+COMP_SOURCE_CY = "CY"
 NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
 ASSIGNMENT_CATEGORY_OPTIONS = (
     "basketball",
@@ -355,6 +358,7 @@ class CardPipelineApp(tk.Tk):
         self.review_input_mode = tk.StringVar(value="Barcode Scanner")
         self.comp_strategy_label = tk.StringVar(value="Average last 5")
         self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
+        self.comp_source_label = tk.StringVar(value=COMP_SOURCE_BOTH)
         self.working_sheet_title = tk.StringVar()
         self.selected_working_sheet = tk.StringVar()
         self.summary_var = tk.StringVar(value="Choose a create mode to begin.")
@@ -692,6 +696,15 @@ class CardPipelineApp(tk.Tk):
         )
         self.comp_scope_combo.pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Label(comp_controls, text="Run Scope", style="Panel.TLabel").pack(side=tk.RIGHT)
+        self.comp_source_combo = ttk.Combobox(
+            comp_controls,
+            textvariable=self.comp_source_label,
+            state="readonly",
+            values=(COMP_SOURCE_BOTH, COMP_SOURCE_CARD_LADDER, COMP_SOURCE_CY),
+            width=18,
+        )
+        self.comp_source_combo.pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Label(comp_controls, text="Run", style="Panel.TLabel").pack(side=tk.RIGHT)
         self.comp_method_combo = ttk.Combobox(
             comp_controls,
             textvariable=self.comp_strategy_label,
@@ -3089,34 +3102,58 @@ class CardPipelineApp(tk.Tk):
             app_debug_log("run_all_comps_blocked reason=no_rows")
             messagebox.showinfo("No comp sheet loaded", "Choose and load a working sheet in the Comp tab first.")
             return
-        extension_warning = self._cardladder_extension_warning()
-        if extension_warning:
-            app_debug_log("run_all_comps_blocked reason=extension_warning")
-            messagebox.showwarning("Reload Card Ladder extension", extension_warning)
-            self.status_var.set("Reload the Card Ladder Chrome extension before comping.")
-            return
         requery_all = self.comp_scope_label.get() == COMP_SCOPE_ALL
-        eligible = [
+        source_label = self.comp_source_label.get()
+        run_card_ladder = source_label in {COMP_SOURCE_BOTH, COMP_SOURCE_CARD_LADDER}
+        run_cy = source_label in {COMP_SOURCE_BOTH, COMP_SOURCE_CY}
+        card_ladder_eligible = [
             row
             for row in self.state.rows
-            if row.cert_number and row.grader and (requery_all or not row_has_comp_data(row))
+            if run_card_ladder and row.cert_number and row.grader and (requery_all or not row_has_comp_data(row))
         ]
-        if not eligible:
+        cy_eligible = [
+            row
+            for row in self.state.rows
+            if run_cy and row.cert_number and row.grader and (requery_all or row.cy_value is None)
+        ]
+        if card_ladder_eligible:
+            extension_warning = self._cardladder_extension_warning()
+            if extension_warning:
+                app_debug_log("run_all_comps_blocked reason=extension_warning")
+                messagebox.showwarning("Reload Card Ladder extension", extension_warning)
+                self.status_var.set("Reload the Card Ladder Chrome extension before comping.")
+                return
+        if not card_ladder_eligible and not cy_eligible:
             if requery_all:
-                message = "No rows have both a cert number and company ready for Card Ladder."
+                message = f"No rows have both a cert number and company ready for {source_label}."
             else:
-                message = "No rows are missing comp data. Switch Run Scope to Recomp All if you want to refresh every row."
-            app_debug_log(f"run_all_comps_blocked reason=no_eligible requery_all={requery_all}")
+                message = f"No rows are missing {source_label} data. Switch Run Scope to Recomp All if you want to refresh every row."
+            app_debug_log(f"run_all_comps_blocked reason=no_eligible source={source_label} requery_all={requery_all}")
             messagebox.showinfo("No eligible rows", message)
             self.status_var.set(message)
             return
         self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE))
-        command_id = self.state.start_all_comps(requery_all=requery_all)
+        command_id = 0
+        card_ladder_command_id = 0
+        if card_ladder_eligible:
+            card_ladder_command_id = self.state.start_all_comps(requery_all=requery_all)
+            command_id = card_ladder_command_id
+        if cy_eligible:
+            command_id = self.state.start_cy_lookups(cy_eligible, defer=bool(card_ladder_eligible))
         self.comp_output_saved = False
         self._refresh_table()
-        self.after(12000, lambda queued_command_id=command_id: self._warn_if_extension_not_checked_in(queued_command_id))
-        self.status_var.set(f"Queued {len(eligible)} Card Ladder row(s) using {self.comp_scope_label.get()} with {self.comp_strategy_label.get()} as command #{command_id}.")
-        app_debug_log(f"run_all_comps_queued command={command_id} eligible={len(eligible)}")
+        if card_ladder_eligible:
+            self.after(12000, lambda queued_command_id=card_ladder_command_id: self._warn_if_extension_not_checked_in(queued_command_id))
+        pieces = []
+        if card_ladder_eligible:
+            pieces.append(f"{len(card_ladder_eligible)} Card Ladder")
+        if cy_eligible:
+            pieces.append(f"{len(cy_eligible)} CY")
+        self.status_var.set(f"Queued {' and '.join(pieces)} row(s) using {self.comp_scope_label.get()} as command #{command_id}.")
+        app_debug_log(
+            f"run_all_comps_queued command={command_id} source={source_label} "
+            f"card_ladder={len(card_ladder_eligible)} cy={len(cy_eligible)}"
+        )
 
     def _warn_if_extension_not_checked_in(self, command_id: int) -> None:
         extension_warning = self._cardladder_extension_warning()

@@ -96,11 +96,11 @@ Enter a title, then click `Save as Working Sheet`.
 
 ## Comping
 
-Use the `Comp` tab for Card Ladder comping. Select a saved sheet, choose the comp method and run scope, then click `Run All Comps`.
+Use the `Comp` tab for comping. Select a saved sheet, choose whether to run `Card Ladder + CY`, `Card Ladder`, or `CY`, choose the comp method and run scope, then click `Run All Comps`.
 
 The app stores Card Ladder value, comps, assignment, payout, and status in the active workbook output. Rows marked `invalid_cert` are skipped by empty-comps-only runs.
 
-On macOS, L.U.C.A.S also submits the cert to the local CourtYard app after each Card Ladder result and fills `CY value`. This uses the bundled macOS CourtYard automation in `comp_engine/cy_automation` plus `scripts/macos/cgscroll`. It expects `CYCardScanner`, `cliclick`, and `tesseract` to be installed locally. Disable the lookup with `LUCAS_DISABLE_CY_LOOKUP=1`.
+On macOS, L.U.C.A.S can submit certs to the local CourtYard app and fill `CY value`. This uses the bundled macOS CourtYard automation in `comp_engine/cy_automation` plus `scripts/macos/cgscroll`. It expects `CYCardScanner`, `cliclick`, and `tesseract` to be installed locally. When a CY batch finishes, L.U.C.A.S quits CourtYard. Disable the lookup with `LUCAS_DISABLE_CY_LOOKUP=1`.
 
 ## Assignment
 
