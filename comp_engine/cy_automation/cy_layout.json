@@ -1,0 +1,42 @@
+{
+  "window": {
+    "top": 33,
+    "height": 991
+  },
+  "points": {
+    "manual_entry_tab": [1570, 1009],
+    "slab_list_center": [1302, 211],
+    "slab_psa": [1302, 211],
+    "slab_cgc": [1302, 235],
+    "slab_bgs": [1302, 259],
+    "slab_sgc": [1302, 283],
+    "cert_input": [944, 336],
+    "search_button": [1297, 374],
+    "error_ok_button": [1297, 566]
+  },
+  "regions": {
+    "cy_result_top_left": [867, 386],
+    "cy_result_bottom_right": [1392, 483],
+    "error_dialog_top_left": [1080, 425],
+    "error_dialog_bottom_right": [1515, 665]
+  },
+  "scroll": {
+    "wheel_delta": -12,
+    "reset_delta": 12,
+    "reset_steps": 4,
+    "cgc_reveal_clicks": 0,
+    "bgs_reveal_clicks": 0,
+    "sgc_reveal_clicks": 0,
+    "sgc_reveal_from_top_clicks": 0
+  },
+  "timing_ms": {
+    "after_activate": 250,
+    "after_click": 150,
+    "after_paste": 120,
+    "after_search": 250,
+    "result_poll_timeout": 9000,
+    "result_poll_interval": 250,
+    "result_settle_wait": 2500,
+    "result_stable_polls": 3
+  }
+}

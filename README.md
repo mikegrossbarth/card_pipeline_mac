@@ -100,7 +100,7 @@ Use the `Comp` tab for Card Ladder comping. Select a saved sheet, choose the com
 
 The app stores Card Ladder value, comps, assignment, payout, and status in the active workbook output. Rows marked `invalid_cert` are skipped by empty-comps-only runs.
 
-On macOS, L.U.C.A.S also asks the local live-comps backend for a CourtYard value after each Card Ladder result. The default endpoint is `http://127.0.0.1:3333/cy-buy-price`; override it with `LUCAS_CY_BUY_PRICE_URL` or disable it with `LUCAS_DISABLE_CY_LOOKUP=1`.
+On macOS, L.U.C.A.S also submits the cert to the local CourtYard app after each Card Ladder result and fills `CY value`. This uses the bundled macOS CourtYard automation in `comp_engine/cy_automation` plus `scripts/macos/cgscroll`. It expects `CYCardScanner`, `cliclick`, and `tesseract` to be installed locally. Disable the lookup with `LUCAS_DISABLE_CY_LOOKUP=1`.
 
 ## Assignment
 

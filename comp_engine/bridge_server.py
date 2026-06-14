@@ -13,20 +13,16 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
-from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
-from urllib.request import urlopen
-from urllib.parse import urlencode
 
 from cardladder_ocr import extract_cl_value_from_data_url
+from cy_automation.cy_macos import CYMacOSAdapter
 from workbook_io import WorkbookRow
 
 BRIDGE_VERSION = "2026-06-01-cardladder-result-log-v3"
 EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-10-no-results-ocr-fallback-v3"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
-CY_BUY_PRICE_URL = os.environ.get("LUCAS_CY_BUY_PRICE_URL", "http://127.0.0.1:3333/cy-buy-price")
-CY_LOOKUP_TIMEOUT_SECONDS = float(os.environ.get("LUCAS_CY_LOOKUP_TIMEOUT", "45"))
 COMP_STRATEGY_AVERAGE = "average_last_5"
 COMP_STRATEGY_HIGH = "highest_last_5"
 COMP_STRATEGY_LOW = "lowest_last_5"
@@ -37,6 +33,8 @@ COMP_STRATEGY_LABELS = {
     COMP_STRATEGY_LOW: "Lowest of last 5",
     COMP_STRATEGY_STALE_NEWEST: "Date weighted",
 }
+_CY_ADAPTER: CYMacOSAdapter | None = None
+_CY_ADAPTER_LOCK = threading.Lock()
 
 
 class BridgeState:
@@ -284,35 +282,28 @@ def cy_lookup_enabled(platform: str | None = None) -> bool:
     return (platform or sys.platform) == "darwin"
 
 
-def lookup_cy_buy_price(cert_number: str, slab_type: str, endpoint: str | None = None) -> tuple[float | None, str]:
+def lookup_cy_buy_price(cert_number: str, slab_type: str) -> tuple[float | None, str]:
     cert_number = str(cert_number or "").strip()
     slab_type = clean_grader(slab_type)
     if not cert_number:
         return None, "missing cert number"
     if slab_type not in {"PSA", "BGS", "CGC", "SGC"}:
         return None, f"unsupported slab type {slab_type or 'unknown'}"
-    base_url = (endpoint or CY_BUY_PRICE_URL).strip()
-    query = urlencode({"cert_number": cert_number, "slab_type": slab_type})
-    separator = "&" if "?" in base_url else "?"
-    request_url = f"{base_url}{separator}{query}"
-    try:
-        with urlopen(request_url, timeout=CY_LOOKUP_TIMEOUT_SECONDS) as response:
-            payload = json.loads(response.read().decode("utf-8") or "{}")
-    except HTTPError as error:
-        body = error.read().decode("utf-8", errors="replace")
-        return None, f"live-comps backend returned HTTP {error.code}: {body[:180]}"
-    except URLError as error:
-        return None, f"live-comps backend unavailable: {error.reason}"
-    except TimeoutError:
-        return None, "live-comps backend timed out"
-    except json.JSONDecodeError:
-        return None, "live-comps backend returned invalid JSON"
+    payload = get_cy_adapter().submit_cert_lookup(cert_number, slab_type)
     value = parse_value(payload.get("cy_buy_price"))
     if value is not None:
         return value, str(payload.get("message") or "CY lookup OK")
     status = str(payload.get("status") or "").strip()
     message = str(payload.get("message") or payload.get("detail") or "CY value unavailable").strip()
     return None, f"{status}: {message}" if status else message
+
+
+def get_cy_adapter() -> CYMacOSAdapter:
+    global _CY_ADAPTER
+    with _CY_ADAPTER_LOCK:
+        if _CY_ADAPTER is None:
+            _CY_ADAPTER = CYMacOSAdapter()
+        return _CY_ADAPTER
 
 
 def append_note(existing: str, note: str) -> str:
