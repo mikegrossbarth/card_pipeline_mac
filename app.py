@@ -13,7 +13,7 @@ import tkinter as tk
 import urllib.parse
 import urllib.request
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -51,6 +51,7 @@ from intake_io import (  # noqa: E402
     build_card_title,
     clean_part,
     default_output_path,
+    ensure_company_weekly_sheets,
     format_money,
     infer_grader,
     mark_received_in_workbooks,
@@ -98,6 +99,7 @@ INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
 RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
 COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
 SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
+WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
 PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
 UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
 PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
@@ -175,13 +177,14 @@ def app_debug_log(message: str) -> None:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, PROFIT_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
     RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
     COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
     SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
+    WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
     PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
     UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
     PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
@@ -212,6 +215,13 @@ def initialize_pipeline_root() -> None:
 
 initialize_pipeline_root()
 
+
+def company_sheet_week_start_for_time(moment: datetime) -> datetime.date:
+    current_week_start = (moment - timedelta(days=moment.weekday())).date()
+    if moment.weekday() == 6:
+        return (moment + timedelta(days=1)).date()
+    return current_week_start
+
 DISPLAY_COLUMNS = (
     "excel_row",
     "source",
@@ -222,6 +232,8 @@ DISPLAY_COLUMNS = (
     "purchase_price",
     "card_ladder_value",
     "card_ladder_comps_average",
+    "cy_value",
+    "cy_confidence",
     "best_company",
     "estimated_payout",
     "status",
@@ -236,6 +248,8 @@ INTAKE_COLUMNS = (
     "purchase_price",
     "card_ladder_value",
     "card_ladder_comps_average",
+    "cy_value",
+    "cy_confidence",
     "status",
 )
 
@@ -249,6 +263,7 @@ COMP_COLUMNS = (
     "card_ladder_value",
     "card_ladder_comps_average",
     "cy_value",
+    "cy_confidence",
     "best_company",
     "estimated_payout",
     "status",
@@ -265,6 +280,8 @@ RECEIVE_COLUMNS = (
     "purchase_price",
     "card_ladder_value",
     "card_ladder_comps_average",
+    "cy_value",
+    "cy_confidence",
     "best_company",
     "estimated_payout",
     "status",
@@ -284,6 +301,7 @@ EDITABLE_COLUMNS = {
     "card_ladder_value",
     "card_ladder_comps_average",
     "cy_value",
+    "cy_confidence",
 }
 
 HEADINGS = {
@@ -296,7 +314,8 @@ HEADINGS = {
     "purchase_price": "Purchase",
     "card_ladder_value": "Card Ladder",
     "card_ladder_comps_average": "Comps",
-    "cy_value": "CY value",
+    "cy_value": "CY Estimate",
+    "cy_confidence": "CY Confidence",
     "best_company": "Best Company",
     "estimated_payout": "Est. Payout",
     "status": "Status",
@@ -314,6 +333,7 @@ COLUMN_WIDTHS = {
     "card_ladder_value": 100,
     "card_ladder_comps_average": 100,
     "cy_value": 100,
+    "cy_confidence": 110,
     "best_company": 130,
     "estimated_payout": 100,
     "status": 160,
@@ -397,6 +417,7 @@ class CardPipelineApp(tk.Tk):
         self.assignment_recommendation_after_id: str | None = None
         self.assignment_config_status = tk.StringVar(value=self._assignment_config_status())
         self._ensure_company_sheet_folders()
+        self._ensure_weekly_company_sheets_due()
         self.received_sheet_paths: dict[str, Path] = {}
         self.selected_received_sheet = tk.StringVar()
         self.working_sheet_paths: dict[str, Path] = {}
@@ -424,6 +445,7 @@ class CardPipelineApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.status_var.set(self.bridge_status_text)
         self.after(100, self._start_startup_refresh)
+        self.after(5 * 60 * 1000, self._weekly_company_sheet_timer)
 
     def _on_close(self) -> None:
         self.destroy()
@@ -1602,6 +1624,7 @@ class CardPipelineApp(tk.Tk):
                     "card_ladder_value": row.get("card_ladder_value"),
                     "card_ladder_comps_average": row.get("card_ladder_comps_average"),
                     "cy_value": row.get("cy_value"),
+                    "cy_confidence": row.get("cy_confidence"),
                     "card_ladder_comps": row.get("card_ladder_comps") or "",
                     "best_company": row.get("best_company") or "",
                     "estimated_payout": row.get("estimated_payout"),
@@ -2639,6 +2662,7 @@ class CardPipelineApp(tk.Tk):
                     "card_ladder_value": row.get("card_ladder_value"),
                     "card_ladder_comps_average": row.get("card_ladder_comps_average"),
                     "cy_value": row.get("cy_value"),
+                    "cy_confidence": row.get("cy_confidence"),
                     "card_ladder_comps": row.get("card_ladder_comps") or "",
                     "best_company": row.get("best_company") or "",
                     "estimated_payout": row.get("estimated_payout"),
@@ -2697,6 +2721,7 @@ class CardPipelineApp(tk.Tk):
                     "card_ladder_value": row.get("card_ladder_value"),
                     "card_ladder_comps_average": row.get("card_ladder_comps_average"),
                     "cy_value": row.get("cy_value"),
+                    "cy_confidence": row.get("cy_confidence"),
                     "card_ladder_comps": row.get("card_ladder_comps") or "",
                     "best_company": row.get("best_company") or "",
                     "estimated_payout": row.get("estimated_payout"),
@@ -2861,6 +2886,7 @@ class CardPipelineApp(tk.Tk):
             card_ladder_value = row.get("card_ladder_value") if row.get("card_ladder_value") is not None else match.get("card_ladder_value")
             comps_average = row.get("card_ladder_comps_average") if row.get("card_ladder_comps_average") is not None else match.get("card_ladder_comps_average")
             cy_value = row.get("cy_value") if row.get("cy_value") is not None else match.get("cy_value")
+            cy_confidence = row.get("cy_confidence") if row.get("cy_confidence") is not None else match.get("cy_confidence")
             comp_details = str(row.get("card_ladder_comps") or match.get("card_ladder_comps") or "")
             best_company = str(row.get("best_company") or match.get("best_company") or "").strip()
             estimated_payout = row.get("estimated_payout") if row.get("estimated_payout") is not None else match.get("estimated_payout")
@@ -2877,6 +2903,7 @@ class CardPipelineApp(tk.Tk):
                     card_ladder_value=card_ladder_value,
                     card_ladder_comps_average=comps_average,
                     cy_value=cy_value,
+                    cy_confidence=cy_confidence,
                     card_ladder_comps=comp_details,
                     best_company=best_company,
                     estimated_payout=estimated_payout,
@@ -2911,6 +2938,8 @@ class CardPipelineApp(tk.Tk):
                     row.card_ladder_comps_average = match.get("card_ladder_comps_average")
                 if row.cy_value is None and match.get("cy_value") is not None:
                     row.cy_value = match.get("cy_value")
+                if row.cy_confidence is None and match.get("cy_confidence") is not None:
+                    row.cy_confidence = match.get("cy_confidence")
                 if not row.card_ladder_comps and match.get("card_ladder_comps"):
                     row.card_ladder_comps = str(match.get("card_ladder_comps") or "")
                 if not row.best_company and match.get("best_company"):
@@ -3059,6 +3088,43 @@ class CardPipelineApp(tk.Tk):
                     (COMPANY_SHEETS_DIR / folder_name).mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
+
+    def _weekly_company_sheet_timer(self) -> None:
+        self._ensure_weekly_company_sheets_due()
+        self.after(5 * 60 * 1000, self._weekly_company_sheet_timer)
+
+    def _ensure_weekly_company_sheets_due(self, now: datetime | None = None) -> dict[str, object]:
+        now = now or datetime.now()
+        week_start_date = company_sheet_week_start_for_time(now)
+        marker_key = week_start_date.isoformat()
+        try:
+            markers = json.loads(WEEKLY_COMPANY_SHEETS_PATH.read_text(encoding="utf-8")) if WEEKLY_COMPANY_SHEETS_PATH.exists() else {}
+        except Exception:
+            markers = {}
+        weeks = markers.get("weeks") if isinstance(markers, dict) else {}
+        if not isinstance(weeks, dict):
+            weeks = {}
+        companies = [company.name for company in self.assignment_engine.companies if company.name]
+        company_names = sorted(companies, key=str.lower)
+        marker = weeks.get(marker_key) if isinstance(weeks.get(marker_key), dict) else {}
+        if marker.get("companies") == company_names:
+            return {"created": [], "existing": [], "errors": [], "skipped": True, "week_start": marker_key}
+        result = ensure_company_weekly_sheets(COMPANY_SHEETS_DIR, companies, week_start_date)
+        errors = list(result.get("errors") or [])
+        if not errors:
+            weeks[marker_key] = {
+                "created_at": now.isoformat(timespec="seconds"),
+                "week_start": marker_key,
+                "company_count": len(companies),
+                "companies": company_names,
+                "created_count": len(result.get("created") or []),
+                "existing_count": len(result.get("existing") or []),
+            }
+            atomic_write_json(WEEKLY_COMPANY_SHEETS_PATH, {"weeks": weeks})
+            created_count = len(result.get("created") or [])
+            if created_count:
+                self.status_var.set(f"Created {created_count} weekly company sheet tab(s) for week of {marker_key}.")
+        return {**result, "skipped": False, "week_start": marker_key}
 
     def _safe_company_folder_name(self, name: str) -> str:
         return re.sub(r"[<>:\"/\\|?*]+", " ", str(name or "")).strip()[:140].strip()
@@ -3328,6 +3394,7 @@ class CardPipelineApp(tk.Tk):
                     card_ladder_value=row.get("card_ladder_value"),
                     card_ladder_comps_average=row.get("card_ladder_comps_average"),
                     cy_value=row.get("cy_value"),
+                    cy_confidence=row.get("cy_confidence"),
                     card_ladder_comps=str(row.get("card_ladder_comps") or ""),
                     best_company=str(row.get("best_company") or ""),
                     estimated_payout=row.get("estimated_payout"),
@@ -3941,6 +4008,7 @@ class CardPipelineApp(tk.Tk):
         self._load_player_overrides()
         self.assignment_engine = AssignmentEngine.load()
         self._ensure_company_sheet_folders()
+        self._ensure_weekly_company_sheets_due()
         self.assignment_config_status.set(self._assignment_config_status())
         self._refresh_table(schedule_recommendations=True)
         self.review_status.set("Assignment rules reloaded.")
@@ -4039,6 +4107,8 @@ class CardPipelineApp(tk.Tk):
             return format_money(row.card_ladder_comps_average)
         if column == "cy_value":
             return format_money(row.cy_value)
+        if column == "cy_confidence":
+            return "" if row.cy_confidence is None else row.cy_confidence
         if column == "best_company":
             return row.best_company
         if column == "estimated_payout":
@@ -4274,6 +4344,8 @@ class CardPipelineApp(tk.Tk):
                 row.card_ladder_comps_average = self._parse_money_text(clean_value)
             elif column == "cy_value":
                 row.cy_value = self._parse_money_text(clean_value)
+            elif column == "cy_confidence":
+                row.cy_confidence = clean_value
             row.status = "Ready" if row.cert_number and row.grader else "Needs setup"
             if self._is_review_row_tree(tree) and column == "cert_number" and scan_to_cert(row.cert_number) != previous_cert:
                 match = self._incoming_match(row.cert_number)
@@ -4290,6 +4362,8 @@ class CardPipelineApp(tk.Tk):
                         row.card_ladder_comps_average = match.get("card_ladder_comps_average")
                     if row.cy_value is None and match.get("cy_value") is not None:
                         row.cy_value = match.get("cy_value")
+                    if row.cy_confidence is None and match.get("cy_confidence") is not None:
+                        row.cy_confidence = match.get("cy_confidence")
                     if not row.card_ladder_comps and match.get("card_ladder_comps"):
                         row.card_ladder_comps = str(match.get("card_ladder_comps") or "")
                 elif row.cert_number:

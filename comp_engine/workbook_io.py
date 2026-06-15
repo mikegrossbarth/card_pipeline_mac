@@ -17,6 +17,7 @@ class WorkbookRow:
     card_ladder_screenshot: str = ""
     alt_value: float | None = None
     cy_value: float | None = None
+    cy_confidence: Any = None
     best_company: str = ""
     estimated_payout: float | None = None
     company_pile: bool = False

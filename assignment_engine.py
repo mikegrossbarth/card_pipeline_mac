@@ -601,15 +601,19 @@ def load_company(entry: dict[str, Any], base_dir: Path) -> AssignmentCompany | N
 def assignment_value(row: Any) -> float | None:
     comps = to_number(getattr(row, "card_ladder_comps_average", None))
     cl_value = to_number(getattr(row, "card_ladder_value", None))
-    return comps if comps is not None else cl_value
+    cy_value = to_number(getattr(row, "cy_value", None))
+    return comps if comps is not None else cl_value if cl_value is not None else cy_value
 
 
 def company_assignment_value(row: Any, company: AssignmentCompany) -> float | None:
     comps = to_number(getattr(row, "card_ladder_comps_average", None))
     cl_value = to_number(getattr(row, "card_ladder_value", None))
+    cy_value = to_number(getattr(row, "cy_value", None))
     if company.value_source == "card_ladder":
         return cl_value
-    return comps if comps is not None else cl_value
+    if company.value_source == "cy_estimate":
+        return cy_value
+    return comps if comps is not None else cl_value if cl_value is not None else cy_value
 
 
 def company_value_source(entry: dict[str, Any]) -> str:
@@ -622,6 +626,8 @@ def company_value_source(entry: dict[str, Any]) -> str:
     ).strip().lower()
     if raw in {"card_ladder", "cardladder", "cl", "card ladder", "card_ladder_value"}:
         return "card_ladder"
+    if raw in {"cy", "cy_estimate", "cyestimate", "courtyard", "courtyard_estimate", "estimate"}:
+        return "cy_estimate"
     return "comps"
 
 

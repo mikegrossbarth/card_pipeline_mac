@@ -6,6 +6,7 @@ import threading
 import time
 import types
 import unittest
+from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -22,7 +23,7 @@ import assignment_engine
 import bridge_server
 import google_sheets_import
 from comp_engine.workbook_io import WorkbookRow
-from intake_io import append_company_sheet_rows, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
+from intake_io import append_company_sheet_rows, ensure_company_weekly_sheets, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
 
 
@@ -98,6 +99,45 @@ class SharedStateTests(unittest.TestCase):
 
 
 class WorkbookCompanyProfitTests(unittest.TestCase):
+    def test_company_sheet_week_start_rolls_forward_sunday_midnight(self) -> None:
+        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 13, 23, 59)).isoformat(), "2026-06-08")
+        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 14, 0, 0)).isoformat(), "2026-06-15")
+        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 14, 23, 59)).isoformat(), "2026-06-15")
+        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 15, 8, 0)).isoformat(), "2026-06-15")
+
+    def test_ensure_company_weekly_sheets_creates_blank_company_tabs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "COMPANY SHEETS"
+
+            result = ensure_company_weekly_sheets(root, ["Arena Club", "Fanatics"], app.company_sheet_week_start_for_time(datetime(2026, 6, 14, 0, 0)))
+            repeat = ensure_company_weekly_sheets(root, ["Arena Club", "Fanatics"], app.company_sheet_week_start_for_time(datetime(2026, 6, 14, 0, 0)))
+
+            self.assertEqual(len(result["created"]), 2)
+            self.assertEqual(len(repeat["existing"]), 2)
+            arena_path = root / "Arena Club" / "Arena Club.xlsx"
+            self.assertTrue(arena_path.exists())
+            workbook = load_workbook(arena_path, read_only=True, data_only=True)
+            self.assertIn("Week of 2026-06-15", workbook.sheetnames)
+            workbook.close()
+            rows = read_simple_spreadsheet(arena_path)
+            self.assertEqual(rows, [])
+
+    def test_cy_sheet_estimate_and_confidence_are_preserved_separately_from_purchase(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cy.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Grader", "Cert", "Description", "Grade", "Purchase", "Estimate", "Confidence"])
+            sheet.append(["CGC", "1401045404276", "2022 Paradigm Trigger Unown VSTAR", "g10", 17.37, 19.30, 4])
+            workbook.save(path)
+
+            rows = read_simple_spreadsheet(path)
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["purchase_price"], 17.37)
+            self.assertEqual(rows[0]["cy_value"], 19.30)
+            self.assertEqual(rows[0]["cy_confidence"], 4)
+
     def test_receive_company_append_dedupes_and_profit_backfills(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -126,6 +166,7 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
                 card_ladder_value=100,
                 card_ladder_comps_average=100,
                 cy_value=88,
+                cy_confidence=4,
                 best_company="Arena Club",
                 estimated_payout=90,
                 company_pile=True,
@@ -141,6 +182,7 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
             profit_records = read_company_profit_records(company_dir)
             self.assertEqual(len(profit_records), 1)
             self.assertEqual(profit_records[0]["cy_value"], 88.0)
+            self.assertEqual(profit_records[0]["cy_confidence"], 4)
             self.assertEqual(profit_records[0]["purchase_price"], 50.0)
             self.assertEqual(profit_records[0]["sale_price"], 90.0)
 
@@ -157,6 +199,7 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
                     card_ladder_value=100,
                     card_ladder_comps_average=95,
                     cy_value=87.5,
+                    cy_confidence=3,
                     status="Card Ladder OK",
                 )
             ]
@@ -165,6 +208,7 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
             reloaded = read_simple_spreadsheet(path)
 
             self.assertEqual(reloaded[0]["cy_value"], 87.5)
+            self.assertEqual(reloaded[0]["cy_confidence"], 3)
 
 
 class CYLookupTests(unittest.TestCase):
@@ -486,6 +530,69 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertFalse(decisions["CL Required Buyer"].accepted)
         self.assertIsNone(decisions["CL Required Buyer"].source_value)
         self.assertIn("missing", decisions["CL Required Buyer"].reason)
+
+    def test_company_can_require_cy_estimate_value(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="6",
+            grader="CGC",
+            card_title="2022 Paradigm Trigger Unown VSTAR CGC 10",
+            card_ladder_comps_average=100,
+            card_ladder_value=110,
+            cy_value=150,
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Comps Buyer",
+                    assignment_engine.CompanyRules(accept_all=True),
+                    [assignment_engine.PayoutTier(10, 500, 0.9)],
+                    value_source="comps",
+                ),
+                assignment_engine.AssignmentCompany(
+                    "CY Buyer",
+                    assignment_engine.CompanyRules(accept_all=True),
+                    [assignment_engine.PayoutTier(10, 500, 0.85)],
+                    value_source="cy_estimate",
+                ),
+            ]
+        )
+
+        recommendation = engine.recommend(row)
+        decisions = {decision.company: decision for decision in engine.evaluate(row)}
+
+        self.assertEqual(decisions["Comps Buyer"].source_value, 100)
+        self.assertEqual(decisions["CY Buyer"].source_value, 150)
+        self.assertEqual(recommendation.company, "CY Buyer")
+        self.assertEqual(recommendation.payout, 127.5)
+
+    def test_cy_estimate_value_source_rejects_company_when_cy_missing(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="7",
+            grader="CGC",
+            card_title="2022 Paradigm Trigger Unown VSTAR CGC 10",
+            card_ladder_comps_average=100,
+            cy_value=None,
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "CY Required Buyer",
+                    assignment_engine.CompanyRules(accept_all=True),
+                    [assignment_engine.PayoutTier(10, 500, 1.0)],
+                    value_source="cy_estimate",
+                )
+            ]
+        )
+
+        recommendation = engine.recommend(row)
+        decisions = {decision.company: decision for decision in engine.evaluate(row)}
+
+        self.assertEqual(recommendation.company, "")
+        self.assertFalse(decisions["CY Required Buyer"].accepted)
+        self.assertIsNone(decisions["CY Required Buyer"].source_value)
+        self.assertIn("missing", decisions["CY Required Buyer"].reason)
 
     def test_goat_payout_category_uses_payout_range_not_rule_goat_range(self) -> None:
         row = WorkbookRow(
@@ -977,3 +1084,4 @@ class PhotoOcrSpeedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+from openpyxl import Workbook, load_workbook

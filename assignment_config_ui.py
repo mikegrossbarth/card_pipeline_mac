@@ -43,6 +43,11 @@ PAYOUT_SOURCE_LABELS = {
     "manual": "Manual payout tiers",
     "file": "Local payout file",
 }
+VALUE_SOURCE_LABELS = {
+    "comps": "Comps",
+    "card_ladder": "Card Ladder value",
+    "cy_estimate": "CY Estimate",
+}
 
 
 class AssignmentRulesDialog(tk.Toplevel):
@@ -67,7 +72,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.company_name = tk.StringVar()
         self.company_filter_text = tk.StringVar()
         self.company_filter_state = tk.StringVar(value="all")
-        self.use_card_ladder_value = tk.BooleanVar(value=False)
+        self.value_source = tk.StringVar(value="comps")
         self.rule_source_mode = tk.StringVar(value="manual")
         self.rule_source_path = tk.StringVar()
         self.link_payouts_to_rule_source = tk.BooleanVar(value=False)
@@ -170,12 +175,17 @@ class AssignmentRulesDialog(tk.Toplevel):
         details.columnconfigure(1, weight=1)
         ttk.Label(details, text="Company Name", style="Assign.TLabel").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
         ttk.Entry(details, textvariable=self.company_name, style="Assign.TEntry").grid(row=0, column=1, sticky="ew")
-        ttk.Checkbutton(
-            details,
-            text="Require Card Ladder value instead of Comps",
-            variable=self.use_card_ladder_value,
-            style="Assign.TCheckbutton",
-        ).grid(row=1, column=1, sticky=tk.W, pady=(8, 0))
+        ttk.Label(details, text="Assignment Value", style="Assign.TLabel").grid(row=1, column=0, sticky=tk.W, padx=(0, 10), pady=(8, 0))
+        value_source_frame = ttk.Frame(details, style="AssignPanel.TFrame")
+        value_source_frame.grid(row=1, column=1, sticky=tk.W, pady=(8, 0))
+        for index, (value, label) in enumerate(VALUE_SOURCE_LABELS.items()):
+            ttk.Radiobutton(
+                value_source_frame,
+                text=label,
+                value=value,
+                variable=self.value_source,
+                style="Assign.TRadiobutton",
+            ).grid(row=0, column=index, sticky=tk.W, padx=(0, 16))
 
         sources = ttk.Frame(main, style="AssignPanel.TFrame", padding=12)
         sources.grid(row=1, column=0, sticky="ew", pady=(12, 0))
@@ -427,7 +437,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self._refresh_company_list()
         company = self.companies[index]
         self.company_name.set(str(company.get("name") or ""))
-        self.use_card_ladder_value.set(str(company.get("value_source") or company.get("valueSource") or "").strip().lower() in {"card_ladder", "cardladder", "cl", "card ladder"})
+        self.value_source.set(normalize_value_source(company.get("value_source") or company.get("valueSource")))
         self.rule_source_mode.set(str(company.get("rules_source_kind") or source_kind_for_path(company.get("rules"))))
         self.rule_source_path.set(display_source_path(company.get("rules")))
         self.rule_materialized_source = company.get("rules") if isinstance(company.get("rules"), dict) else None
@@ -463,7 +473,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.selected_index = None
         self._refresh_company_list()
         self.company_name.set("")
-        self.use_card_ladder_value.set(False)
+        self.value_source.set("comps")
         self.rule_source_mode.set("manual")
         self.rule_source_path.set("")
         self.link_payouts_to_rule_source.set(False)
@@ -702,7 +712,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         company = {
             "name": name,
             "active": self.companies[self.selected_index].get("active", True) if self.selected_index is not None else True,
-            "value_source": "card_ladder" if self.use_card_ladder_value.get() else "comps",
+            "value_source": normalize_value_source(self.value_source.get()),
             "rules": rule_source,
             "rules_source_kind": self.rule_source_mode.get(),
             "payout": payout_source,
@@ -945,3 +955,12 @@ def split_values(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
+def normalize_value_source(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"card_ladder", "cardladder", "cl", "card ladder", "card_ladder_value"}:
+        return "card_ladder"
+    if raw in {"cy", "cy_estimate", "cyestimate", "courtyard", "courtyard_estimate", "estimate"}:
+        return "cy_estimate"
+    return "comps"
