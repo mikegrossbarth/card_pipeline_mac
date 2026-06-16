@@ -290,6 +290,7 @@ RECEIVE_COLUMNS = (
 
 REVIEW_COLUMNS = DISPLAY_COLUMNS
 
+ADD_INTAKE_ROW_IID = "__add_intake_row__"
 ADD_REVIEW_ROW_IID = "__add_review_row__"
 
 EDITABLE_COLUMNS = {
@@ -655,7 +656,7 @@ class CardPipelineApp(tk.Tk):
             intake_controls,
             textvariable=self.input_mode,
             state="readonly",
-            values=["Barcode Scanner", "Photo OCR", "Existing Spreadsheet"],
+            values=["Barcode Scanner", "Manual Entry", "Photo OCR", "Existing Spreadsheet"],
             width=22,
         )
         mode.grid(row=0, column=1, sticky="w", padx=(8, 16))
@@ -2329,10 +2330,14 @@ class CardPipelineApp(tk.Tk):
         if mode == "Barcode Scanner":
             self._build_barcode_mode()
             self.after(100, self._arm_scanner)
+        elif mode == "Manual Entry":
+            self._build_manual_intake_mode()
         elif mode == "Photo OCR":
             self._build_file_mode(photo=True)
         else:
             self._build_file_mode(photo=False)
+        if hasattr(self, "intake_tree"):
+            self._refresh_table()
 
     def _show_review_mode(self) -> None:
         if not hasattr(self, "review_mode_host"):
@@ -2348,6 +2353,13 @@ class CardPipelineApp(tk.Tk):
     def _build_manual_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
         ttk.Label(self.review_mode_host, text="Double-click cells in the Receive table to enter certs or adjust matched details.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
+
+    def _build_manual_intake_mode(self) -> None:
+        self.scanning_station_active = False
+        self.scan_entry = None
+        self.mode_host.columnconfigure(8, weight=1)
+        ttk.Button(self.mode_host, text="Add Manual Row", command=self.add_manual_intake_row, style="Primary.TButton").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(self.mode_host, text="Double-click cells in the Create table to enter certs, card details, purchase, or CY fields.", style="Muted.TLabel").grid(row=0, column=1, columnspan=8, sticky="w")
 
     def _build_automatic_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
@@ -2450,6 +2462,26 @@ class CardPipelineApp(tk.Tk):
         if added_rows:
             self._select_excel_row(added_rows[-1])
         self._arm_scanner()
+
+    def add_manual_intake_row(self) -> int | None:
+        added_rows = self._append_rows([
+            {
+                "cert_number": "",
+                "grader": "",
+                "card_title": "",
+                "purchase_price": None,
+                "source": "Manual",
+                "notes": "Manual create row",
+            }
+        ])
+        if added_rows:
+            row_id = str(added_rows[-1])
+            self.intake_tree.selection_set(row_id)
+            self.intake_tree.focus(row_id)
+            self.intake_tree.see(row_id)
+            self.status_var.set("Manual create row added. Double-click cells to edit it.")
+            return added_rows[-1]
+        return None
 
     def browse_file(self) -> None:
         path = filedialog.askopenfilename(title="Choose workbook", filetypes=[("Excel workbook", "*.xlsx")])
@@ -4053,7 +4085,15 @@ class CardPipelineApp(tk.Tk):
                 tags=tuple(tags),
                 values=tuple(self._row_display_value(row, col, sources, sheet_sources) for col in columns),
             )
-        if self._is_receive_tree(tree) and self.review_mode.get() == "Manual Receive":
+        add_row_iid = ""
+        should_show_add_row = False
+        if tree is self.intake_tree and self.input_mode.get() == "Manual Entry":
+            add_row_iid = ADD_INTAKE_ROW_IID
+            should_show_add_row = True
+        elif self._is_receive_tree(tree) and self.review_mode.get() == "Manual Receive":
+            add_row_iid = ADD_REVIEW_ROW_IID
+            should_show_add_row = True
+        if should_show_add_row:
             add_values = []
             for col in columns:
                 if col == "excel_row":
@@ -4065,7 +4105,7 @@ class CardPipelineApp(tk.Tk):
             tree.insert(
                 "",
                 tk.END,
-                iid=ADD_REVIEW_ROW_IID,
+                iid=add_row_iid,
                 tags=("add_review_row",),
                 values=tuple(add_values),
             )
@@ -4139,7 +4179,7 @@ class CardPipelineApp(tk.Tk):
         selected_rows = {
             int(iid)
             for iid in tree.selection()
-            if str(iid).isdigit() and str(iid) != ADD_REVIEW_ROW_IID
+            if str(iid).isdigit() and str(iid) not in {ADD_INTAKE_ROW_IID, ADD_REVIEW_ROW_IID}
         }
         if not selected_rows:
             return 0
@@ -4202,6 +4242,9 @@ class CardPipelineApp(tk.Tk):
         tree = event.widget
         row_id = tree.identify_row(event.y)
         column_id = tree.identify_column(event.x)
+        if tree is self.intake_tree and row_id == ADD_INTAKE_ROW_IID:
+            self.add_manual_intake_row()
+            return "break"
         if self._is_receive_tree(tree) and row_id == ADD_REVIEW_ROW_IID:
             self.add_manual_review_row()
             return "break"
@@ -4229,6 +4272,9 @@ class CardPipelineApp(tk.Tk):
         tree = event.widget
         row_id = tree.identify_row(event.y)
         column_id = tree.identify_column(event.x)
+        if tree is self.intake_tree and row_id == ADD_INTAKE_ROW_IID:
+            self.add_manual_intake_row()
+            return
         if self._is_receive_tree(tree) and row_id == ADD_REVIEW_ROW_IID:
             self.add_manual_review_row()
             return
