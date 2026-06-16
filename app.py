@@ -2358,8 +2358,7 @@ class CardPipelineApp(tk.Tk):
         self.scanning_station_active = False
         self.scan_entry = None
         self.mode_host.columnconfigure(8, weight=1)
-        ttk.Button(self.mode_host, text="Add Manual Row", command=self.add_manual_intake_row, style="Primary.TButton").grid(row=0, column=0, sticky="w", padx=(0, 12))
-        ttk.Label(self.mode_host, text="Double-click cells in the Create table to enter certs, card details, purchase, or CY fields.", style="Muted.TLabel").grid(row=0, column=1, columnspan=8, sticky="w")
+        ttk.Label(self.mode_host, text="Use the + Add row line in the Create table, then double-click cells to enter certs, card details, purchase, or CY fields.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
 
     def _build_automatic_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
