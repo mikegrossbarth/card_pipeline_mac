@@ -1,46 +1,81 @@
-# L.U.C.A.S macOS Port Handoff
+# L.U.C.A.S macOS Handoff Context
 
 L.U.C.A.S means Lot Upload, Comping & Assignment System.
 
 ## Current Snapshot
 
-- Project copy: `C:\Users\User\Documents\Codex\2026-06-13\card-pipeline-mac`
-- Source copied from: `C:\Users\User\Documents\Codex\2026-06-04\card_pipeline`
-- Purpose: macOS-downloadable fork/copy so Mac setup can change without touching the original Windows project.
-- Current visible tabs: `Home`, `Create`, `Comp`, `Receive`, `Assignment`, `Payouts/Tabs`, `Profit`.
+- Repo: `C:\Users\User\Documents\Codex\2026-06-13\card-pipeline-mac`
+- Remote: `https://github.com/mikegrossbarth/card_pipeline_mac.git`
+- Branches kept current: `main` and `master`
+- Latest commit at handoff time: `85bda6c Remove duplicate manual create button`
+- Purpose: macOS-focused fork/copy so Mac setup and CourtYard automation can change without touching the Windows project.
+- Current visible tabs: `Home`, `Create`, `Comp`, `Receive`, `Assignment`, `Payouts/Tabs`, `Profit`
 - Mac setup walkthrough: `FIRST_RUN_SETUP.md`
 
-The old visible `Review` workflow was split into `Receive` and `Assignment`. Many internal Python names still use `review_*`; that is intentional legacy naming to avoid risky churn.
+The old visible `Review` workflow was split into `Receive` and `Assignment`. Many internal names still use `review_*`; that is intentional legacy naming to avoid risky churn.
 
-## Mac Port Changes
+## Latest Completed Work
 
-- Added `install_dependencies.sh`.
-- Added `run_card_pipeline.sh`.
-- Added double-click launcher `Run Card Pipeline.command`.
-- Added optional Finder launcher builder `create_macos_app.sh`.
-- Removed Windows-only `.bat` and `.vbs` launchers from this Mac copy.
-- Updated `.env.example` and example company paths to macOS Google Drive paths.
-- Updated Card Ladder extension docs to use POSIX-style paths.
-- Updated local identity fallback to use `LUCAS_DISPLAY_NAME`, then `$USER`, then `$USERNAME`.
-- Added Assignment Rules company list filters for name, active companies, and inactive companies.
-- Removed copied generated `work/` cache content and Python cache folders from the Mac copy.
+- Mac repo was brought forward with the Windows parser/company-sheet/manual-create work while preserving Mac-only CourtYard automation.
+- Arena Club assignment sheets now support both old and new Arena formats.
+- Rules handle broad labels like `Pre-1989` and `ALL Grades`.
+- Obvious duplicated-player parse mistakes such as `Tom Tom Brady` are treated as the intended player.
+- CY-style sheets can be ingested without confusing `Estimate` with `Purchase`.
+- `CY Estimate` and `CY Confidence` are preserved in imported sheets, working sheets, output sheets, company sheets, and display tables.
+- Assignment rules can choose their value source per company:
+  - `Comps`
+  - `Card Ladder value`
+  - `CY Estimate`
+- Company sheets now use one workbook per company with weekly tabs:
+  - `COMPANY SHEETS/<Company>/<Company>.xlsx`
+  - weekly tab name: `Week of YYYY-MM-DD`
+- Old legacy weekly company files remain readable for profit backfill.
+- Sunday at midnight rolls forward to the next Monday's company-sheet tab.
+- Create now has `Manual Entry` mode. Use the `+ Add row` line in the Create table, then double-click cells to edit. The extra toolbar button was removed.
+
+## Mac-Only CourtYard/CY Automation
+
+Mac has active CourtYard lookup support. Windows intentionally does not.
+
+Mac-only pieces include:
+
+- `comp_engine/cy_automation/`
+- `comp_engine/cy_automation/cy_macos.py`
+- `lookup_cy_buy_price`
+- comp source selector:
+  - `Card Ladder + CY`
+  - `Card Ladder`
+  - `CY`
+- CY-only runs close the CourtYard app after the last lookup.
+
+Keep this Mac-only unless the user explicitly requests Windows CourtYard support later.
+
+## Mac Port Setup Pieces
+
+- `install_dependencies.sh`
+- `run_card_pipeline.sh`
+- double-click launcher: `Run Card Pipeline.command`
+- optional Finder launcher builder: `create_macos_app.sh`
+- macOS Google Drive path examples in docs/config examples
+- Card Ladder extension docs use POSIX-style paths
+- local identity fallback uses `LUCAS_DISPLAY_NAME`, then `$USER`, then `$USERNAME`
 
 ## Project Layout
 
 - `app.py`: main Tkinter desktop app and UI workflows.
-- `assignment_engine.py`: company rule parsing, payout parsing, category/player matching, and best-company recommendation.
+- `assignment_engine.py`: company rules, payout parsing, category/player matching, and recommendation logic.
 - `assignment_config_ui.py`: Assignment Rules popup.
-- `intake_io.py`: spreadsheet import/export, receive marking, company-sheet append, and profit record extraction.
-- `shared_state.py`: atomic JSON writes and shared-folder lock helpers.
-- `google_sheets_import.py`: desktop OAuth flow and Google Sheets export/read helpers.
-- `comp_engine`: Card Ladder bridge, workbook rows, comp strategy, and screenshot OCR fallback.
-- `photo_tool`: bundled photo OCR helper used by Create and Receive.
+- `intake_io.py`: spreadsheet import/export, receive marking, company-sheet append, weekly tabs, archive/profit extraction helpers.
+- `shared_state.py`: atomic JSON writes and shared-folder locks.
+- `google_sheets_import.py`: OAuth and Google Sheets export/read helpers.
+- `comp_engine`: Card Ladder bridge, workbook row model, comp strategy, screenshot OCR fallback, and Mac CourtYard automation.
+- `photo_tool`: photo OCR helper used by Create and Receive.
 - `cardladder-autocomp/extension`: unpacked Chrome extension for Card Ladder automation.
-- `tests/test_shared_workflows.py`: committed offline regression suite.
+- `tests/test_shared_workflows.py`: offline regression suite.
 
 ## Required Mac Setup
 
-For a full setup, each Mac needs:
+Each Mac needs:
 
 - Google Chrome.
 - Python 3.11+ with Tkinter.
@@ -52,37 +87,26 @@ For a full setup, each Mac needs:
 - `Connect Google` completed once inside Assignment Rules.
 - Google Drive for desktop if using the shared Drive pipeline.
 - Card Ladder account, active Chrome login, and the unpacked extension loaded from `cardladder-autocomp/extension`.
+- CourtYard installed/configured for Mac CY lookup workflows.
 - Shared pipeline folder selected through the `Working Folder` button.
 - Active assignment companies with rule and payout sources.
-
-## Local-Only Files
-
-Do not commit these:
-
-- `.env`
-- `.venv`
-- `lucas_settings.json`
-- `lucas_user_identity.json`
-- `lucas_google_sheets_token.json`
-- `assignment_companies.json`
-- generated debug screenshots/logs
-- `work/`
-- `outputs/`
 
 ## Shared Pipeline Folder
 
 The user chooses the actual `WORKING SHEETS` folder with the `Working Folder` button. L.U.C.A.S uses that folder's parent as the pipeline root.
 
-Expected shared root shape:
+Expected shared root:
 
 ```text
 CARD_PIPELINE
   WORKING SHEETS
   INCOMING SHEETS
   RECEIVED SHEETS
+  ARCHIVED SHEETS
   COMPANY SHEETS
   ASSIGNMENT RULES
   sheet_markers.json
+  weekly_company_sheets.json
   profit_ledger.json
   unassigned_players.json
   assignment_player_overrides.json
@@ -95,39 +119,67 @@ Typical Google Drive for desktop location on macOS:
 /Users/yourname/Library/CloudStorage/GoogleDrive-your.email@gmail.com/My Drive/CARD_PIPELINE/WORKING SHEETS
 ```
 
-Each user keeps their own app folder, `.env`, OAuth token, and Card Ladder extension install. Shared writes use `.locks` plus atomic JSON writes to reduce Drive conflict risk.
+Each user keeps their own app folder, `.env`, OAuth token, local app settings, Card Ladder extension install, and CourtYard local setup.
 
-## Workflows
+## Local-Only Files
+
+Do not commit:
+
+- `.env`
+- `.venv`
+- `lucas_settings.json`
+- `lucas_user_identity.json`
+- `lucas_google_sheets_token.json`
+- `assignment_companies.json`
+- generated debug screenshots/logs
+- generated `work/` or `outputs/` content
+
+## Workflow Notes
 
 ### Home
 
-Home lists `Incoming`, `Working`, and `Received` sheets. `Edit Markers` handles incoming state, tracking number, all-received state, and assigned person. Payment state is handled in `Payouts/Tabs`.
+Home lists `Incoming`, `Working`, and `Received` sheets. Payment state is handled in `Payouts/Tabs`.
 
 ### Create
 
-Create supports barcode scanner rows, photo OCR rows, and existing spreadsheet import. Output is saved as a working sheet.
+Create supports:
+
+- `Barcode Scanner`
+- `Manual Entry`
+- `Photo OCR`
+- `Existing Spreadsheet`
+
+Manual Entry uses the `+ Add row` line in the Create table. Double-click table cells to edit cert, grader, card, purchase, Card Ladder, comps, CY Estimate, or CY Confidence.
 
 ### Comp
 
-Comp runs Card Ladder through the local bridge and Chrome extension. It writes Card Ladder value, comps, assignment results, and statuses. Best-company assignment is recalculated when comp values are added or edited.
+Comp can run Card Ladder, CY, or both depending on the comp source selector. Best-company assignment recalculates for rows touched by the current comp run, not every row merely because a sheet loaded.
 
 ### Receive
 
-Receive is for physically receiving cards and marking them received in sheets. If `Company Pile` is checked for a row and the row has a real Best Company, marking received appends that card to the company's weekly sheet under `COMPANY SHEETS/<Company Name>`.
-
-Rows marked `NOBODY TAKES` are not appended to company sheets.
+Receive marks cards received in source sheets. If `Company Pile` is checked and the row has a real Best Company, marking received appends that card to the current weekly tab in the company workbook. `NOBODY TAKES` rows are not appended.
 
 ### Assignment
 
-Assignment is for loading received/unassigned sheets and recalculating best company/payout when needed.
-
-### Payouts/Tabs
-
-Tracks active balances by assigned person. It includes incoming/unreceived and received/unpaid sheets. Clicking active balances can mark all matching person sheets paid.
+Assignment can recalculate best company and payout using the configured value source. Failed valued assignments are recorded in `unassigned_players.json`.
 
 ### Profit
 
-Profit reads `profit_ledger.json` and backfills from company sheets. It has a person filter, daily profit line chart, `Sold Cards` view, and `Sold Sheets` grouped view.
+Profit reads `profit_ledger.json`, current company workbook tabs, and legacy weekly company files. It includes person filters, daily profit chart, `Sold Cards`, and grouped `Sold Sheets`.
+
+## Assignment Rules
+
+Assignment companies live in local-only `assignment_companies.json`.
+
+Important behavior:
+
+- Companies can choose `Comps`, `Card Ladder value`, or `CY Estimate` as assignment value source.
+- If a company requires Card Ladder value and the row has none, that company is ignored.
+- If a company requires CY Estimate and the row has none, that company is ignored.
+- Default value source remains comps first, then Card Ladder value, then CY Estimate.
+- A company must accept the card and have a matching payout tier/rate.
+- Highest estimated payout wins.
+- If no company can take the card, Best Company becomes `NOBODY TAKES`.
 
 ## Card Ladder
 
@@ -141,25 +193,32 @@ The desktop bridge binds to the first available port from `8765` to `8772`. The 
 
 Common gotchas:
 
-- user must be logged into Card Ladder in Chrome
-- old unpacked extension versions should be removed/disabled
-- app warns if the extension version seen by the bridge is stale
-- no-results pages should still preserve the Card Ladder card title when available
-- BGS OCR rejects subgrades as slab grades
+- User must be logged into Card Ladder in Chrome.
+- Old unpacked extension versions should be removed or disabled.
+- App warns if the extension version seen by the bridge is stale.
+- No-results pages preserve the Card Ladder title when available.
 
 ## Tests And Verification
 
-Primary offline test suite:
+Recent verification:
+
+```text
+C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m py_compile app.py
+C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m unittest tests.test_shared_workflows -v
+```
+
+Last full Mac result in this Windows Codex workspace: `39 tests OK`.
+
+On an actual Mac, prefer:
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
-```
-
-Useful sanity checks:
-
-```bash
 .venv/bin/python -m compileall -q .
 .venv/bin/python -c "import app; root = app.CardPipelineApp(); root.update_idletasks(); root.destroy(); print('app startup ok')"
 ```
 
-Current limitation: the Mac launcher and setup scripts were authored in this Windows Codex workspace. They should be validated on an actual Mac before calling the port fully production-ready.
+## Current Git State At Handoff
+
+- `main` and `master` should both point at `85bda6c`.
+- Working tree was clean before this handoff file update.
+- After editing this handoff, commit and push both `main` and `master`.
