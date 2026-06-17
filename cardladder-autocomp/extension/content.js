@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-dropdown-position-v6";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-parent-arrow-v7";
 let lastGraderOpenDebug = [];
 const COMP_SOURCE_LABELS = [
   "eBay",
@@ -742,7 +742,7 @@ function graderFieldRect(modal, control) {
 
 function clickGraderExpandIcon(modal, control) {
   const controlRect = control.getBoundingClientRect();
-  const icons = [...modal.querySelectorAll("svg, [class*='Select-icon'], [data-testid*='ArrowDropDown'], span, div, button")]
+  const icons = [...modal.querySelectorAll("i, svg, [class*='material-icons'], [class*='arrow'], [class*='Select-icon'], [data-testid*='ArrowDropDown'], span, div, button")]
     .filter((el) => isVisible(el))
     .map((el) => ({
       el,
@@ -756,7 +756,10 @@ function clickGraderExpandIcon(modal, control) {
       rect.left >= controlRect.left &&
       rect.right <= controlRect.right + 24
     )
-    .sort((a, b) => b.rect.left - a.rect.left);
+    .sort((a, b) =>
+      arrowIconScore(a) - arrowIconScore(b) ||
+      b.rect.left - a.rect.left
+    );
   const icon = icons[0];
   if (icon) {
     rememberGraderOpenDebug("icon", icon.el, icon.rect);
@@ -766,6 +769,16 @@ function clickGraderExpandIcon(modal, control) {
   }
   rememberGraderOpenDebug("icon-missing", control);
   return false;
+}
+
+function arrowIconScore(item) {
+  const text = `${item.text || ""} ${item.el.tagName || ""}`.toLowerCase();
+  let score = 0;
+  if (!/expand_more|arrow_drop_down|arrowdropdown|select-icon|material-icons|arrow|▾|▼/i.test(text)) score += 10;
+  if (/^expand_more\b/i.test(item.text)) score -= 6;
+  if (item.el.matches?.("i, svg, [class*='material-icons'], [class*='arrow']")) score -= 4;
+  if (item.rect.width > 48 || item.rect.height > 48) score += 5;
+  return score;
 }
 
 function openDropdownWithKeyboard(control) {
@@ -1410,18 +1423,33 @@ function clickAtPoint(x, y, reason = "point") {
     target.closest("[role='combobox']"),
     target.closest("[aria-haspopup='listbox']"),
     target.closest("[aria-expanded]"),
+    target.closest("i, svg, [class*='material-icons'], [class*='arrow']"),
     target.closest(".select-input"),
     target.closest("[class*='select-input']"),
+    target.closest("[class*='select']"),
+    target.closest("[class*='dropdown']"),
+    target.closest("[class*='field']"),
     target.closest(".MuiSelect-select"),
     target.closest(".MuiInputBase-root"),
     target.closest("button, [role='button']"),
     target.closest("label"),
+    ...clickableAncestors(target, 5),
   ]).filter(Boolean);
-  const clickNodes = candidates.length ? candidates.slice(0, 4) : [target];
+  const clickNodes = candidates.length ? candidates.slice(0, 8) : [target];
   rememberGraderOpenDebug(`click-${reason}`, target, null, `${Math.round(x)},${Math.round(y)}`);
   for (const node of clickNodes) {
     clickLikeHuman(node, x, y, reason);
   }
+}
+
+function clickableAncestors(node, maxDepth = 4) {
+  const ancestors = [];
+  let current = node?.parentElement;
+  while (current && ancestors.length < maxDepth) {
+    if (isVisible(current)) ancestors.push(current);
+    current = current.parentElement;
+  }
+  return ancestors;
 }
 
 function clickLikeHuman(node, clientX = null, clientY = null, reason = "click") {
@@ -1430,14 +1458,17 @@ function clickLikeHuman(node, clientX = null, clientY = null, reason = "click") 
   const x = clientX ?? rect.left + rect.width / 2;
   const y = clientY ?? rect.top + rect.height / 2;
   rememberGraderOpenDebug(reason, node, rect, `${Math.round(x)},${Math.round(y)}`);
-  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
+  if (typeof node.focus === "function") node.focus();
+  ["pointerover", "mouseover", "pointerenter", "mouseenter", "pointermove", "mousemove", "pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
+    const pressed = /down|move/.test(type);
     if (type.startsWith("pointer") && window.PointerEvent) {
-      node.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+      node.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: pressed ? 1 : 0, pointerId: 1, pointerType: "mouse", isPrimary: true }));
     } else {
-      node.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }));
+      node.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: pressed ? 1 : 0, detail: 1 }));
     }
   });
   if (typeof node.click === "function") node.click();
+  node.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, detail: 2 }));
 }
 
 function uniqueElements(items) {
