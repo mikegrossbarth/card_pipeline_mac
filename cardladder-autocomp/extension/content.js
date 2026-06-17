@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-16-dom-comp-sweep-v1";
+const CARDLADDER_CONTENT_VERSION = "2026-06-10-no-results-profile-v2";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -64,12 +64,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "CARDLADDER_EXTRACT_DOM_RESULT") {
     sendResponse(extractDomResult(message.row || {}));
-    return true;
-  }
-  if (message.type === "CARDLADDER_SCROLL_CAPTURE_AREA") {
-    scrollCaptureArea(message.position || "top")
-      .then(() => sendResponse({ ok: true, version: CARDLADDER_CONTENT_VERSION }))
-      .catch((error) => sendResponse({ ok: false, error: error.message, version: CARDLADDER_CONTENT_VERSION }));
     return true;
   }
   if (message.type === "CARDLADDER_CHECK_INVALID_CERT_TOAST") {
@@ -801,50 +795,15 @@ function readCardLadderValue() {
 
   if (clNode) {
     const localText = collectNearbyText(clNode.el);
-    const localMatch = localText.replace(/\s+/g, " ").match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
+    const localMatch = localText.replace(/\s+/g, " ").match(/\$?\s*([\d,]+(?:\.\d{1,2})?)/);
     if (localMatch) return Number(localMatch[1].replace(/,/g, ""));
   }
-
-  const visibleValue = readVisibleCardLadderValue();
-  if (visibleValue != null) return visibleValue;
 
   const moneyValues = [...text.matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)/g)]
     .map((match) => Number(match[1].replace(/,/g, "")))
     .filter((value) => Number.isFinite(value) && value > 0);
 
   return moneyValues.length === 1 ? moneyValues[0] : null;
-}
-
-function readVisibleCardLadderValue() {
-  const items = visibleTextItems()
-    .filter((item) => item.text.length <= 160);
-  const labels = items.filter((item) => /\b(?:C\s*L|Card\s*Ladder)\s*Value\b/i.test(item.text));
-  for (const label of labels) {
-    const inLabel = parseMoneyFromText(label.text);
-    if (inLabel != null) return inLabel;
-
-    const parentText = collectNearbyText(label.el).replace(/\s+/g, " ");
-    const nearbyInParent = parentText.match(/\b(?:C\s*L|Card\s*Ladder)\s*Value\b.{0,120}?\$\s*([\d,]+(?:\.\d{1,2})?)/i);
-    if (nearbyInParent) return Number(nearbyInParent[1].replace(/,/g, ""));
-
-    const labelRect = label.rect;
-    const nearbyMoney = items
-      .map((item) => ({
-        ...item,
-        value: parseMoneyFromText(item.text),
-        verticalDistance: Math.abs((item.rect.top + item.rect.bottom) / 2 - (labelRect.top + labelRect.bottom) / 2),
-        horizontalDistance: Math.max(0, item.rect.left - labelRect.right),
-      }))
-      .filter((item) =>
-        item.value != null
-        && item.rect.top > labelRect.top - 80
-        && item.rect.top < labelRect.bottom + 160
-        && item.rect.left > labelRect.left - 40
-      )
-      .sort((a, b) => (a.verticalDistance + a.horizontalDistance / 4) - (b.verticalDistance + b.horizontalDistance / 4))[0];
-    if (nearbyMoney?.value != null) return nearbyMoney.value;
-  }
-  return null;
 }
 
 function extractDomResult(row = {}) {
@@ -865,7 +824,7 @@ function extractDomResult(row = {}) {
   }
   const value = readCardLadderValue();
   const profile = extractProfileFromText(text);
-  const comps = mergeComps(extractCompsFromDom(), extractCompsFromText(text), extractCompsFromVisualRows());
+  const comps = extractCompsFromText(text);
   const resultCount = extractResultCount(text);
   return {
     ...row,
@@ -881,7 +840,7 @@ function extractDomResult(row = {}) {
       profileGrade: profile.grade,
       resultCount,
       comps,
-      evidence: comps.length ? "Extracted from visible Card Ladder page elements." : "Extracted from Card Ladder page text.",
+      evidence: "Extracted from Card Ladder page text.",
       debugImage: "",
     },
     pageUrl: location.href,
@@ -929,7 +888,6 @@ function cleanProfileTitle(value) {
   let title = String(value || "").replace(/\s+/g, " ").trim();
   const tailPatterns = [
     /\s+\bclose\s+\$?\d[\d,]*(?:\.\d{1,2})?.*$/i,
-    /\s+\bclose\s+search[_\s-]*off\b.*$/i,
     /\s+[x×]\s*$/i,
     /\s+\bthere\s+are\s+no\s+results\b.*$/i,
     /\s+\btry\s+searching\b.*$/i,
@@ -953,142 +911,11 @@ function extractCompsFromText(text) {
     const sourceMatch = sourceLineMatch(lines[i]);
     if (!sourceMatch) continue;
     const chunk = lines.slice(i, i + 8).join(" ");
-    comps.push(...parseCompChunks(chunk, sourceMatch));
-  }
-  comps.push(...parseCompChunks(lines.join(" ")));
-  return dedupeComps(comps).slice(0, 5);
-}
-
-function extractCompsFromDom() {
-  const items = visibleTextItems()
-    .filter((item) => item.text && item.text.length <= 500);
-  const comps = [];
-  for (const sourceItem of items) {
-    if (comps.length >= 10) break;
-    const sourceMatch = sourceLineMatch(sourceItem.text) || sourceItem.text.match(COMP_SOURCE_PATTERN);
-    if (!sourceMatch) continue;
-    const container = nearestCompContainer(sourceItem.el);
-    const chunk = container ? visibleText(container) : collectNearbyText(sourceItem.el);
-    comps.push(...parseCompChunks(chunk, sourceMatch));
-  }
-  return dedupeComps(comps).slice(0, 5);
-}
-
-function extractCompsFromVisualRows() {
-  const items = visibleTextItems()
-    .filter((item) => item.text && item.text.length <= 260)
-    .filter((item) => !/\b(?:CL|Card\s*Ladder)\s*Value\b/i.test(item.text))
-    .filter((item) => !/^(?:Date Sold|Type|Price|Source|Profile|Grade|Grader)$/i.test(item.text));
-  const priceItems = items
-    .map((item) => ({ ...item, price: priceTextFromItem(item) }))
-    .filter((item) => item.price);
-  const comps = [];
-  for (const priceItem of priceItems) {
-    if (comps.length >= 12) break;
-    const band = rowBandItems(items, priceItem);
-    const sourceItem = nearestSourceItem(band, priceItem) || nearestSourceItem(items, priceItem);
-    const dateItem = nearestDateItem(band, priceItem) || nearestDateItem(items, priceItem);
-    if (!sourceItem || !dateItem) continue;
-    const title = visualRowTitle(band, sourceItem, dateItem, priceItem);
-    const comp = {
-      source: sourceItem.text,
-      title,
-      date_sold: dateItem.text.match(compDatePattern())?.[0] || dateItem.text,
-      sale_type: (band.map((item) => item.text).join(" ").match(/\b(Auction|Best Offer|Buy It Now|Fixed Price|BIN)\b/i) || [""])[0],
-      price: priceItem.price,
-    };
+    const comp = parseCompChunk(chunk, sourceMatch);
+    if (!comp) continue;
     comps.push(comp);
   }
   return dedupeComps(comps).slice(0, 5);
-}
-
-function rowBandItems(items, anchor) {
-  const anchorMid = (anchor.rect.top + anchor.rect.bottom) / 2;
-  const sameLine = items.filter((item) => {
-    const mid = (item.rect.top + item.rect.bottom) / 2;
-    return Math.abs(mid - anchorMid) <= Math.max(22, anchor.rect.height * 1.8);
-  });
-  if (sameLine.length >= 3) return sameLine.sort((a, b) => a.rect.left - b.rect.left || a.rect.top - b.rect.top);
-
-  const container = nearestCompContainer(anchor.el);
-  if (container) {
-    const containerRect = container.getBoundingClientRect();
-    return items
-      .filter((item) =>
-        item.rect.top >= containerRect.top - 4 &&
-        item.rect.bottom <= containerRect.bottom + 4 &&
-        item.rect.left >= containerRect.left - 4 &&
-        item.rect.right <= containerRect.right + 4
-      )
-      .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left);
-  }
-  return sameLine;
-}
-
-function nearestSourceItem(items, anchor) {
-  return items
-    .filter((item) => sourceLineMatch(item.text) || item.text.match(COMP_SOURCE_PATTERN))
-    .map((item) => ({ ...item, distance: rectDistance(item.rect, anchor.rect) }))
-    .filter((item) => item.distance < 900)
-    .sort((a, b) => a.distance - b.distance)[0] || null;
-}
-
-function nearestDateItem(items, anchor) {
-  return items
-    .filter((item) => compDatePattern().test(item.text))
-    .map((item) => ({ ...item, distance: rectDistance(item.rect, anchor.rect) }))
-    .filter((item) => item.distance < 900)
-    .sort((a, b) => a.distance - b.distance)[0] || null;
-}
-
-function visualRowTitle(items, sourceItem, dateItem, priceItem) {
-  const sourceText = sourceItem.text;
-  const dateText = dateItem.text;
-  const priceText = priceItem.text;
-  const pieces = items
-    .filter((item) => item !== sourceItem && item !== dateItem && item !== priceItem)
-    .map((item) => item.text)
-    .filter((text) =>
-      text &&
-      text !== sourceText &&
-      text !== dateText &&
-      text !== priceText &&
-      !compDatePattern().test(text) &&
-      !/\$\s*[\d,]+(?:\.\d{1,2})?/.test(text) &&
-      !/^(?:Auction|Best Offer|Buy It Now|Fixed Price|BIN)$/i.test(text) &&
-      !sourceLineMatch(text) &&
-      !text.match(COMP_SOURCE_PATTERN)
-    );
-  return cleanCompTitle(pieces.join(" "));
-}
-
-function priceTextFromItem(item) {
-  const match = String(item.text || "").match(/\$\s*[\d,]+(?:\.\d{1,2})?/);
-  return match ? match[0].replace(/\s+/g, "") : "";
-}
-
-function rectDistance(a, b) {
-  const ax = (a.left + a.right) / 2;
-  const ay = (a.top + a.bottom) / 2;
-  const bx = (b.left + b.right) / 2;
-  const by = (b.top + b.bottom) / 2;
-  return Math.hypot(ax - bx, ay - by);
-}
-
-function nearestCompContainer(el) {
-  let current = el;
-  for (let depth = 0; depth < 7 && current; depth += 1) {
-    const text = visibleText(current);
-    if (text.length > 20 && text.length < 1800 && compDatePattern().test(text) && /\$\s*[\d,]+(?:\.\d{1,2})?/.test(text)) {
-      return current;
-    }
-    current = current.parentElement;
-  }
-  return el.closest?.('[role="row"], tr, li, article, [class*="row"], [class*="card"], [class*="sale"], [class*="result"]') || null;
-}
-
-function mergeComps(...groups) {
-  return dedupeComps(groups.flat().filter(Boolean)).slice(0, 5);
 }
 
 function sourceLineMatch(line) {
@@ -1128,27 +955,6 @@ function parseCompChunk(chunk, sourceLineMatchResult = null) {
     sale_type: saleType,
     price,
   };
-}
-
-function parseCompChunks(chunk, sourceLineMatchResult = null) {
-  chunk = String(chunk || "").replace(/\s+/g, " ").trim();
-  if (!chunk) return [];
-  if (sourceLineMatchResult) {
-    const direct = parseCompChunk(chunk, sourceLineMatchResult);
-    if (direct) return [direct];
-  }
-  const segments = chunk
-    .split(new RegExp(`(?=\\b(?:${COMP_SOURCE_PATTERN_TEXT})\\b)`, "i"))
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const comps = [];
-  for (const segment of segments) {
-    const sourceMatch = sourceLineMatch(segment) || segment.match(COMP_SOURCE_PATTERN);
-    if (!sourceMatch) continue;
-    const comp = parseCompChunk(segment, sourceMatch);
-    if (comp) comps.push(comp);
-  }
-  return comps;
 }
 
 function compDatePattern() {
@@ -1279,23 +1085,6 @@ async function waitForClValue() {
     if (/\b(?:CL|Card\s*Ladder)\s*Value\b/i.test(document.body.innerText || "")) return;
     await sleep(500);
   }
-}
-
-async function scrollCaptureArea(position) {
-  const candidates = [...document.querySelectorAll("main, [role='main'], [class*='content'], [class*='results'], [class*='sales'], [class*='history'], body, html")]
-    .filter((el) => {
-      const style = getComputedStyle(el);
-      return /(auto|scroll)/i.test(`${style.overflowY} ${style.overflow}`) || el.scrollHeight > el.clientHeight + 80;
-    })
-    .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
-  const target = candidates[0] || document.scrollingElement || document.documentElement;
-  const maxScroll = Math.max(0, target.scrollHeight - target.clientHeight);
-  const ratio = position === "bottom" ? 1 : position === "middle" ? 0.5 : 0;
-  target.scrollTop = maxScroll * ratio;
-  if (target !== document.scrollingElement && target !== document.documentElement) {
-    window.scrollTo?.(0, Math.min(document.documentElement.scrollHeight, maxScroll * ratio));
-  }
-  await sleep(500);
 }
 
 function findClickable(pattern) {
@@ -1461,24 +1250,6 @@ function visibleText(el) {
   const box = el.getBoundingClientRect();
   if (style.display === "none" || style.visibility === "hidden" || box.width === 0 || box.height === 0) return "";
   return (el.innerText || el.textContent || el.getAttribute("aria-label") || el.title || "").trim();
-}
-
-function visibleTextItems() {
-  return [...document.querySelectorAll("body *")]
-    .filter((el) => isVisible(el))
-    .map((el) => ({
-      el,
-      text: visibleText(el).replace(/\s+/g, " ").trim(),
-      rect: el.getBoundingClientRect(),
-    }))
-    .filter((item) => item.text);
-}
-
-function parseMoneyFromText(text) {
-  const match = String(text || "").match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
-  if (!match) return null;
-  const value = Number(match[1].replace(/,/g, ""));
-  return Number.isFinite(value) ? value : null;
 }
 
 function isVisible(node) {
