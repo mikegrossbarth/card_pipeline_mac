@@ -1246,7 +1246,9 @@ class CardPipelineApp(tk.Tk):
                 continue
             for path in sorted(directory.glob("*.xlsx"), key=lambda item: item.name.lower()):
                 marker = self.home_sheet_markers.get(self._home_sheet_key(stage, path.name), {})
-                person = str(marker.get("assigned_person") or "").strip() or "Unassigned"
+                person = str(marker.get("assigned_person") or "").strip()
+                if not person:
+                    continue
                 received_certs = None if stage == "Received" else self._received_certs_in_workbook(path)
                 if received_certs == set():
                     continue
@@ -3189,6 +3191,21 @@ class CardPipelineApp(tk.Tk):
         removed = len(ledger) - len(kept)
         if removed:
             self._save_profit_ledger(kept)
+        return removed
+
+    def _remove_inventory_rows_for_source(self, source_sheet_name: str) -> int:
+        source_name = Path(str(source_sheet_name or "")).name.strip().lower()
+        if not source_name:
+            return 0
+        ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        kept = [
+            record
+            for record in ledger
+            if Path(str(record.get("source_sheet") or "")).name.strip().lower() != source_name
+        ]
+        removed = len(ledger) - len(kept)
+        if removed:
+            self._save_inventory_ledger(kept)
         return removed
 
     def _sheet_path_for_stage(self, kind: str, name: str) -> Path:

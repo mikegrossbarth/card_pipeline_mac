@@ -1246,6 +1246,71 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.WORKING_SHEETS_DIR = old_working
                 app.COMPANY_SHEETS_DIR = old_company
 
+    def test_received_inventory_reconcile_skips_unassigned_sheet_markers(self) -> None:
+        class ReconcileDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _company_sheet_source_cert_keys = app.CardPipelineApp._company_sheet_source_cert_keys
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            received_dir.mkdir()
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Comps"])
+            sheet.append(["151740304", "PSA", "Deleted Test Card", 40, 100])
+            workbook.save(received_dir / "HAMBONE_MIKEY_6_16_TEST.xlsx")
+
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_company = app.COMPANY_SHEETS_DIR
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.COMPANY_SHEETS_DIR = root / "COMPANY SHEETS"
+            dummy = ReconcileDummy()
+            dummy.home_sheet_markers = {}
+            try:
+                self.assertEqual(dummy._received_inventory_candidate_records(), [])
+            finally:
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.COMPANY_SHEETS_DIR = old_company
+
+    def test_inventory_rows_can_be_removed_for_deleted_source_sheet(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _remove_inventory_rows_for_source = app.CardPipelineApp._remove_inventory_rows_for_source
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                dummy._save_inventory_ledger([
+                    dummy._normalize_inventory_record({"assigned_person": "Unassigned", "cert_number": "151740304", "source_sheet": "HAMBONE_MIKEY_6_16_TEST.xlsx"}),
+                    dummy._normalize_inventory_record({"assigned_person": "Hambone", "cert_number": "222", "source_sheet": "SCOTSBORO_HAMBONE_6_16_26.xlsx"}),
+                ])
+
+                self.assertEqual(dummy._remove_inventory_rows_for_source("HAMBONE_MIKEY_6_16_TEST.xlsx"), 1)
+
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger[0]["source_sheet"], "SCOTSBORO_HAMBONE_6_16_26.xlsx")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_delete_person_records_unassigns_markers_inventory_and_profit(self) -> None:
         class DeletePersonDummy:
             _money_value = app.CardPipelineApp._money_value
