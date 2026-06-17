@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-cert-modal-plus-v19";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-select-reopens-modal-v20";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -74,6 +74,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse(graderSelectionState(message.grader || "PSA"));
     return true;
   }
+  if (message.type === "CARDLADDER_MODAL_STATE") {
+    sendResponse(certModalState());
+    return true;
+  }
   if (message.type === "CARDLADDER_EXTRACT_DOM_RESULT") {
     sendResponse(extractDomResult(message.row || {}));
     return true;
@@ -144,7 +148,7 @@ async function prepareCertModal() {
   if (!(await waitForCertSearchModal(4500))) {
     throw new Error("Could not open cert search modal. " + certModeDiagnostics());
   }
-  return { ok: true, version: CARDLADDER_CONTENT_VERSION };
+  return { ok: true, version: CARDLADDER_CONTENT_VERSION, modal: certModalState() };
 }
 
 async function submitPreparedCertModal(row) {
@@ -538,24 +542,29 @@ async function chooseGrader(grader) {
 async function selectGraderForAutomation(grader) {
   const normalized = String(grader || "").toUpperCase();
   const optionLabel = cardLadderGraderLabel(normalized);
-  const modal = certSearchModal();
+  let modal = certSearchModal();
   if (!modal) {
-    return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Open the SEARCH SALES BY CERT # modal first." };
+    await prepareCertModal();
+    modal = certSearchModal();
+  }
+  if (!modal) {
+    return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Open the SEARCH SALES BY CERT # modal first.", modal: certModalState() };
   }
   const control = findVisibleGraderBar(modal) || findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
   if (control && selectedGraderMatches(control, normalized)) {
     return { ok: true, version: CARDLADDER_CONTENT_VERSION, grader: normalized, selectedLabel: optionLabel, skipped: "already selected" };
   }
   await chooseGrader(normalized);
-  const afterControl = findVisibleGraderBar(modal) || findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
-  if (!selectedGraderMatches(afterControl, normalized) && !hiddenGraderValueMatches(modal, normalized)) {
+  const afterModal = certSearchModal() || modal;
+  const afterControl = findVisibleGraderBar(afterModal) || findGraderControlInModal(afterModal) || findFieldControlInModal(afterModal, /grader/i);
+  if (!selectedGraderMatches(afterControl, normalized) && !hiddenGraderValueMatches(afterModal, normalized)) {
     return {
       ok: false,
       version: CARDLADDER_CONTENT_VERSION,
       grader: normalized,
       selectedLabel: optionLabel,
       selectedText: selectedControlText(afterControl),
-      error: `Card Ladder grader stayed on ${selectedControlText(afterControl) || "unknown"} instead of ${optionLabel}. ${graderSelectionDebug(modal, optionLabel)}`,
+      error: `Card Ladder grader stayed on ${selectedControlText(afterControl) || "unknown"} instead of ${optionLabel}. ${graderSelectionDebug(afterModal, optionLabel)}`,
     };
   }
   return {
@@ -1618,6 +1627,22 @@ function certSearchModal() {
 
   candidates.sort((a, b) => a.roleScore - b.roleScore || a.area - b.area);
   return candidates[0]?.el || null;
+}
+
+function certModalState() {
+  const modal = certSearchModal();
+  const rect = modal?.getBoundingClientRect?.();
+  return {
+    open: Boolean(modal),
+    version: CARDLADDER_CONTENT_VERSION,
+    text: modal ? visibleText(modal).replace(/\s+/g, " ").slice(0, 240) : "",
+    rect: rect ? {
+      left: Math.round(rect.left),
+      top: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    } : null,
+  };
 }
 
 function findFieldControlInModal(modal, labelPattern, preferredSelector = "input, textarea, [role='combobox'], select, button, div") {
