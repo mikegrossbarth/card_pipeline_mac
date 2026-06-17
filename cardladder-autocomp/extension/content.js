@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-dropdown-open-v2";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-same-row-v3";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -613,12 +613,13 @@ function findGraderControlInModal(modal) {
     const controls = [...modal.querySelectorAll("select, [role='combobox'], button, input, div")]
       .filter((el) => isVisible(el) && el !== label && !label.contains(el))
       .map((el) => ({ el, rect: el.getBoundingClientRect(), text: selectedControlText(el), rawText: visibleText(el).replace(/\s+/g, " ").trim() }))
-      .filter(({ rect }) =>
-        rect.top >= labelRect.bottom - 10 &&
-        rect.top <= labelRect.bottom + 95 &&
-        rect.left >= labelRect.left - 16 &&
-        rect.left <= labelRect.left + 620
-      )
+      .filter(({ rect }) => {
+        const overlapsLabelRow = rect.top <= labelRect.bottom + 35 && rect.bottom >= labelRect.top - 10;
+        const belowLabel = rect.top >= labelRect.bottom - 10 && rect.top <= labelRect.bottom + 95;
+        return (overlapsLabelRow || belowLabel) &&
+          rect.left >= labelRect.left - 16 &&
+          rect.left <= labelRect.left + 620;
+      })
       .filter(({ rect, text }) =>
         rect.width >= 80 &&
         rect.height >= 20 &&
@@ -678,6 +679,11 @@ function graderFieldRect(modal, control) {
     .sort((a, b) => a.rect.top - b.rect.top)[0];
 
   if (!label) return controlRect;
+
+  const overlapsLabelRow = controlRect.top <= label.rect.bottom + 18 && controlRect.bottom >= label.rect.top - 8;
+  if (overlapsLabelRow && controlRect.width >= 60 && controlRect.height >= 18) {
+    return controlRect;
+  }
 
   const top = Math.max(label.rect.bottom - 4, controlRect.top);
   const height = Math.max(42, Math.min(56, controlRect.height || 48));
