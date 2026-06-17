@@ -460,6 +460,80 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertTrue(decisions["Lower"].accepted)
         self.assertFalse(decisions["Rejected"].accepted)
 
+    def test_person_payout_policy_locks_companies_and_overrides_rates(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="1",
+            grader="PSA",
+            card_title="2019 Panini Prizm Stephen Curry Silver PSA 10",
+            card_ladder_comps_average=100,
+        )
+        policies = assignment_engine.parse_person_policies(
+            "Person,Company,Min,Max,Rate\n"
+            "Lucas,Arena Club,0,,95%\n"
+            "Mikey,Arena Club,0,,90%\n"
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Arena Club",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("basketball", 10, 500)]),
+                    [assignment_engine.PayoutTier(10, 500, 0.8, "NBA")],
+                ),
+                assignment_engine.AssignmentCompany(
+                    "Other Buyer",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("basketball", 10, 500)]),
+                    [assignment_engine.PayoutTier(10, 500, 1.0, "NBA")],
+                ),
+            ],
+            person_policies=policies,
+        )
+
+        lucas = engine.recommend(row, person="Lucas")
+        mikey = engine.recommend(row, person="Mikey")
+        unlisted = engine.recommend(row, person="Unlisted")
+        lucas_decisions = {decision.company: decision for decision in engine.evaluate(row, person="Lucas")}
+
+        self.assertEqual(lucas.company, "Arena Club")
+        self.assertEqual(lucas.payout, 95)
+        self.assertEqual(mikey.company, "Arena Club")
+        self.assertEqual(mikey.payout, 90)
+        self.assertEqual(unlisted.company, "Other Buyer")
+        self.assertEqual(unlisted.payout, 100)
+        self.assertFalse(lucas_decisions["Other Buyer"].accepted)
+        self.assertIn("not allowed", lucas_decisions["Other Buyer"].reason)
+
+    def test_assignment_engine_loads_person_payout_source_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            policy_path = root / "person-payouts.csv"
+            config_path = root / "assignment_companies.json"
+            policy_path.write_text(
+                "Person,Company,Rate\nLucas,Arena Club,95%\n",
+                encoding="utf-8",
+            )
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "person_payouts_source": str(policy_path),
+                        "companies": [
+                            {
+                                "name": "Arena Club",
+                                "accept_all": True,
+                                "rate": "80%",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            engine = assignment_engine.AssignmentEngine.load(config_path)
+            row = WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Test Card", card_ladder_comps_average=100)
+
+            self.assertEqual(engine.recommend(row, person="Lucas").payout, 95)
+            self.assertEqual(engine.recommend(row, person="Other").payout, 80)
+
     def test_company_can_prefer_card_ladder_value_over_comps(self) -> None:
         row = WorkbookRow(
             excel_row=2,
@@ -764,6 +838,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_failed_assignment_is_labeled_nobody_takes_and_recorded(self) -> None:
         class Dummy:
             _apply_recommendations = app.CardPipelineApp._apply_recommendations
+            _assignment_person_for_row = app.CardPipelineApp._assignment_person_for_row
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
             _load_unassigned_players = app.CardPipelineApp._load_unassigned_players
             _save_unassigned_players = app.CardPipelineApp._save_unassigned_players
             _record_unassigned_player = app.CardPipelineApp._record_unassigned_player
@@ -805,6 +882,25 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.UNASSIGNED_PLAYERS_PATH = old_unassigned
+
+    def test_assignment_person_for_row_uses_sheet_marker(self) -> None:
+        class Dummy:
+            _assignment_person_for_row = app.CardPipelineApp._assignment_person_for_row
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+
+        dummy = Dummy()
+        dummy.comp_sheet_sources = {}
+        dummy.review_sheet_sources = {}
+        dummy.intake_sheet_sources = {}
+        dummy.row_sources = {2: "Lot A.xlsx"}
+        dummy.review_sources = {}
+        dummy.intake_sources = {}
+        dummy.selected_working_sheet = types.SimpleNamespace(get=lambda: "")
+        dummy.home_sheet_markers = {"Working|Lot A.xlsx": {"assigned_person": "Lucas"}}
+        row = WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Test", card_ladder_comps_average=100)
+
+        self.assertEqual(dummy._assignment_person_for_row(row), "Lucas")
 
     def test_nobody_takes_is_not_an_assignable_company(self) -> None:
         class Dummy:

@@ -493,6 +493,18 @@ class PayoutTier:
 
 
 @dataclass
+class PersonCompanyPolicy:
+    company: str
+    payout_tiers: list[PayoutTier] = field(default_factory=list)
+
+
+@dataclass
+class PersonAssignmentPolicy:
+    person: str
+    companies: dict[str, PersonCompanyPolicy] = field(default_factory=dict)
+
+
+@dataclass
 class AssignmentCompany:
     name: str
     rules: CompanyRules
@@ -517,9 +529,15 @@ class AssignmentDecision:
 
 
 class AssignmentEngine:
-    def __init__(self, companies: list[AssignmentCompany] | None = None, error: str = "") -> None:
+    def __init__(
+        self,
+        companies: list[AssignmentCompany] | None = None,
+        error: str = "",
+        person_policies: dict[str, PersonAssignmentPolicy] | None = None,
+    ) -> None:
         self.companies = companies or []
         self.error = error
+        self.person_policies = person_policies or {}
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> "AssignmentEngine":
@@ -542,26 +560,39 @@ class AssignmentEngine:
                     continue
                 if company is not None:
                     companies.append(company)
-            return cls(companies, "; ".join(errors))
+            person_policies: dict[str, PersonAssignmentPolicy] = {}
+            if isinstance(raw, dict):
+                try:
+                    person_policies = load_person_policies(raw, path.parent)
+                except Exception as error:
+                    errors.append(f"person payout policies: {error}")
+            return cls(companies, "; ".join(errors), person_policies)
         except Exception as error:
             return cls([], str(error))
 
-    def recommend(self, row: Any) -> AssignmentRecommendation:
+    def recommend(self, row: Any, person: str = "") -> AssignmentRecommendation:
         default_source_value = assignment_value(row)
         if default_source_value is None:
             return AssignmentRecommendation()
 
         candidates: list[AssignmentRecommendation] = []
-        for decision in self.evaluate(row):
+        for decision in self.evaluate(row, person=person):
             if not decision.accepted or decision.payout is None:
                 continue
             candidates.append(AssignmentRecommendation(decision.company, round(decision.payout, 2), decision.source_value))
         return max(candidates, key=lambda item: item.payout or 0) if candidates else AssignmentRecommendation(source_value=default_source_value)
 
-    def evaluate(self, row: Any) -> list[AssignmentDecision]:
+    def evaluate(self, row: Any, person: str = "") -> list[AssignmentDecision]:
         grader = str(getattr(row, "grader", "") or "")
+        person_policy = self.person_policies.get(person_policy_key(person))
         decisions: list[AssignmentDecision] = []
         for company in self.companies:
+            company_policy = None
+            if person_policy is not None:
+                company_policy = person_policy.companies.get(company_policy_key(company.name))
+                if company_policy is None:
+                    decisions.append(AssignmentDecision(company.name, False, reason=f"{person_policy.person} is not allowed to use this company"))
+                    continue
             source_value = company_assignment_value(row, company)
             if source_value is None:
                 decisions.append(AssignmentDecision(company.name, False, reason="missing comp/card ladder value"))
@@ -570,12 +601,37 @@ class AssignmentEngine:
             if not company_accepts(company.rules, card_text, source_value, grader):
                 decisions.append(AssignmentDecision(company.name, False, reason="card does not match company rules", source_value=source_value))
                 continue
-            payout = payout_for_value(company.payout_tiers, source_value, card_text, company.rules)
+            payout_tiers = company_policy.payout_tiers if company_policy and company_policy.payout_tiers else company.payout_tiers
+            payout = payout_for_value(payout_tiers, source_value, card_text, company.rules)
             if payout is None:
                 decisions.append(AssignmentDecision(company.name, True, None, "accepted, but no payout tier matched", source_value))
                 continue
             decisions.append(AssignmentDecision(company.name, True, payout, "accepted and payout tier matched", source_value))
         return decisions
+
+
+def load_person_policies(config: dict[str, Any], base_dir: Path) -> dict[str, PersonAssignmentPolicy]:
+    payload = (
+        config.get("person_payouts")
+        or config.get("personPayouts")
+        or config.get("person_assignment_policies")
+        or config.get("personAssignmentPolicies")
+        or config.get("people")
+    )
+    source = (
+        config.get("person_payouts_source")
+        or config.get("personPayoutsSource")
+        or config.get("person_assignment_source")
+        or config.get("personAssignmentSource")
+    )
+    if source:
+        text = read_source_text(source, base_dir)
+        if not text.strip():
+            return {}
+        return parse_person_policies(text)
+    if payload is None:
+        return {}
+    return parse_person_policy_payload(payload)
 
 
 def load_company(entry: dict[str, Any], base_dir: Path) -> AssignmentCompany | None:
@@ -1440,6 +1496,159 @@ def parse_payout_json(payload: Any) -> list[PayoutTier]:
             matcher=str(item.get("matcher") or item.get("category") or item.get("sport") or "").strip(),
         ))
     return sorted(tiers, key=lambda tier: tier.min_price, reverse=True)
+
+
+def parse_person_policies(text: str) -> dict[str, PersonAssignmentPolicy]:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return {}
+    try:
+        return parse_person_policy_payload(json.loads(stripped))
+    except Exception:
+        pass
+    rows = parse_person_policy_rows(stripped)
+    return build_person_policies(rows)
+
+
+def parse_person_policy_payload(payload: Any) -> dict[str, PersonAssignmentPolicy]:
+    rows: list[dict[str, Any]] = []
+    if isinstance(payload, dict):
+        if isinstance(payload.get("people"), list):
+            payload = payload.get("people")
+        elif isinstance(payload.get("person_payouts"), list):
+            payload = payload.get("person_payouts")
+        elif isinstance(payload.get("policies"), list):
+            payload = payload.get("policies")
+        elif isinstance(payload.get("assignments"), list):
+            payload = payload.get("assignments")
+        else:
+            for person, companies in payload.items():
+                if not isinstance(companies, (dict, list)):
+                    continue
+                rows.extend(expand_person_policy_entry({"person": person, "companies": companies}))
+            return build_person_policies(rows)
+    if isinstance(payload, list):
+        for item in payload:
+            rows.extend(expand_person_policy_entry(item))
+    return build_person_policies(rows)
+
+
+def expand_person_policy_entry(item: Any) -> list[dict[str, Any]]:
+    if not isinstance(item, dict):
+        return []
+    person = str(item.get("person") or item.get("name") or item.get("user") or item.get("assigned_person") or "").strip()
+    if not person:
+        return []
+    if item.get("company") or item.get("rate") or item.get("payout"):
+        row = dict(item)
+        row["person"] = person
+        return [row]
+    companies = item.get("companies") or item.get("allowed_companies") or item.get("allowedCompanies") or {}
+    rows: list[dict[str, Any]] = []
+    if isinstance(companies, dict):
+        for company, value in companies.items():
+            if isinstance(value, list):
+                for tier in value:
+                    row = dict(tier) if isinstance(tier, dict) else {"rate": tier}
+                    row.update({"person": person, "company": company})
+                    rows.append(row)
+            elif isinstance(value, dict):
+                tiers = value.get("tiers") or value.get("payouts")
+                if isinstance(tiers, list):
+                    for tier in tiers:
+                        row = dict(tier) if isinstance(tier, dict) else {"rate": tier}
+                        row.update({"person": person, "company": company})
+                        rows.append(row)
+                else:
+                    row = dict(value)
+                    row.update({"person": person, "company": company})
+                    rows.append(row)
+            else:
+                rows.append({"person": person, "company": company, "rate": value})
+    elif isinstance(companies, list):
+        for company in companies:
+            if isinstance(company, dict):
+                row = dict(company)
+                row["person"] = person
+                rows.append(row)
+            else:
+                rows.append({"person": person, "company": company})
+    return rows
+
+
+def parse_person_policy_rows(text: str) -> list[dict[str, Any]]:
+    lines = [line for line in str(text or "").splitlines() if line.strip() and not line.strip().startswith("#")]
+    if not lines:
+        return []
+    sample = "\n".join(lines)
+    delimiter = "\t" if "\t" in lines[0] else ("|" if "|" in lines[0] else ",")
+    if delimiter in lines[0]:
+        try:
+            reader = csv.DictReader(lines, delimiter=delimiter)
+            if reader.fieldnames and any("person" in clean_rule_text(name) for name in reader.fieldnames if name):
+                return [dict(row) for row in reader if any(str(value or "").strip() for value in row.values())]
+        except Exception:
+            pass
+    rows: list[dict[str, Any]] = []
+    for line in source_lines(sample):
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        person = parts[0]
+        rate_index = next((index for index, part in enumerate(parts) if parse_rate(part) is not None), -1)
+        if rate_index < 2:
+            continue
+        company = " ".join(parts[1:rate_index])
+        rows.append({"person": person, "company": company, "rate": parts[rate_index]})
+    return rows
+
+
+def build_person_policies(rows: list[dict[str, Any]]) -> dict[str, PersonAssignmentPolicy]:
+    policies: dict[str, PersonAssignmentPolicy] = {}
+    for row in rows:
+        person = str(policy_row_value(row, "person", "name", "user", "assigned_person", "assigned person") or "").strip()
+        company = str(policy_row_value(row, "company", "buyer", "destination") or "").strip()
+        if not person or not company:
+            continue
+        policy = policies.setdefault(person_policy_key(person), PersonAssignmentPolicy(person=person))
+        company_key = company_policy_key(company)
+        company_policy = policy.companies.setdefault(company_key, PersonCompanyPolicy(company=company))
+        tier = person_policy_tier(row)
+        if tier is not None:
+            company_policy.payout_tiers.append(tier)
+    for policy in policies.values():
+        for company_policy in policy.companies.values():
+            company_policy.payout_tiers.sort(key=lambda tier: tier.min_price, reverse=True)
+    return policies
+
+
+def person_policy_tier(row: dict[str, Any]) -> PayoutTier | None:
+    rate = parse_rate(policy_row_value(row, "rate", "payout", "percent", "percentage"))
+    if rate is None:
+        return None
+    return PayoutTier(
+        min_price=to_number(policy_row_value(row, "min", "min_price", "minPrice", "minimum")) or 0,
+        max_price=to_number(policy_row_value(row, "max", "max_price", "maxPrice", "maximum")),
+        rate=rate,
+        matcher=str(policy_row_value(row, "matcher", "category", "sport") or "").strip(),
+    )
+
+
+def policy_row_value(row: dict[str, Any], *names: str) -> Any:
+    normalized = {clean_rule_text(key).replace(" ", "_"): value for key, value in row.items()}
+    for name in names:
+        key = clean_rule_text(name).replace(" ", "_")
+        if key in normalized and str(normalized[key] or "").strip():
+            return normalized[key]
+    return None
+
+
+def person_policy_key(value: Any) -> str:
+    return clean_rule_text(value)
+
+
+def company_policy_key(value: Any) -> str:
+    return clean_rule_text(value)
 
 
 def parse_payout_table_line(line: str) -> PayoutTier | None:

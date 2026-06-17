@@ -181,6 +181,15 @@ Important behavior:
 - A company must accept the card and have a matching payout tier/rate.
 - Highest estimated payout wins.
 - If no company can take the card, Best Company becomes `NOBODY TAKES`.
+- Person-specific payout overlays can be configured at the top level of `assignment_companies.json` with `person_payouts_source` (or embedded `person_payouts`). The source may be local text/CSV/JSON/XLSX/`.gsheet` or a web/Google Sheet URL. CSV example:
+
+```csv
+Person,Company,Min,Max,Rate
+Lucas,Arena Club,0,,95%
+Mikey,Arena Club,0,,90%
+```
+
+- If a person has any policy rows, they are locked to only those listed companies. Listed rates override the company payout tiers for that person; people without policy rows keep the normal company rules and payouts.
 
 ## Card Ladder
 
