@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-select-reopens-modal-v20";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-visible-grader-click-v21";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -72,6 +72,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "CARDLADDER_GRADER_SELECTION_STATE") {
     sendResponse(graderSelectionState(message.grader || "PSA"));
+    return true;
+  }
+  if (message.type === "CARDLADDER_GRADER_CLICK_TARGETS") {
+    sendResponse(graderClickTargets(message.grader || "PSA"));
     return true;
   }
   if (message.type === "CARDLADDER_MODAL_STATE") {
@@ -500,10 +504,10 @@ async function chooseGrader(grader) {
     const graderControl = findVisibleGraderBar(modal) || findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
     if (graderControl) {
       if (selectedGraderMatches(graderControl, normalized)) return;
-      if (await setGraderWithoutDropdown(modal, graderControl, normalized, optionLabel)) return;
       if (await clickDropdownThenOption(modal, graderControl, normalized, optionLabel)) {
         if (await waitForSelectedGrader(modal, normalized)) return;
       }
+      if (await setGraderWithoutDropdown(modal, graderControl, normalized, optionLabel)) return;
     }
   }
 
@@ -843,18 +847,56 @@ function graderBarGeometry(grader) {
 }
 
 function graderTrustedClickPoints(rect) {
-  const y = Math.round(rect.top + rect.height / 2);
-  return [
+  const xs = [
     rect.right - 24,
     rect.right - 48,
     rect.left + rect.width * 0.5,
     rect.left + 48,
     rect.left + rect.width * 0.75,
     rect.left + rect.width * 0.25,
-  ].map((x) => ({
-    x: Math.round(Math.max(4, Math.min(window.innerWidth - 4, x))),
-    y: Math.round(Math.max(4, Math.min(window.innerHeight - 4, y))),
-  }));
+    rect.right - 12,
+  ];
+  const ys = [
+    rect.top + rect.height * 0.5,
+    rect.top + rect.height * 0.42,
+    rect.top + rect.height * 0.62,
+  ];
+  const seen = new Set();
+  const points = [];
+  for (const y of ys) {
+    for (const x of xs) {
+      const point = {
+        x: Math.round(Math.max(4, Math.min(window.innerWidth - 4, x))),
+        y: Math.round(Math.max(4, Math.min(window.innerHeight - 4, y))),
+      };
+      const key = `${point.x},${point.y}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        points.push(point);
+      }
+    }
+  }
+  return points;
+}
+
+function graderClickTargets(grader) {
+  const geometry = graderBarGeometry(grader);
+  if (!geometry.ok) return geometry;
+  return {
+    ...geometry,
+    targets: geometry.points.slice(0, 24).map((point) => {
+      const el = document.elementFromPoint(point.x, point.y);
+      const clickable = el?.closest?.("button, [role='button'], [role='combobox'], input, select, label, div") || el;
+      return {
+        ...point,
+        tag: el?.tagName || "",
+        text: el ? visibleText(el).replace(/\s+/g, " ").slice(0, 120) : "",
+        clickableTag: clickable?.tagName || "",
+        clickableRole: clickable?.getAttribute?.("role") || "",
+        clickableText: clickable ? visibleText(clickable).replace(/\s+/g, " ").slice(0, 120) : "",
+      };
+    }),
+  };
 }
 
 function graderOptionPoint(grader) {
