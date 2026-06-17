@@ -1378,6 +1378,64 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.PROFIT_LEDGER_PATH = old_profit
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_mark_inventory_record_sold_writes_profit_and_marks_sold(self) -> None:
+        class SoldDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
+            mark_inventory_record_sold = app.CardPipelineApp.mark_inventory_record_sold
+            record_profit_sales = app.CardPipelineApp.record_profit_sales
+            refresh_profit_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = SoldDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            record = dummy._normalize_inventory_record(
+                {
+                    "assigned_person": "Hambone",
+                    "cert_number": "123",
+                    "grader": "PSA",
+                    "card_title": "Test Card",
+                    "source_sheet": "Lot.xlsx",
+                    "purchase_price": 40,
+                    "inventory_value": 100,
+                    "best_company": "Arena Club",
+                    "estimated_payout": 90,
+                    "status": "Active",
+                }
+            )
+            dummy._save_inventory_ledger([record])
+            try:
+                self.assertTrue(dummy.mark_inventory_record_sold(record, "Arena Club", 95))
+                inventory = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                profit = json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8"))
+                self.assertEqual(inventory[0]["status"], "Sold")
+                self.assertEqual(inventory[0]["sold_company"], "Arena Club")
+                self.assertEqual(inventory[0]["sale_price"], 95)
+                self.assertEqual(len(profit), 1)
+                self.assertEqual(profit[0]["company"], "Arena Club")
+                self.assertEqual(profit[0]["assigned_person"], "Hambone")
+                self.assertEqual(profit[0]["sale_price"], 95.0)
+                self.assertEqual(profit[0]["profit"], 55.0)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_refund_profit_record_returns_card_to_inventory_and_removes_company_row(self) -> None:
         class RefundDummy:
             _money_value = app.CardPipelineApp._money_value

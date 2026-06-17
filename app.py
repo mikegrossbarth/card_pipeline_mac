@@ -15,7 +15,7 @@ import urllib.request
 import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from openpyxl import Workbook, load_workbook
 
@@ -995,9 +995,10 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(controls, text="Export", command=self.export_inventory, style="Primary.TButton").grid(row=0, column=11, sticky="w", padx=(8, 0))
         ttk.Button(controls, text="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets, style="Soft.TButton").grid(row=0, column=12, sticky="w", padx=(8, 0))
         ttk.Button(controls, text="Reconcile Received", command=self.reconcile_received_inventory, style="Soft.TButton").grid(row=0, column=13, sticky="w", padx=(8, 0))
-        controls.columnconfigure(14, weight=1)
-        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=14, sticky="e")
-        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=15, sticky="w", pady=(8, 0))
+        ttk.Button(controls, text="Mark Sold", command=self.mark_selected_inventory_sold, style="Soft.TButton").grid(row=0, column=14, sticky="w", padx=(8, 0))
+        controls.columnconfigure(15, weight=1)
+        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=15, sticky="e")
+        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=16, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_min_var, self.inventory_max_var):
             var.trace_add("write", lambda *_args: self.refresh_inventory_tab())
 
@@ -1021,6 +1022,7 @@ class CardPipelineApp(tk.Tk):
             widths={"date": 95, "person": 130, "sport": 95, "cert": 110, "grader": 80, "card": 320, "purchase": 100, "value": 100, "company": 140, "payout": 100, "source": 170, "status": 110},
             height=22,
         )
+        self.inventory_tree.configure(selectmode="extended")
         self.refresh_inventory_tab()
 
     def _build_profit_tab(self) -> None:
@@ -1345,6 +1347,96 @@ class CardPipelineApp(tk.Tk):
             notes = str(record.get("notes") or "").strip()
             record["notes"] = f"{notes}; Moved to company sheet".strip("; ")
         self._save_inventory_ledger(ledger)
+
+    def _mark_inventory_record_sold(self, inventory_key: str, company: str, sale_price: float) -> int:
+        if not inventory_key:
+            return 0
+        ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        today = datetime.now().strftime("%Y-%m-%d")
+        changed = 0
+        for record in ledger:
+            if str(record.get("inventory_key") or "") != inventory_key:
+                continue
+            record["status"] = "Sold"
+            record["sold_at"] = today
+            record["sold_company"] = company
+            record["sale_price"] = sale_price
+            notes = str(record.get("notes") or "").strip()
+            record["notes"] = f"{notes}; Sold from inventory".strip("; ")
+            changed += 1
+        if changed:
+            self._save_inventory_ledger(ledger)
+        return changed
+
+    def _inventory_sale_profit_record(self, record: dict[str, object], company: str, sale_price: float) -> dict[str, object]:
+        normalized = self._normalize_inventory_record(record)
+        return self._normalize_profit_record(
+            {
+                "date_added": datetime.now().strftime("%Y-%m-%d"),
+                "company": company,
+                "weekly_sheet_name": "Inventory Sale",
+                "source_sheet": normalized.get("source_sheet") or "Inventory",
+                "source": normalized.get("source") or "Inventory",
+                "cert_number": normalized.get("cert_number") or "",
+                "grader": normalized.get("grader") or "",
+                "card_title": normalized.get("card_title") or "",
+                "purchase_price": normalized.get("purchase_price"),
+                "sale_price": sale_price,
+                "assigned_person": normalized.get("assigned_person") or "Unassigned",
+                "status": "Sold from inventory",
+                "notes": normalized.get("notes") or "",
+            }
+        )
+
+    def mark_inventory_record_sold(self, record: dict[str, object], company: str, sale_price: float) -> bool:
+        normalized = self._normalize_inventory_record(record)
+        if str(normalized.get("status") or "").lower() != "active":
+            return False
+        company = str(company or "").strip() or str(normalized.get("best_company") or "").strip() or "Inventory Sale"
+        profit_record = self._inventory_sale_profit_record(normalized, company, sale_price)
+        added = self.record_profit_sales([profit_record])
+        changed = self._mark_inventory_record_sold(str(normalized.get("inventory_key") or ""), company, sale_price)
+        return bool(added or changed)
+
+    def mark_selected_inventory_sold(self) -> None:
+        if not hasattr(self, "inventory_tree"):
+            return
+        selected = list(self.inventory_tree.selection())
+        records = [self.inventory_tree_records.get(iid) for iid in selected if self.inventory_tree_records.get(iid)]
+        if len(records) != 1:
+            messagebox.showinfo("Choose one card", "Select one active inventory card to mark sold.")
+            return
+        record = self._normalize_inventory_record(records[0])
+        if str(record.get("status") or "").lower() != "active":
+            messagebox.showinfo("Active card required", "Only active inventory cards can be marked sold.")
+            return
+        default_company = str(record.get("best_company") or "").strip()
+        if default_company.upper() == NO_COMPANY_TAKES_LABEL:
+            default_company = ""
+        company = simpledialog.askstring(
+            "Sold Company",
+            "Company / buyer",
+            initialvalue=default_company or "Inventory Sale",
+            parent=self,
+        )
+        if company is None:
+            return
+        default_sale = self._money_value(record.get("estimated_payout")) or self._money_value(record.get("inventory_value")) or 0.0
+        sale_price = simpledialog.askfloat(
+            "Sale Price",
+            "Sale price",
+            initialvalue=default_sale,
+            minvalue=0.0,
+            parent=self,
+        )
+        if sale_price is None:
+            return
+        if not messagebox.askyesno("Mark sold?", f"Mark this inventory card sold for {format_money(sale_price)}?", parent=self):
+            return
+        if self.mark_inventory_record_sold(record, company, float(sale_price)):
+            self.refresh_inventory_tab()
+            self.refresh_profit_tab()
+            self.status_var.set(f"Marked inventory card sold: {record.get('cert_number') or record.get('card_title') or 'card'} for {format_money(sale_price)}.")
 
     def move_selected_inventory_to_company_sheets(self) -> None:
         if not hasattr(self, "inventory_tree"):
