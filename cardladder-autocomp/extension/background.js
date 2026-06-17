@@ -6,7 +6,7 @@ const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
-const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-patient-grader-dropdown-v16";
+const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-visible-grader-bar-v17";
 
 let runInProgress = false;
 let activeWindowId = null;

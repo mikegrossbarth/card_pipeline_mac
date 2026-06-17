@@ -19,8 +19,8 @@ from cardladder_ocr import extract_cl_value_from_data_url
 from cy_automation.cy_macos import CYMacOSAdapter
 from workbook_io import WorkbookRow
 
-BRIDGE_VERSION = "2026-06-17-cardladder-patient-grader-dropdown-v16"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-patient-grader-dropdown-v16"
+BRIDGE_VERSION = "2026-06-17-cardladder-visible-grader-bar-v17"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-visible-grader-bar-v17"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 DEBUG_LOG = DEBUG_DIR / "bridge.log"

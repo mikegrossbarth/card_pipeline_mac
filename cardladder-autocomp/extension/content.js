@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-patient-grader-dropdown-v16";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-visible-grader-bar-v17";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -476,7 +476,7 @@ async function chooseGrader(grader) {
   const optionLabel = cardLadderGraderLabel(normalized);
   const modal = certSearchModal();
   if (modal) {
-    const graderControl = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
+    const graderControl = findVisibleGraderBar(modal) || findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
     if (graderControl) {
       if (selectedGraderMatches(graderControl, normalized)) return;
       if (await setGraderWithoutDropdown(modal, graderControl, normalized, optionLabel)) return;
@@ -525,12 +525,12 @@ async function selectGraderForAutomation(grader) {
   if (!modal) {
     return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Open the SEARCH SALES BY CERT # modal first." };
   }
-  const control = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
+  const control = findVisibleGraderBar(modal) || findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
   if (control && selectedGraderMatches(control, normalized)) {
     return { ok: true, version: CARDLADDER_CONTENT_VERSION, grader: normalized, selectedLabel: optionLabel, skipped: "already selected" };
   }
   await chooseGrader(normalized);
-  const afterControl = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
+  const afterControl = findVisibleGraderBar(modal) || findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
   if (!selectedGraderMatches(afterControl, normalized) && !hiddenGraderValueMatches(modal, normalized)) {
     return {
       ok: false,
@@ -688,7 +688,7 @@ async function waitForSelectedGrader(modal, grader) {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     await sleep(200);
     const currentModal = modal || certSearchModal();
-    const control = currentModal ? (findGraderControlInModal(currentModal) || findFieldControlInModal(currentModal, /grader/i)) : null;
+    const control = currentModal ? (findVisibleGraderBar(currentModal) || findGraderControlInModal(currentModal) || findFieldControlInModal(currentModal, /grader/i)) : null;
     if (selectedGraderMatches(control, grader)) return true;
   }
   return false;
@@ -765,20 +765,50 @@ async function clickGraderDropdown(modal, control) {
   }
 }
 
-function graderSweepRect(modal, control) {
-  const fieldRect = graderFieldRect(modal, control);
-  const modalRect = modal.getBoundingClientRect();
+function findVisibleGraderBar(modal) {
   const label = [...modal.querySelectorAll("label, legend, span, div")]
     .filter((el) => isVisible(el) && /^grader$/i.test(visibleText(el).replace(/[:*]/g, "").trim()))
     .map((el) => ({ el, rect: el.getBoundingClientRect() }))
     .sort((a, b) => a.rect.top - b.rect.top)[0];
-  if (!label) return fieldRect;
+  if (!label) return null;
 
-  const top = Math.max(modalRect.top + 12, Math.min(fieldRect.top, label.rect.top - 6));
-  const bottom = Math.min(modalRect.bottom - 12, Math.max(fieldRect.bottom, label.rect.bottom + 76));
-  const left = Math.max(modalRect.left + 12, Math.min(fieldRect.left, label.rect.left - 8));
-  const right = Math.min(modalRect.right - 12, Math.max(fieldRect.right, label.rect.left + 660));
-  return { left, top, right, bottom, width: right - left, height: bottom - top };
+  const candidates = [...modal.querySelectorAll("div, button, [role='button'], [role='combobox'], input, select")]
+    .filter((el) => isVisible(el) && !label.el.contains(el))
+    .map((el) => ({
+      el,
+      rect: el.getBoundingClientRect(),
+      text: selectedControlText(el) || visibleText(el),
+      classText: String(el.getAttribute("class") || ""),
+    }))
+    .filter(({ rect }) =>
+      rect.top >= label.rect.top - 8 &&
+      rect.top <= label.rect.bottom + 55 &&
+      rect.left >= label.rect.left - 24 &&
+      rect.width >= 220 &&
+      rect.height >= 34 &&
+      rect.height <= 72
+    )
+    .filter(({ text, classText }) =>
+      normalizeGraderLabel(text) ||
+      /select|input|outlined|Mui|dropdown/i.test(classText)
+    )
+    .sort((a, b) =>
+      Math.abs(a.rect.top - label.rect.bottom) - Math.abs(b.rect.top - label.rect.bottom) ||
+      b.rect.width - a.rect.width
+    );
+  return candidates[0]?.el || null;
+}
+
+function graderSweepRect(modal, control) {
+  const rect = (findVisibleGraderBar(modal) || control).getBoundingClientRect();
+  return {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
+  };
 }
 
 function graderBarClickSweepPoints(rect) {
@@ -897,6 +927,8 @@ function selectedControlText(control) {
   if (!control) return "";
   if (control.matches?.("select")) return control.options[control.selectedIndex]?.textContent?.trim() || "";
   if (control.matches?.("input, textarea")) return control.value || control.getAttribute("placeholder") || "";
+  const input = control.querySelector?.("input, select");
+  if (input?.value) return input.value;
   return visibleText(control).replace(/\s+/g, " ").trim();
 }
 
