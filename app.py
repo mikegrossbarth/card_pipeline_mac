@@ -120,6 +120,8 @@ COMP_SOURCE_BOTH = "Card Ladder + CY"
 COMP_SOURCE_CARD_LADDER = "Card Ladder"
 COMP_SOURCE_CY = "CY"
 NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
+PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Month", "Year", "Total")
+PROFIT_GRAPH_OPTIONS = ("Daily Trend", "Overall Profit")
 ASSIGNMENT_CATEGORY_OPTIONS = (
     "basketball",
     "football",
@@ -435,6 +437,8 @@ class CardPipelineApp(tk.Tk):
         self.profit_status_var = tk.StringVar(value="No profit ledger loaded.")
         self.profit_metric_var = tk.StringVar(value="")
         self.profit_person_var = tk.StringVar()
+        self.profit_period_var = tk.StringVar(value="Total")
+        self.profit_graph_var = tk.StringVar(value="Daily Trend")
         self.profit_view_mode = tk.StringVar(value="Sold Cards")
         self.profit_rows: list[dict[str, object]] = []
         self.filtered_profit_rows: list[dict[str, object]] = []
@@ -955,10 +959,30 @@ class CardPipelineApp(tk.Tk):
         self.profit_person_combo.grid(row=0, column=2, sticky="w")
         self._bind_person_autocomplete(self.profit_person_combo, refresh_callback=self.refresh_profit_tab)
         self.profit_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_profit_tab(), add="+")
-        ttk.Button(controls, text="Refresh", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=3, sticky="w", padx=(10, 0))
-        controls.columnconfigure(4, weight=1)
-        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=0, column=4, sticky="e")
-        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        ttk.Label(controls, text="Period", style="Muted.TLabel").grid(row=0, column=3, sticky="e", padx=(18, 6))
+        self.profit_period_combo = ttk.Combobox(
+            controls,
+            textvariable=self.profit_period_var,
+            values=PROFIT_PERIOD_OPTIONS,
+            width=10,
+            state="readonly",
+        )
+        self.profit_period_combo.grid(row=0, column=4, sticky="w")
+        self.profit_period_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_profit_tab(), add="+")
+        ttk.Label(controls, text="Graph", style="Muted.TLabel").grid(row=0, column=5, sticky="e", padx=(18, 6))
+        self.profit_graph_combo = ttk.Combobox(
+            controls,
+            textvariable=self.profit_graph_var,
+            values=PROFIT_GRAPH_OPTIONS,
+            width=14,
+            state="readonly",
+        )
+        self.profit_graph_combo.grid(row=0, column=6, sticky="w")
+        self.profit_graph_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
+        ttk.Button(controls, text="Refresh", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(10, 0))
+        controls.columnconfigure(8, weight=1)
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=0, column=8, sticky="e")
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=9, sticky="w", pady=(8, 0))
 
         chart_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
         chart_panel.pack(fill=tk.X, pady=(0, 10))
@@ -1081,13 +1105,77 @@ class CardPipelineApp(tk.Tk):
 
     def _filtered_profit_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         needle = self.profit_person_var.get().strip().lower() if hasattr(self, "profit_person_var") else ""
-        if not needle:
-            return list(rows)
-        return [
-            record
-            for record in rows
-            if needle in (str(record.get("assigned_person") or "Unassigned").lower())
-        ]
+        period = self.profit_period_var.get().strip() if hasattr(self, "profit_period_var") else "Total"
+        period_start, period_end = self._profit_period_bounds(period)
+        filtered: list[dict[str, object]] = []
+        for record in rows:
+            if needle and needle not in (str(record.get("assigned_person") or "Unassigned").lower()):
+                continue
+            if period_start is not None:
+                sold_date = self._profit_record_date(record.get("date_added"))
+                if sold_date is None or sold_date < period_start or sold_date > period_end:
+                    continue
+            filtered.append(record)
+        return filtered
+
+    def _profit_record_date(self, value: object):
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return datetime.strptime(text[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    def _profit_today(self):
+        return datetime.now().date()
+
+    def _profit_period_bounds(self, period: str, as_of=None):
+        today = as_of or self._profit_today()
+        label = (period or "Total").strip().lower()
+        if label in {"5 days", "5 day", "five days"}:
+            return today - timedelta(days=4), today
+        if label == "week":
+            return today - timedelta(days=6), today
+        if label == "month":
+            return today.replace(day=1), today
+        if label == "year":
+            return today.replace(month=1, day=1), today
+        return None, today
+
+    def _profit_period_label(self) -> str:
+        period = self.profit_period_var.get().strip() if hasattr(self, "profit_period_var") else "Total"
+        return period if period in PROFIT_PERIOD_OPTIONS else "Total"
+
+    def _profit_graph_label(self) -> str:
+        graph = self.profit_graph_var.get().strip() if hasattr(self, "profit_graph_var") else "Daily Trend"
+        return graph if graph in PROFIT_GRAPH_OPTIONS else "Daily Trend"
+
+    def _profit_chart_series(self, rows: list[dict[str, object]]) -> tuple[list[str], list[float]]:
+        daily: dict[str, float] = {}
+        for record in rows:
+            profit = self._money_value(record.get("profit"))
+            sold_date = self._profit_record_date(record.get("date_added"))
+            if profit is None or sold_date is None:
+                continue
+            day = sold_date.isoformat()
+            daily[day] = daily.get(day, 0.0) + float(profit)
+        period_start, period_end = self._profit_period_bounds(self._profit_period_label())
+        if period_start is not None:
+            cursor = period_start
+            while cursor <= period_end:
+                daily.setdefault(cursor.isoformat(), 0.0)
+                cursor += timedelta(days=1)
+        days = sorted(daily)
+        daily_values = [daily[day] for day in days]
+        if self._profit_graph_label() != "Overall Profit":
+            return days, daily_values
+        running = 0.0
+        cumulative_values: list[float] = []
+        for value in daily_values:
+            running += value
+            cumulative_values.append(running)
+        return days, cumulative_values
 
     def _set_profit_view_mode(self, mode: str) -> None:
         self.profit_view_mode.set(mode)
@@ -1292,14 +1380,15 @@ class CardPipelineApp(tk.Tk):
                 tags=("total_row",),
             )
         self.profit_metric_var.set(
-            f"Cards: {len(self.filtered_profit_rows)}   Sales: {format_money(total_sale)}   Profit: {format_money(total_profit)}"
+            f"{self._profit_period_label()}   Cards: {len(self.filtered_profit_rows)}   Sales: {format_money(total_sale)}   Profit: {format_money(total_profit)}"
         )
         missing = len(self.filtered_profit_rows) - complete_count
         suffix = f" | {missing} card(s) missing purchase or sale price" if missing else ""
         filter_label = self.profit_person_var.get().strip()
         filter_suffix = f" | Filter: {filter_label}" if filter_label else ""
+        period_suffix = f" | Period: {self._profit_period_label()}"
         backfill_suffix = f" | backfilled {backfilled} from company sheets" if backfilled else ""
-        self.profit_status_var.set(f"Loaded {len(self.filtered_profit_rows)}/{len(self.profit_rows)} sold card(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{suffix}{backfill_suffix}.")
+        self.profit_status_var.set(f"Loaded {len(self.filtered_profit_rows)}/{len(self.profit_rows)} sold card(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{period_suffix}{suffix}{backfill_suffix}.")
         self._draw_profit_chart()
 
     def _profit_month_key(self, value: object) -> str:
@@ -1328,14 +1417,9 @@ class CardPipelineApp(tk.Tk):
         if not dated:
             canvas.create_text(width / 2, height / 2, text="No profit data yet", fill="#b3b3b3", font=("Segoe UI", 12, "bold"))
             return
-        month_start = datetime.now().replace(day=1).strftime("%Y-%m-%d")
-        daily: dict[str, float] = {month_start: 0.0}
-        for record in dated:
-            day = str(record.get("date_added") or "")[:10]
-            daily[day] = daily.get(day, 0.0) + float(self._money_value(record.get("profit")) or 0.0)
-        days = sorted(daily)
-        daily_values = [daily[day] for day in days]
-        values = daily_values + [0.0]
+        days, chart_values = self._profit_chart_series(dated)
+        graph_label = self._profit_graph_label()
+        values = chart_values + [0.0]
         min_y = min(values)
         max_y = max(values)
         if min_y == max_y:
@@ -1360,16 +1444,16 @@ class CardPipelineApp(tk.Tk):
             canvas.create_line(x, pad_top, x, pad_top + plot_h, fill="#2a2a2a")
         canvas.create_line(pad_left, pad_top, pad_left, pad_top + plot_h, fill="#555555")
         canvas.create_line(pad_left, zero_y, pad_left + plot_w, zero_y, fill="#555555")
-        points = [(x_at(index), y_at(value)) for index, value in enumerate(daily_values)]
+        points = [(x_at(index), y_at(value)) for index, value in enumerate(chart_values)]
         for first, second in zip(points, points[1:]):
             canvas.create_line(*first, *second, fill="#22c55e", width=3)
         for index, (x, y) in enumerate(points):
-            value = daily_values[index]
+            value = chart_values[index]
             color = "#22c55e" if value >= 0 else "#ef4444"
             canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=color, outline="")
             if len(days) <= 14 or index % max(1, len(days) // 8) == 0:
                 canvas.create_text(x, height - 24, text=days[index][5:], fill="#b3b3b3", font=("Segoe UI", 8))
-        canvas.create_text(pad_left, 8, anchor="nw", text="Line: daily profit", fill="#22c55e", font=("Segoe UI", 9, "bold"))
+        canvas.create_text(pad_left, 8, anchor="nw", text=f"Line: {graph_label.lower()} ({self._profit_period_label()})", fill="#22c55e", font=("Segoe UI", 9, "bold"))
 
     def choose_working_folder(self) -> None:
         selected = filedialog.askdirectory(

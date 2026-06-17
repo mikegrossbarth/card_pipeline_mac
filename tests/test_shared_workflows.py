@@ -942,10 +942,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
             _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_today = lambda self: datetime(2026, 6, 17).date()
+            _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
 
         dummy = ProfitDummy()
         dummy.home_sheet_markers = {"Received|Lot A.xlsx": {"assigned_person": "Lucas"}}
         dummy.profit_person_var = types.SimpleNamespace(get=lambda: "luc")
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Total")
 
         rows = dummy._enrich_profit_records_with_people([
             {
@@ -962,6 +966,41 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(rows[0]["assigned_person"], "Lucas")
         self.assertEqual(rows[0]["profit"], 50)
         self.assertEqual(dummy._filtered_profit_records(rows), rows)
+
+    def test_profit_period_filter_and_chart_series_support_daily_and_overall_views(self) -> None:
+        class ProfitDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_today = lambda self: datetime(2026, 6, 17).date()
+            _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
+            _profit_period_label = app.CardPipelineApp._profit_period_label
+            _profit_graph_label = app.CardPipelineApp._profit_graph_label
+            _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
+            _profit_chart_series = app.CardPipelineApp._profit_chart_series
+
+        rows = [
+            {"assigned_person": "Lucas", "date_added": "2026-06-17", "profit": 30},
+            {"assigned_person": "Lucas", "date_added": "2026-06-13", "profit": 20},
+            {"assigned_person": "Lucas", "date_added": "2026-06-10", "profit": 100},
+            {"assigned_person": "Mikey", "date_added": "2026-06-17", "profit": 7},
+            {"assigned_person": "Lucas", "date_added": "not-a-date", "profit": 50},
+        ]
+
+        dummy = ProfitDummy()
+        dummy.profit_person_var = types.SimpleNamespace(get=lambda: "luc")
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "5 Days")
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Daily Trend")
+
+        filtered = dummy._filtered_profit_records(rows)
+        days, daily_values = dummy._profit_chart_series(filtered)
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Overall Profit")
+        overall_days, overall_values = dummy._profit_chart_series(filtered)
+
+        self.assertEqual([record["date_added"] for record in filtered], ["2026-06-17", "2026-06-13"])
+        self.assertEqual(days, ["2026-06-13", "2026-06-14", "2026-06-15", "2026-06-16", "2026-06-17"])
+        self.assertEqual(daily_values, [20, 0.0, 0.0, 0.0, 30])
+        self.assertEqual(overall_days, days)
+        self.assertEqual(overall_values, [20, 20.0, 20.0, 20.0, 50.0])
 
     def test_profit_sheet_rows_group_by_person_and_source_sheet(self) -> None:
         class ProfitDummy:
