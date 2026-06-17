@@ -6,7 +6,7 @@ const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
-const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-wait-for-cardladder-login-v10";
+const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-simple-grader-flow-v12";
 
 let runInProgress = false;
 let activeWindowId = null;
@@ -58,11 +58,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "CARDLADDER_TEST_GRADER_ACTIVE") {
-    testGraderInActiveTab(message.grader || "CGC").then(sendResponse);
-    return true;
-  }
-
 });
 
 async function startCardLadderRun(focusWindow, options = {}) {
@@ -87,7 +82,6 @@ async function startCardLadderRun(focusWindow, options = {}) {
     });
 
     const tab = await createSalesHistoryWindow(focusWindow);
-    await waitForCardLadderLoggedIn(tab.id, rows.length);
     await runRows(tab.id, rows, options);
     return { ok: true };
   } catch (error) {
@@ -159,7 +153,6 @@ async function startBridgeRun(rows, bridgeUrl = activeBridgeUrl) {
       cardladderResults: [],
     });
     const tab = await createSalesHistoryWindow(true);
-    await waitForCardLadderLoggedIn(tab.id, rows.length);
     await runRows(tab.id, rows, { postToBridge: true });
   } catch (error) {
     await postBridgeFinish({ ok: false, error: String(error?.message || error) });
@@ -426,116 +419,10 @@ async function submitRowWithGrader(tabId, row) {
 }
 
 async function selectGraderInPage(tabId, grader) {
-  const synthetic = await chrome.tabs.sendMessage(tabId, {
+  return chrome.tabs.sendMessage(tabId, {
     type: "CARDLADDER_SELECT_GRADER",
     grader,
   }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
-  if (synthetic?.ok) return synthetic;
-  const trusted = await selectGraderWithDebugger(tabId, grader);
-  if (trusted?.ok) return trusted;
-  return {
-    ...trusted,
-    ok: false,
-    error: `${trusted?.error || `Could not select grader ${grader}`} Synthetic attempt: ${synthetic?.error || "failed"}`,
-  };
-}
-
-async function testGraderInActiveTab(grader) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url?.startsWith("https://app.cardladder.com/")) {
-    return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: "Open Card Ladder Sales History in the active tab first." };
-  }
-  const prepared = await chrome.tabs.sendMessage(tab.id, { type: "CARDLADDER_PREPARE_CERT_MODAL" })
-    .catch((error) => ({ ok: false, error: String(error?.message || error) }));
-  if (!prepared?.ok) return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: prepared?.error || "Could not prepare cert modal." };
-  return selectGraderInPage(tab.id, grader);
-}
-
-async function selectGraderWithDebugger(tabId, grader) {
-  const normalized = String(grader || "").toUpperCase();
-  const geometry = await chrome.tabs.sendMessage(tabId, {
-    type: "CARDLADDER_GRADER_GEOMETRY",
-    grader: normalized,
-  }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
-  if (!geometry?.ok || !geometry.clickPoint) {
-    return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: geometry?.error || "Could not read grader click geometry.", geometry };
-  }
-
-  let attached = false;
-  try {
-    await debuggerAttach(tabId);
-    attached = true;
-    await debuggerMouseClick(tabId, geometry.clickPoint.x, geometry.clickPoint.y);
-    await sleep(450);
-
-    const optionGeometry = await chrome.tabs.sendMessage(tabId, {
-      type: "CARDLADDER_GRADER_OPTION_GEOMETRY",
-      grader: normalized,
-    }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
-    const optionPoint = optionGeometry?.clickPoint || geometry.optionPoint;
-    if (!optionPoint) {
-      return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: "Could not determine grader option click point.", geometry, optionGeometry };
-    }
-    await debuggerMouseClick(tabId, optionPoint.x, optionPoint.y);
-    await sleep(550);
-
-    const verified = await chrome.tabs.sendMessage(tabId, {
-      type: "CARDLADDER_SELECT_GRADER",
-      grader: normalized,
-    }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
-    if (verified?.ok) {
-      return {
-        ...verified,
-        trustedClick: true,
-        geometry,
-        optionGeometry,
-        version: CARDLADDER_BACKGROUND_VERSION,
-      };
-    }
-    return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: verified?.error || `Debugger click did not select ${normalized}.`, geometry, optionGeometry };
-  } catch (error) {
-    return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: String(error?.message || error), geometry };
-  } finally {
-    if (attached) await debuggerDetach(tabId);
-  }
-}
-
-async function debuggerAttach(tabId) {
-  await chrome.debugger.attach({ tabId }, "1.3");
-}
-
-async function debuggerDetach(tabId) {
-  await chrome.debugger.detach({ tabId }).catch(() => {});
-}
-
-async function debuggerMouseClick(tabId, x, y) {
-  await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    x,
-    y,
-    button: "none",
-  });
-  await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    x,
-    y,
-    button: "left",
-    buttons: 1,
-    clickCount: 1,
-  });
-  await sleep(80);
-  await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-    type: "mouseReleased",
-    x,
-    y,
-    button: "left",
-    buttons: 0,
-    clickCount: 1,
-  });
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function captureValueFromDom(tabId, row, pageResult = {}) {
@@ -659,55 +546,6 @@ async function waitForTabNotLoading(tabId) {
     }
     await delay(1000);
   }
-}
-
-async function waitForCardLadderLoggedIn(tabId, totalRows = 0) {
-  const started = Date.now();
-  let lastNavigateAt = 0;
-  while (Date.now() - started < 10 * 60 * 1000) {
-    const tab = await chrome.tabs.get(tabId).catch(() => null);
-    if (!tab) throw new Error("Card Ladder tab closed while waiting for login.");
-    await chrome.storage.local.set({
-      cardladderStatus: {
-        ok: true,
-        stage: "waiting for Card Ladder login",
-        total: totalRows,
-        completed: 0,
-        current: null,
-        message: "Log into Card Ladder in the automation Chrome window. L.U.C.A.S will continue automatically.",
-        updatedAt: new Date().toISOString(),
-      },
-    });
-
-    await waitForTabNotLoading(tabId);
-    const readiness = await cardLadderPageReadiness(tabId);
-    if (readiness.ready) return;
-
-    const now = Date.now();
-    if (readiness.loggedIn && !readiness.onSalesHistory && now - lastNavigateAt > 5000) {
-      lastNavigateAt = now;
-      await chrome.tabs.update(tabId, { url: SALES_HISTORY_URL }).catch(() => {});
-    }
-    await delay(1500);
-  }
-  throw new Error("Timed out waiting for Card Ladder login in the automation Chrome profile.");
-}
-
-async function cardLadderPageReadiness(tabId) {
-  const tab = await chrome.tabs.get(tabId).catch(() => null);
-  const [result] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: () => {
-      const url = location.href;
-      const text = (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 4000);
-      const onSalesHistory = /\/sales-history/i.test(url);
-      const loggedOut = /\b(log\s*in|sign\s*in|sign\s*up|create\s+account|forgot\s+password)\b/i.test(text);
-      const loggedIn = /\b(DASHBOARD|COLLECTION|SALES|SHOP|LADDER|PROFILES|WATCHLIST)\b/i.test(text) && !loggedOut;
-      const ready = onSalesHistory && loggedIn && /\bSALES\b/i.test(text);
-      return { url, onSalesHistory, loggedIn, loggedOut, ready };
-    },
-  }).catch(() => [{ result: { url: tab?.url || "", onSalesHistory: false, loggedIn: false, loggedOut: true, ready: false } }]);
-  return result?.result || { url: tab?.url || "", onSalesHistory: false, loggedIn: false, loggedOut: true, ready: false };
 }
 
 function delay(ms) {

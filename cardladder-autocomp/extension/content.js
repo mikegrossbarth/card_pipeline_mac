@@ -1,5 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-wait-for-cardladder-login-v10";
-let lastGraderOpenDebug = [];
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-simple-grader-flow-v12";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -61,14 +60,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     selectGraderForAutomation(message.grader || "PSA")
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ ok: false, error: error.message, version: CARDLADDER_CONTENT_VERSION }));
-    return true;
-  }
-  if (message.type === "CARDLADDER_GRADER_GEOMETRY") {
-    sendResponse(graderGeometry(message.grader || "PSA"));
-    return true;
-  }
-  if (message.type === "CARDLADDER_GRADER_OPTION_GEOMETRY") {
-    sendResponse(graderOptionGeometry(message.grader || "PSA"));
     return true;
   }
   if (message.type === "CARDLADDER_EXTRACT_DOM_RESULT") {
@@ -558,94 +549,9 @@ async function selectGraderForAutomation(grader) {
   };
 }
 
-function graderGeometry(grader) {
-  const normalized = String(grader || "").toUpperCase();
-  const modal = certSearchModal();
-  if (!modal) return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Open the SEARCH SALES BY CERT # modal first." };
-  const control = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
-  if (!control) return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Could not find grader control." };
-  const rect = graderFieldRect(modal, control);
-  return {
-    ok: true,
-    version: CARDLADDER_CONTENT_VERSION,
-    grader: normalized,
-    selectedText: selectedControlText(control),
-    control: describeNode(control, rect),
-    rect: plainRect(rect),
-    clickPoint: {
-      x: Math.round(Math.max(rect.left + 20, rect.right - 20)),
-      y: Math.round(rect.top + rect.height / 2),
-    },
-    optionPoint: knownGraderOptionPoint(rect, normalized),
-  };
-}
-
-function graderOptionGeometry(grader) {
-  const normalized = String(grader || "").toUpperCase();
-  const optionLabel = cardLadderGraderLabel(normalized);
-  const modal = certSearchModal();
-  const control = modal ? (findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i)) : null;
-  const rect = control ? graderFieldRect(modal, control) : null;
-  const option = findGraderOption(optionLabel, rect) || findGraderOptionByPosition(normalized, rect);
-  if (option) {
-    const optionRect = option.getBoundingClientRect();
-    return {
-      ok: true,
-      version: CARDLADDER_CONTENT_VERSION,
-      grader: normalized,
-      option: describeNode(option, optionRect),
-      rect: plainRect(optionRect),
-      clickPoint: {
-        x: Math.round(optionRect.left + Math.min(38, Math.max(12, optionRect.width / 2))),
-        y: Math.round(optionRect.top + optionRect.height / 2),
-      },
-    };
-  }
-  if (rect) {
-    return {
-      ok: true,
-      version: CARDLADDER_CONTENT_VERSION,
-      grader: normalized,
-      fallback: "known-position",
-      clickPoint: knownGraderOptionPoint(rect, normalized),
-    };
-  }
-  return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Could not find grader option geometry." };
-}
-
-function knownGraderOptionPoint(rect, grader) {
-  const indexByGrader = {
-    PSA: 0,
-    BGS: 1,
-    BECKETT: 1,
-    SGC: 2,
-    CGC: 3,
-  };
-  const targetIndex = indexByGrader[grader];
-  if (targetIndex == null) return null;
-  const optionHeight = Math.max(48, Math.min(58, rect.height));
-  return {
-    x: Math.round(Math.min(rect.right - 24, rect.left + 38)),
-    y: Math.round(rect.bottom + optionHeight * targetIndex + optionHeight / 2),
-  };
-}
-
-function plainRect(rect) {
-  return {
-    left: Math.round(rect.left),
-    top: Math.round(rect.top),
-    right: Math.round(rect.right),
-    bottom: Math.round(rect.bottom),
-    width: Math.round(rect.width),
-    height: Math.round(rect.height),
-  };
-}
-
 async function clickDropdownThenOption(modal, control, grader, optionLabel) {
-  lastGraderOpenDebug = [];
   await clickGraderDropdown(modal, control);
-  const rect = graderFieldRect(modal, control);
-  const option = findGraderOption(optionLabel, rect) || findGraderOptionByPosition(grader, rect);
+  const option = findGraderOption(optionLabel) || findGraderOptionByPosition(grader);
   if (option) {
     clickLikeHuman(option);
     await sleep(650);
@@ -699,9 +605,6 @@ function normalizeGraderLabel(value) {
 }
 
 function findGraderControlInModal(modal) {
-  const direct = findDirectGraderControl(modal);
-  if (direct) return direct;
-
   const labels = [...modal.querySelectorAll("label, legend, span, div")]
     .filter((el) => isVisible(el) && /^grader$/i.test(visibleText(el).replace(/[:*]/g, "").trim()));
 
@@ -709,97 +612,37 @@ function findGraderControlInModal(modal) {
     const labelRect = label.getBoundingClientRect();
     const controls = [...modal.querySelectorAll("select, [role='combobox'], button, input, div")]
       .filter((el) => isVisible(el) && el !== label && !label.contains(el))
-      .map((el) => ({ el, rect: el.getBoundingClientRect(), text: selectedControlText(el), rawText: visibleText(el).replace(/\s+/g, " ").trim() }))
-      .filter(({ rect }) => {
-        const overlapsLabelRow = rect.top <= labelRect.bottom + 35 && rect.bottom >= labelRect.top - 10;
-        const belowLabel = rect.top >= labelRect.bottom - 10 && rect.top <= labelRect.bottom + 95;
-        return (overlapsLabelRow || belowLabel) &&
-          rect.left >= labelRect.left - 16 &&
-          rect.left <= labelRect.left + 620;
-      })
+      .map((el) => ({ el, rect: el.getBoundingClientRect(), text: selectedControlText(el) }))
+      .filter(({ rect }) =>
+        rect.top >= labelRect.bottom - 10 &&
+        rect.top <= labelRect.bottom + 95 &&
+        rect.left >= labelRect.left - 16 &&
+        rect.left <= labelRect.left + 620
+      )
       .filter(({ rect, text }) =>
         rect.width >= 80 &&
         rect.height >= 20 &&
         !/^cert/i.test(text) &&
-        text.length <= 120 &&
-        (!text || normalizeGraderLabel(text) || /expand_more|arrow_drop_down|▾|▼/i.test(text))
+        (!text || text.length <= 80 || normalizeGraderLabel(text))
       )
-      .sort((a, b) =>
-        graderControlScore(a) - graderControlScore(b) ||
-        (a.rect.top - b.rect.top) ||
-        (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height)
-      );
+      .sort((a, b) => (a.rect.top - b.rect.top) || (b.rect.width - a.rect.width));
     if (controls[0]) return controls[0].el;
   }
 
   return [...modal.querySelectorAll("[role='combobox'], select, button")]
     .filter((el) => isVisible(el))
-    .find((el) => {
-      const text = selectedControlText(el);
-      return text.length <= 120 && /PSA|BECKETT|BGS|SGC|CGC|CSG|TAG|ISA|HGA/i.test(text);
-    }) || null;
-}
-
-function findDirectGraderControl(modal) {
-  const selectors = [
-    "[role='combobox']",
-    "[aria-haspopup='listbox']",
-    "[aria-expanded]",
-    "button",
-    "select",
-    "input",
-    "div",
-  ];
-  return [...modal.querySelectorAll(selectors.join(","))]
-    .filter((el) => isVisible(el))
-    .map((el) => ({ el, rect: el.getBoundingClientRect(), text: selectedControlText(el), rawText: visibleText(el).replace(/\s+/g, " ").trim() }))
-    .filter(({ rect, text, rawText }) =>
-      rect.width >= 50 &&
-      rect.width <= 260 &&
-      rect.height >= 18 &&
-      rect.height <= 72 &&
-      `${text} ${rawText}`.length <= 160 &&
-      /(?:^|\b)(?:PSA|BECKETT|BGS|SGC|CGC)(?:\b|$)/i.test(`${text} ${rawText}`) &&
-      !/cert|submit|search sales/i.test(`${text} ${rawText}`)
-    )
-    .sort((a, b) =>
-      graderControlScore(a) - graderControlScore(b) ||
-      (a.rect.top - b.rect.top) ||
-      (a.rect.left - b.rect.left)
-    )[0]?.el || null;
-}
-
-function graderControlScore(item) {
-  const text = String(item.text || item.rawText || "");
-  let score = 0;
-  if (!normalizeGraderLabel(text)) score += 8;
-  if (!/expand_more|arrow_drop_down|▾|▼/i.test(text)) score += 2;
-  if (item.el.getAttribute("role") === "combobox") score -= 3;
-  if (item.el.matches?.("button, select, input")) score -= 2;
-  if (item.rect.width > 420) score += 4;
-  if (item.rect.height > 80) score += 3;
-  return score;
+    .find((el) => /PSA|BECKETT|BGS|SGC|CGC|CSG|TAG|ISA|HGA/i.test(selectedControlText(el))) || null;
 }
 
 async function clickGraderDropdown(modal, control) {
   await sleep(150);
   if (typeof control.focus === "function") control.focus();
   const rect = graderFieldRect(modal, control);
-  rememberGraderOpenDebug("control", control, rect);
-  const clickTargets = [
-    () => clickAtPoint(Math.max(rect.left + 20, rect.right - 20), rect.top + rect.height / 2, "right-edge"),
-    () => clickAtPoint(Math.max(rect.left + 20, rect.right - 36), rect.top + rect.height / 2, "select-face-right"),
-    () => clickAtPoint(rect.left + Math.min(90, rect.width / 2), rect.top + rect.height / 2, "select-face-mid"),
-    () => clickGraderExpandIcon(modal, control),
-    () => clickLikeHuman(control, Math.max(rect.left + 20, rect.right - 20), rect.top + rect.height / 2, "control-direct"),
-    () => openDropdownWithKeyboard(control),
-  ];
-  for (const open of clickTargets) {
-    open();
-    await sleep(550);
-    const opened = findAnyGraderOptions(rect);
-    rememberGraderOpenDebug(opened ? "opened" : "still-closed", document.activeElement || control);
-    if (opened) return;
+  clickLikeHuman(control, Math.max(rect.left + 20, rect.right - 32), rect.top + rect.height / 2);
+  await sleep(700);
+  if (!findAnyGraderOptions()) {
+    clickAtPoint(Math.max(rect.left + 20, rect.right - 32), rect.top + rect.height / 2);
+    await sleep(700);
   }
 }
 
@@ -814,11 +657,6 @@ function graderFieldRect(modal, control) {
 
   if (!label) return controlRect;
 
-  const overlapsLabelRow = controlRect.top <= label.rect.bottom + 18 && controlRect.bottom >= label.rect.top - 8;
-  if (overlapsLabelRow && controlRect.width >= 60 && controlRect.height >= 18) {
-    return controlRect;
-  }
-
   const top = Math.max(label.rect.bottom - 4, controlRect.top);
   const height = Math.max(42, Math.min(56, controlRect.height || 48));
   return {
@@ -831,80 +669,18 @@ function graderFieldRect(modal, control) {
   };
 }
 
-function clickGraderExpandIcon(modal, control) {
-  const controlRect = control.getBoundingClientRect();
-  const icons = [...modal.querySelectorAll("i, svg, [class*='material-icons'], [class*='arrow'], [class*='Select-icon'], [data-testid*='ArrowDropDown'], span, div, button")]
-    .filter((el) => isVisible(el))
-    .map((el) => ({
-      el,
-      text: `${visibleText(el)} ${el.getAttribute("aria-label") || ""} ${el.getAttribute("data-testid") || ""} ${el.getAttribute("class") || ""}`.replace(/\s+/g, " ").trim(),
-      rect: el.getBoundingClientRect(),
-    }))
-    .filter(({ text, rect }) =>
-      (/expand_more|arrow_drop_down|arrowdropdown|select-icon|▾|▼/i.test(text) || rect.width <= 40) &&
-      rect.top >= controlRect.top - 12 &&
-      rect.bottom <= controlRect.bottom + 18 &&
-      rect.left >= controlRect.left &&
-      rect.right <= controlRect.right + 24
-    )
-    .sort((a, b) =>
-      arrowIconScore(a) - arrowIconScore(b) ||
-      b.rect.left - a.rect.left
-    );
-  const icon = icons[0];
-  if (icon) {
-    rememberGraderOpenDebug("icon", icon.el, icon.rect);
-    clickAtPoint(icon.rect.left + icon.rect.width / 2, icon.rect.top + icon.rect.height / 2, "icon-point");
-    clickLikeHuman(icon.el, icon.rect.left + icon.rect.width / 2, icon.rect.top + icon.rect.height / 2, "icon-direct");
-    return true;
-  }
-  rememberGraderOpenDebug("icon-missing", control);
-  return false;
-}
-
-function arrowIconScore(item) {
-  const text = `${item.text || ""} ${item.el.tagName || ""}`.toLowerCase();
-  let score = 0;
-  if (!/expand_more|arrow_drop_down|arrowdropdown|select-icon|material-icons|arrow|▾|▼/i.test(text)) score += 10;
-  if (/^expand_more\b/i.test(item.text)) score -= 6;
-  if (item.el.matches?.("i, svg, [class*='material-icons'], [class*='arrow']")) score -= 4;
-  if (item.rect.width > 48 || item.rect.height > 48) score += 5;
-  return score;
-}
-
-function openDropdownWithKeyboard(control) {
-  if (typeof control.focus === "function") control.focus();
-  rememberGraderOpenDebug("keyboard", control);
-  const keys = [
-    { key: "ArrowDown", code: "ArrowDown", altKey: true },
-    { key: " ", code: "Space" },
-    { key: "Enter", code: "Enter" },
-  ];
-  for (const init of keys) {
-    control.dispatchEvent(new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true }));
-    invokeFrameworkHandlers(control, "keyDown", init);
-    control.dispatchEvent(new KeyboardEvent("keyup", { ...init, bubbles: true, cancelable: true }));
-    invokeFrameworkHandlers(control, "keyUp", init);
-  }
-}
-
-function findAnyGraderOptions(controlRect = null) {
+function findAnyGraderOptions() {
   return [...document.querySelectorAll("[role='option'], [role='menuitem'], li, button, div, span")]
     .filter((el) => isVisible(el))
-    .some((el) => {
-      const text = visibleText(el).replace(/\s+/g, " ").trim();
-      return /^(PSA|BECKETT|BGS|SGC|CGC)$/i.test(text) &&
-        isNearGraderDropdown(el.getBoundingClientRect(), controlRect);
-    });
+    .some((el) => /^(PSA|BECKETT|BGS|SGC|CGC)$/i.test(visibleText(el).replace(/\s+/g, " ").trim()));
 }
 
-function findGraderOption(grader, controlRect = null) {
+function findGraderOption(grader) {
   const pattern = new RegExp(`(^|\\b)${escapeRegExp(grader)}($|\\b)`, "i");
   const candidates = [...document.querySelectorAll("[role='option'], [role='menuitem'], li, button, div, span")]
     .filter((el) => isVisible(el))
     .map((el) => ({ el, text: visibleText(el).replace(/\s+/g, " ").trim(), rect: el.getBoundingClientRect() }))
     .filter(({ text, rect }) => text && text.length <= 40 && pattern.test(text) && rect.top > 80)
-    .filter(({ rect }) => isNearGraderDropdown(rect, controlRect))
     .filter(({ text }) => !/grader|cert|submit|search/i.test(text));
 
   candidates.sort((a, b) => {
@@ -916,7 +692,7 @@ function findGraderOption(grader, controlRect = null) {
   return candidates[0]?.el || null;
 }
 
-function findGraderOptionByPosition(grader, controlRect = null) {
+function findGraderOptionByPosition(grader) {
   const indexByGrader = {
     PSA: 0,
     BGS: 1,
@@ -930,16 +706,8 @@ function findGraderOptionByPosition(grader, controlRect = null) {
     .filter((el) => isVisible(el))
     .map((el) => ({ el, text: visibleText(el).replace(/\s+/g, " ").trim(), rect: el.getBoundingClientRect() }))
     .filter(({ text, rect }) => text && text.length <= 40 && /^(PSA|BECKETT|BGS|SGC|CGC)$/i.test(text) && rect.top > 80)
-    .filter(({ rect }) => isNearGraderDropdown(rect, controlRect))
     .sort((a, b) => a.rect.top - b.rect.top);
   return options[targetIndex]?.el || null;
-}
-
-function isNearGraderDropdown(rect, controlRect) {
-  if (!controlRect) return true;
-  const verticallyNear = rect.top >= controlRect.bottom - 12 && rect.top <= controlRect.bottom + 360;
-  const horizontallyNear = rect.right >= controlRect.left - 24 && rect.left <= controlRect.right + 80;
-  return verticallyNear && horizontallyNear;
 }
 
 async function clickGraderOptionByKnownPosition(modal, control, grader) {
@@ -978,8 +746,7 @@ function graderSelectionDebug(modal, optionLabel) {
     .slice(0, 12)
     .join(" | ");
   const modalText = modal ? visibleText(modal).replace(/\s+/g, " ").slice(0, 220) : "no modal";
-  const openDebug = lastGraderOpenDebug.length ? `; open ${lastGraderOpenDebug.join(" || ")}` : "";
-  return `[${CARDLADDER_CONTENT_VERSION}; wanted ${optionLabel}; options ${visibleOptions || "none"}${openDebug}; modal ${modalText}]`;
+  return `[${CARDLADDER_CONTENT_VERSION}; wanted ${optionLabel}; options ${visibleOptions || "none"}; modal ${modalText}]`;
 }
 
 async function fillCert(certNumber) {
@@ -1508,168 +1275,21 @@ async function clickCertMenuOptionIfShown() {
   return true;
 }
 
-function clickAtPoint(x, y, reason = "point") {
+function clickAtPoint(x, y) {
   const target = document.elementFromPoint(x, y);
   if (!target) return;
-  const candidates = uniqueElements([
-    target,
-    target.closest("[role='combobox']"),
-    target.closest("[aria-haspopup='listbox']"),
-    target.closest("[aria-expanded]"),
-    target.closest("i, svg, [class*='material-icons'], [class*='arrow']"),
-    target.closest(".select-input"),
-    target.closest("[class*='select-input']"),
-    target.closest("[class*='select']"),
-    target.closest("[class*='dropdown']"),
-    target.closest("[class*='field']"),
-    target.closest(".MuiSelect-select"),
-    target.closest(".MuiInputBase-root"),
-    target.closest("button, [role='button']"),
-    target.closest("label"),
-    ...clickableAncestors(target, 5),
-  ]).filter(Boolean);
-  const clickNodes = candidates.length ? candidates.slice(0, 8) : [target];
-  rememberGraderOpenDebug(`click-${reason}`, target, null, `${Math.round(x)},${Math.round(y)}`);
-  for (const node of clickNodes) {
-    clickLikeHuman(node, x, y, reason);
-  }
+  const clickable = target.closest("button, [role='button'], span, div, label") || target;
+  clickLikeHuman(clickable, x, y);
 }
 
-function clickableAncestors(node, maxDepth = 4) {
-  const ancestors = [];
-  let current = node?.parentElement;
-  while (current && ancestors.length < maxDepth) {
-    if (isVisible(current)) ancestors.push(current);
-    current = current.parentElement;
-  }
-  return ancestors;
-}
-
-function clickLikeHuman(node, clientX = null, clientY = null, reason = "click") {
-  if (!node) return;
+function clickLikeHuman(node, clientX = null, clientY = null) {
   const rect = node.getBoundingClientRect();
   const x = clientX ?? rect.left + rect.width / 2;
   const y = clientY ?? rect.top + rect.height / 2;
-  rememberGraderOpenDebug(reason, node, rect, `${Math.round(x)},${Math.round(y)}`);
-  if (typeof node.focus === "function") node.focus();
-  ["pointerover", "mouseover", "pointerenter", "mouseenter", "pointermove", "mousemove", "pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
-    const pressed = /down|move/.test(type);
-    if (type.startsWith("pointer") && window.PointerEvent) {
-      node.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: pressed ? 1 : 0, pointerId: 1, pointerType: "mouse", isPrimary: true }));
-    } else {
-      node.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: pressed ? 1 : 0, detail: 1 }));
-    }
+  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
+    node.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }));
   });
   if (typeof node.click === "function") node.click();
-  node.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, detail: 2 }));
-  invokeFrameworkHandlers(node, "mouseDown", { clientX: x, clientY: y });
-  invokeFrameworkHandlers(node, "click", { clientX: x, clientY: y });
-}
-
-function invokeFrameworkHandlers(node, eventKind, init = {}) {
-  const eventNamesByKind = {
-    mouseDown: ["onPointerDown", "onMouseDown"],
-    click: ["onClick"],
-    keyDown: ["onKeyDown"],
-    keyUp: ["onKeyUp"],
-  };
-  const eventNames = eventNamesByKind[eventKind] || [];
-  const candidates = uniqueElements([node, ...clickableAncestors(node, 6)]);
-  for (const candidate of candidates) {
-    const props = frameworkProps(candidate);
-    if (!props) continue;
-    for (const eventName of eventNames) {
-      const handler = props[eventName] || props[eventName.toLowerCase?.()];
-      if (typeof handler !== "function") continue;
-      try {
-        rememberGraderOpenDebug(`handler-${eventName}`, candidate);
-        handler(fakeFrameworkEvent(candidate, eventKind, init));
-      } catch (error) {
-        rememberGraderOpenDebug(`handler-error-${eventName}`, candidate, null, String(error?.message || error).slice(0, 80));
-      }
-    }
-  }
-}
-
-function frameworkProps(node) {
-  if (!node) return null;
-  const directKey = Object.keys(node).find((key) =>
-    /^__reactProps\$|^__reactEventHandlers\$/.test(key)
-  );
-  if (directKey && node[directKey]) return node[directKey];
-  const fiberKey = Object.keys(node).find((key) =>
-    /^__reactFiber\$|^__reactInternalInstance\$/.test(key)
-  );
-  const fiber = fiberKey ? node[fiberKey] : null;
-  return fiber?.memoizedProps || fiber?.return?.memoizedProps || null;
-}
-
-function fakeFrameworkEvent(target, eventKind, init = {}) {
-  const event = {
-    ...init,
-    target,
-    currentTarget: target,
-    bubbles: true,
-    cancelable: true,
-    defaultPrevented: false,
-    isTrusted: true,
-    nativeEvent: null,
-    preventDefault() {
-      this.defaultPrevented = true;
-    },
-    stopPropagation() {},
-    persist() {},
-  };
-  event.nativeEvent = event;
-  if (eventKind === "keyDown" || eventKind === "keyUp") {
-    event.key = init.key || "ArrowDown";
-    event.code = init.code || event.key;
-    event.altKey = Boolean(init.altKey);
-  } else {
-    event.button = 0;
-    event.buttons = eventKind === "mouseDown" ? 1 : 0;
-    event.type = eventKind === "mouseDown" ? "mousedown" : "click";
-  }
-  return event;
-}
-
-function uniqueElements(items) {
-  const seen = new Set();
-  const elements = [];
-  for (const item of items) {
-    if (!item || seen.has(item)) continue;
-    seen.add(item);
-    elements.push(item);
-  }
-  return elements;
-}
-
-function rememberGraderOpenDebug(label, node, rect = null, extra = "") {
-  if (!node && !extra) return;
-  const bits = [label];
-  if (extra) bits.push(extra);
-  if (node) bits.push(describeNode(node, rect));
-  lastGraderOpenDebug.push(bits.filter(Boolean).join(" "));
-  if (lastGraderOpenDebug.length > 18) {
-    lastGraderOpenDebug = lastGraderOpenDebug.slice(-18);
-  }
-}
-
-function describeNode(node, rect = null) {
-  const box = rect || node.getBoundingClientRect?.();
-  const classes = String(node.getAttribute?.("class") || "")
-    .replace(/\s+/g, ".")
-    .slice(0, 80);
-  const attrs = [
-    node.tagName?.toLowerCase() || "node",
-    node.getAttribute?.("role") ? `role=${node.getAttribute("role")}` : "",
-    node.getAttribute?.("aria-expanded") ? `expanded=${node.getAttribute("aria-expanded")}` : "",
-    node.getAttribute?.("aria-haspopup") ? `popup=${node.getAttribute("aria-haspopup")}` : "",
-    classes ? `class=${classes}` : "",
-    box ? `rect=${Math.round(box.left)},${Math.round(box.top)},${Math.round(box.width)}x${Math.round(box.height)}` : "",
-  ].filter(Boolean).join("/");
-  const text = visibleText(node).replace(/\s+/g, " ").slice(0, 70);
-  return `${attrs}${text ? ` text=${text}` : ""}`;
 }
 
 function setNativeValue(input, value) {
