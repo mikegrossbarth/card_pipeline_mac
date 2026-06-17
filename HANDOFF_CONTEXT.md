@@ -35,6 +35,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - Received cards that are not checked for the company pile are automatically added to active inventory for the assigned person.
 - Selected active inventory cards can be moved to company sheets later with `Move to Company Sheets`; the move runs assignment recommendations, writes company/profit rows, and marks those inventory records as `Company Sheet`.
 - Profit rows can be refunded individually from the `Profit` tab. Refunds remove the sold-card profit/company-sheet row and return that card to active inventory.
+- `Payouts/Tabs` has `Delete Person`; it removes a person's name from sheet markers, inventory ownership, and profit ownership while leaving cards/sheets/ledger rows intact.
 - Create now has `Manual Entry` mode. Use the `+ Add row` line in the Create table, then double-click cells to edit. The extra toolbar button was removed.
 - Card Ladder recovery note, 2026-06-17: known-good helper version is `2026-06-17-no-blind-grader-option-v22`. The verified CGC grader test opens the cert modal, uses trusted debugger clicks only when synthetic clicks fail, selects CGC, and leaves the modal open. Do not restore blind guessed grader-option coordinates; they closed/submitted the modal.
 

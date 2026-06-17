@@ -1166,6 +1166,58 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_delete_person_records_unassigns_markers_inventory_and_profit(self) -> None:
+        class DeletePersonDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            delete_person_records = app.CardPipelineApp.delete_person_records
+
+            def _save_sheet_markers(self):
+                self.saved_markers = True
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            dummy = DeletePersonDummy()
+            dummy.home_sheet_markers = {
+                "Incoming|A.xlsx": {"assigned_person": "Lucas"},
+                "Incoming|B.xlsx": {"assigned_person": "Mikey"},
+            }
+            dummy.saved_markers = False
+            try:
+                dummy._save_inventory_ledger([
+                    dummy._normalize_inventory_record({"assigned_person": "Lucas", "cert_number": "1", "source_sheet": "A.xlsx"}),
+                    dummy._normalize_inventory_record({"assigned_person": "Mikey", "cert_number": "2", "source_sheet": "B.xlsx"}),
+                ])
+                dummy._save_profit_ledger([
+                    dummy._normalize_profit_record({"assigned_person": "Lucas", "cert_number": "1", "source_sheet": "A.xlsx", "company": "Arena", "date_added": "2026-06-17"}),
+                    dummy._normalize_profit_record({"assigned_person": "Mikey", "cert_number": "2", "source_sheet": "B.xlsx", "company": "Arena", "date_added": "2026-06-17"}),
+                ])
+
+                counts = dummy.delete_person_records("Lucas")
+
+                self.assertEqual(counts, {"markers": 1, "inventory": 1, "profit": 1})
+                self.assertTrue(dummy.saved_markers)
+                self.assertEqual(dummy.home_sheet_markers["Incoming|A.xlsx"]["assigned_person"], "")
+                inventory = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                profit = json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8"))
+                self.assertEqual(inventory[0]["assigned_person"], "Unassigned")
+                self.assertEqual(inventory[1]["assigned_person"], "Mikey")
+                self.assertEqual(profit[0]["assigned_person"], "")
+                self.assertEqual(profit[1]["assigned_person"], "Mikey")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
+
     def test_inventory_records_can_move_to_company_sheets(self) -> None:
         class FakeTree:
             def selection(self):

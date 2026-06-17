@@ -940,8 +940,9 @@ class CardPipelineApp(tk.Tk):
         self.payout_person_combo.grid(row=0, column=1, sticky="w", padx=(8, 10))
         self._bind_person_autocomplete(self.payout_person_combo, refresh_callback=self.refresh_payouts_tab)
         self.payout_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_payouts_tab(), add="+")
-        controls.columnconfigure(2, weight=1)
-        ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ttk.Button(controls, text="Delete Person", command=self.open_delete_person_dialog, style="Soft.TButton").grid(row=0, column=2, sticky="w")
+        controls.columnconfigure(3, weight=1)
+        ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
         body = ttk.Frame(self.payouts_tab, style="App.TFrame")
         body.pack(fill=tk.BOTH, expand=True)
@@ -2365,7 +2366,7 @@ class CardPipelineApp(tk.Tk):
         }
         return sorted(people, key=str.lower)
 
-    def _refresh_person_combo_values(self, filter_text: str = "") -> None:
+    def _known_people(self) -> list[str]:
         people_set = set(self._known_assigned_people())
         if hasattr(self, "profit_rows"):
             people_set.update(
@@ -2379,7 +2380,18 @@ class CardPipelineApp(tk.Tk):
                 for record in self.inventory_rows
                 if str(record.get("assigned_person") or "").strip()
             )
-        people = sorted(people_set, key=str.lower)
+        for record in self._load_profit_ledger():
+            person = str(record.get("assigned_person") or record.get("person") or "").strip()
+            if person:
+                people_set.add(person)
+        for record in self._load_inventory_ledger():
+            person = str(record.get("assigned_person") or record.get("person") or "").strip()
+            if person:
+                people_set.add(person)
+        return sorted(people_set, key=str.lower)
+
+    def _refresh_person_combo_values(self, filter_text: str = "") -> None:
+        people = self._known_people()
         if filter_text:
             needle = filter_text.strip().lower()
             people = [person for person in people if needle in person.lower()]
@@ -2391,14 +2403,14 @@ class CardPipelineApp(tk.Tk):
             self.inventory_person_combo["values"] = people
 
     def _bind_person_autocomplete(self, combo: ttk.Combobox, refresh_callback=None) -> None:
-        combo["values"] = self._known_assigned_people()
+        combo["values"] = self._known_people()
         combo.configure(postcommand=lambda widget=combo: self._refresh_person_combo_widget(widget))
         combo.bind("<FocusIn>", lambda _event, widget=combo: self._refresh_person_combo_widget(widget), add="+")
         combo.bind("<KeyRelease>", lambda event, widget=combo: self._filter_person_combo(widget, event, refresh_callback=refresh_callback), add="+")
 
     def _refresh_person_combo_widget(self, combo: ttk.Combobox) -> None:
         typed = combo.get().strip().lower()
-        people = self._known_assigned_people()
+        people = self._known_people()
         if typed:
             people = [person for person in people if typed in person.lower()]
         combo["values"] = people
@@ -2409,6 +2421,92 @@ class CardPipelineApp(tk.Tk):
         self._refresh_person_combo_widget(combo)
         if refresh_callback:
             refresh_callback()
+
+    def delete_person_records(self, person: str) -> dict[str, int]:
+        target = person.strip().lower()
+        counts = {"markers": 0, "inventory": 0, "profit": 0}
+        if not target:
+            return counts
+        for marker in self.home_sheet_markers.values():
+            if str(marker.get("assigned_person") or "").strip().lower() == target:
+                marker["assigned_person"] = ""
+                counts["markers"] += 1
+        if counts["markers"]:
+            self._save_sheet_markers()
+
+        inventory_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        for record in inventory_rows:
+            if str(record.get("assigned_person") or "").strip().lower() == target:
+                record["assigned_person"] = "Unassigned"
+                counts["inventory"] += 1
+        if counts["inventory"]:
+            self._save_inventory_ledger(inventory_rows)
+
+        profit_rows = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        for record in profit_rows:
+            if str(record.get("assigned_person") or "").strip().lower() == target:
+                record["assigned_person"] = ""
+                counts["profit"] += 1
+        if counts["profit"]:
+            self._save_profit_ledger(profit_rows)
+        return counts
+
+    def open_delete_person_dialog(self) -> None:
+        people = [person for person in self._known_people() if person.lower() != "unassigned"]
+        selected = self.payout_person_var.get().strip() if hasattr(self, "payout_person_var") else ""
+        if selected and selected not in people and selected.lower() != "unassigned":
+            people.insert(0, selected)
+        if not people:
+            messagebox.showinfo("No people", "No assigned people are available to delete.")
+            return
+        person_var = tk.StringVar(value=selected if selected in people else people[0])
+        popup = tk.Toplevel(self)
+        popup.title("Delete Person")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.grab_set()
+        popup.resizable(False, False)
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Delete Person", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ttk.Label(frame, text="Person", style="Panel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(0, 12))
+        combo = ttk.Combobox(frame, textvariable=person_var, values=people, width=34)
+        combo.grid(row=1, column=1, sticky="ew", pady=(0, 12))
+
+        def apply_delete() -> None:
+            person = person_var.get().strip()
+            if not person:
+                return
+            confirmed = messagebox.askyesno(
+                "Delete person?",
+                f"Remove {person} from sheet assignments, inventory, and profit records?",
+                parent=popup,
+            )
+            if not confirmed:
+                return
+            counts = self.delete_person_records(person)
+            for var in (self.payout_person_var, self.inventory_person_var, self.profit_person_var):
+                if var.get().strip().lower() == person.lower():
+                    var.set("")
+            self.refresh_home()
+            self.refresh_inventory_tab()
+            self.refresh_profit_tab()
+            self.refresh_payouts_tab()
+            popup.destroy()
+            self.status_var.set(
+                f"Deleted person {person}: {counts['markers']} sheet marker(s), {counts['inventory']} inventory row(s), {counts['profit']} profit row(s)."
+            )
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=2, column=0, columnspan=2, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(buttons, text="Delete", command=apply_delete, style="Primary.TButton").pack(side=tk.LEFT)
+        frame.columnconfigure(1, weight=1)
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
 
     def _selected_payout_keys(self) -> list[str]:
         if not hasattr(self, "payout_detail_tree"):
