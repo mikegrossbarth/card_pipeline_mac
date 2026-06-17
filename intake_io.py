@@ -698,6 +698,91 @@ def mark_received_in_workbooks(paths: list[Path], certs: set[str]) -> dict[str, 
     return result
 
 
+def clear_received_in_workbooks(paths: list[Path]) -> dict[str, Any]:
+    result = {
+        "files_scanned": 0,
+        "files_updated": 0,
+        "rows_cleared": 0,
+        "errors": [],
+    }
+    for path in paths:
+        result["files_scanned"] += 1
+        try:
+            workbook = load_workbook(path)
+        except Exception as error:
+            result["errors"].append(f"{path.name}: {error}")
+            continue
+
+        changed = False
+        try:
+            for sheet in workbook.worksheets:
+                headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
+                received_col = headers.get("received")
+                if not received_col:
+                    continue
+                for row_index in range(2, _sheet_max_row(sheet) + 1):
+                    received_cell = sheet.cell(row_index, received_col)
+                    if str(received_cell.value or "").strip():
+                        received_cell.value = ""
+                        result["rows_cleared"] += 1
+                        changed = True
+                    for col_index in range(1, _sheet_max_column(sheet) + 1):
+                        cell = sheet.cell(row_index, col_index)
+                        if cell.fill == RECEIVED_FILL:
+                            cell.fill = PatternFill(fill_type=None)
+                            changed = True
+            if changed:
+                workbook.save(path)
+                result["files_updated"] += 1
+        except Exception as error:
+            result["errors"].append(f"{path.name}: {error}")
+        finally:
+            workbook.close()
+    return result
+
+
+def remove_company_sheet_rows_for_source(directory: Path, source_sheet_name: str) -> dict[str, Any]:
+    result = {
+        "files_scanned": 0,
+        "files_updated": 0,
+        "rows_removed": 0,
+        "errors": [],
+    }
+    source_name = Path(str(source_sheet_name or "")).name
+    if not source_name or not directory.exists():
+        return result
+    for path in sorted(directory.glob("*/*.xlsx")):
+        result["files_scanned"] += 1
+        try:
+            workbook = load_workbook(path)
+        except Exception as error:
+            result["errors"].append(f"{path.name}: {error}")
+            continue
+        changed = False
+        try:
+            for sheet in workbook.worksheets:
+                headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
+                source_col = headers.get("sourcesheet")
+                if not source_col:
+                    continue
+                for row_index in range(_sheet_max_row(sheet), 1, -1):
+                    row_source = Path(clean_part(sheet.cell(row_index, source_col).value)).name
+                    if row_source == source_name:
+                        sheet.delete_rows(row_index, 1)
+                        result["rows_removed"] += 1
+                        changed = True
+                if changed:
+                    sheet.auto_filter.ref = sheet.dimensions
+            if changed:
+                workbook.save(path)
+                result["files_updated"] += 1
+        except Exception as error:
+            result["errors"].append(f"{path.name}: {error}")
+        finally:
+            workbook.close()
+    return result
+
+
 def working_sheet_path(directory: Path, title: str) -> Path:
     safe = safe_filename(title) or time.strftime("working-sheet-%Y%m%d-%H%M%S")
     return directory / f"{safe}.xlsx"

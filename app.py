@@ -49,6 +49,7 @@ from shared_state import atomic_write_json, local_identity, shared_lock  # noqa:
 from intake_io import (  # noqa: E402
     append_company_sheet_rows,
     build_card_title,
+    clear_received_in_workbooks,
     clean_part,
     default_output_path,
     ensure_company_weekly_sheets,
@@ -59,6 +60,7 @@ from intake_io import (  # noqa: E402
     read_company_profit_records,
     read_photo_export,
     read_simple_spreadsheet,
+    remove_company_sheet_rows_for_source,
     scan_to_cert,
     summarize_workbook,
     working_sheet_path,
@@ -870,6 +872,8 @@ class CardPipelineApp(tk.Tk):
         )
         self.home_sheet_list.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         self.home_sheet_list.bind("<<ListboxSelect>>", lambda _event: self._load_home_selected_marker())
+        self.home_sheet_list.bind("<Button-3>", self._show_home_sheet_context_menu)
+        self.home_sheet_list.bind("<Button-2>", self._show_home_sheet_context_menu)
         ttk.Button(sheet_panel, text="Refresh Home", command=self.refresh_home, style="Primary.TButton").pack(fill=tk.X)
 
         right = ttk.Frame(body, style="App.TFrame")
@@ -2188,6 +2192,78 @@ class CardPipelineApp(tk.Tk):
         key = self._home_sheet_key(kind, name)
         self.home_selected_sheet_key = key
 
+    def _show_home_sheet_context_menu(self, event) -> str:
+        if not hasattr(self, "home_sheet_list"):
+            return "break"
+        index = self.home_sheet_list.nearest(event.y)
+        if index < 0 or index >= self.home_sheet_list.size():
+            return "break"
+        self.home_sheet_list.selection_clear(0, tk.END)
+        self.home_sheet_list.selection_set(index)
+        self.home_sheet_list.activate(index)
+        self._load_home_selected_marker()
+        menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        kind, _name = self._split_home_sheet_key(self.home_selected_sheet_key)
+        move_menu = tk.Menu(menu, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        for target_stage in ("Incoming", "Working", "Received"):
+            move_menu.add_command(
+                label=f"Move to {target_stage}",
+                command=lambda stage=target_stage: self.move_selected_home_sheet_to_stage(stage),
+                state=tk.DISABLED if target_stage == kind else tk.NORMAL,
+            )
+        menu.add_cascade(label="Move Sheet", menu=move_menu)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
+    def move_selected_home_sheet_to_stage(self, target_stage: str) -> None:
+        if not self.home_selected_sheet_key:
+            messagebox.showinfo("Choose sheet", "Choose a sheet on Home before moving.")
+            return
+        source_stage, name = self._split_home_sheet_key(self.home_selected_sheet_key)
+        if source_stage not in {"Incoming", "Working", "Received"} or not name:
+            messagebox.showinfo("Cannot move", "Only Incoming, Working, and Received sheets can be moved from Home.")
+            return
+        if target_stage not in {"Incoming", "Working", "Received"}:
+            messagebox.showinfo("Cannot move", "Choose Incoming, Working, or Received.")
+            return
+        if source_stage == target_stage:
+            return
+        path = self._sheet_path_for_stage(source_stage, name)
+        if not self._sheet_path_is_visible_home_sheet(source_stage, path):
+            messagebox.showerror("Move blocked", f"Move is only allowed inside {source_stage} sheets.")
+            return
+        confirmed = messagebox.askyesno(
+            "Move sheet?",
+            (
+                f"Move this sheet from {source_stage} to {target_stage}?\n\n{name}\n\n"
+                "If moving out of Received, L.U.C.A.S will clear received/paid markers and remove company-sheet/profit rows created from this sheet."
+            ),
+        )
+        if not confirmed:
+            return
+        try:
+            with shared_lock(CARD_PIPELINE_DIR, "sheet-stage-move", self.lucas_identity):
+                moved_key, cleanup = self._move_home_sheet_to_stage(self.home_selected_sheet_key, target_stage)
+                self.home_selected_sheet_key = moved_key
+                self.home_sheet_kind.set(target_stage)
+                self._save_sheet_markers()
+        except Exception as error:
+            messagebox.showerror("Move failed", str(error))
+            return
+        self.refresh_pipeline()
+        self.refresh_home()
+        cleanup_note = ""
+        if cleanup:
+            cleanup_note = (
+                f" Cleared {cleanup.get('received_rows_cleared', 0)} received mark(s), "
+                f"removed {cleanup.get('company_rows_removed', 0)} company row(s), "
+                f"and removed {cleanup.get('profit_rows_removed', 0)} profit ledger row(s)."
+            )
+        self.status_var.set(f"Moved {name} from {source_stage} to {target_stage}.{cleanup_note}")
+
     def open_sheet_marker_editor(self) -> None:
         if not self.home_selected_sheet_key:
             messagebox.showinfo("Choose sheet", "Choose a sheet on Home before editing markers.")
@@ -2282,6 +2358,9 @@ class CardPipelineApp(tk.Tk):
                         self.home_selected_sheet_key = key
                         self.home_sheet_kind.set("Incoming")
                         moved = True
+                if moved:
+                    current_kind, _current_name = self._split_home_sheet_key(key)
+                    marker = self._marker_for_stage(marker, current_kind)
                 self.home_sheet_markers[key] = marker
                 self._save_sheet_markers()
         except Exception as error:
@@ -2305,46 +2384,87 @@ class CardPipelineApp(tk.Tk):
         return kind, name
 
     def _move_working_sheet_to_incoming(self, key: str) -> str:
-        kind, name = self._split_home_sheet_key(key)
-        if kind != "Working" or not name:
-            return ""
-        source = self.home_sheet_paths.get("Working", {}).get(name) or WORKING_SHEETS_DIR / name
-        if not source.exists():
-            raise FileNotFoundError(f"Working sheet not found: {source}")
-        INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
-        destination = INCOMING_SHEETS_DIR / source.name
-        if destination.exists():
-            raise FileExistsError(f"Incoming sheet already exists: {destination.name}")
-        shutil.move(str(source), str(destination))
-        return self._home_sheet_key("Incoming", destination.name)
+        moved_key, _cleanup = self._move_home_sheet_to_stage(key, "Incoming")
+        return moved_key
 
     def _move_sheet_to_received(self, key: str) -> str:
-        kind, name = self._split_home_sheet_key(key)
-        if kind not in {"Working", "Incoming"} or not name:
-            return ""
-        source = self._sheet_path_for_stage(kind, name)
-        if not source.exists():
-            raise FileNotFoundError(f"{kind} sheet not found: {source}")
-        RECEIVED_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
-        destination = RECEIVED_SHEETS_DIR / source.name
-        if destination.exists():
-            raise FileExistsError(f"Received sheet already exists: {destination.name}")
-        shutil.move(str(source), str(destination))
-        return self._home_sheet_key("Received", destination.name)
+        moved_key, _cleanup = self._move_home_sheet_to_stage(key, "Received")
+        return moved_key
 
     def _move_received_sheet_to_incoming(self, key: str) -> str:
-        kind, name = self._split_home_sheet_key(key)
-        if kind != "Received" or not name:
-            return ""
-        source = self._sheet_path_for_stage(kind, name)
+        moved_key, _cleanup = self._move_home_sheet_to_stage(key, "Incoming")
+        return moved_key
+
+    def _move_home_sheet_to_stage(self, key: str, target_stage: str) -> tuple[str, dict[str, int]]:
+        source_stage, name = self._split_home_sheet_key(key)
+        if source_stage not in {"Incoming", "Working", "Received"} or target_stage not in {"Incoming", "Working", "Received"} or not name:
+            return "", {}
+        if source_stage == target_stage:
+            return key, {}
+        source = self._sheet_path_for_stage(source_stage, name)
         if not source.exists():
-            raise FileNotFoundError(f"Received sheet not found: {source}")
-        INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
-        destination = INCOMING_SHEETS_DIR / source.name
+            raise FileNotFoundError(f"{source_stage} sheet not found: {source}")
+        target_dir = {
+            "Incoming": INCOMING_SHEETS_DIR,
+            "Working": WORKING_SHEETS_DIR,
+            "Received": RECEIVED_SHEETS_DIR,
+        }[target_stage]
+        target_dir.mkdir(parents=True, exist_ok=True)
+        destination = target_dir / source.name
         if destination.exists():
-            raise FileExistsError(f"Incoming sheet already exists: {destination.name}")
+            raise FileExistsError(f"{target_stage} sheet already exists: {destination.name}")
+
+        cleanup: dict[str, int] = {}
+        moving_out_of_received = source_stage == "Received" and target_stage != "Received"
+        if moving_out_of_received:
+            cleanup = self._cleanup_sheet_received_side_effects(source.name, source)
         shutil.move(str(source), str(destination))
-        return self._home_sheet_key("Incoming", destination.name)
+
+        old_marker = dict(self.home_sheet_markers.get(key, {}))
+        self._delete_sheet_marker(key)
+        new_key = self._home_sheet_key(target_stage, destination.name)
+        self.home_sheet_markers[new_key] = self._marker_for_stage(old_marker, target_stage)
+        return new_key, cleanup
+
+    def _marker_for_stage(self, marker: dict[str, object], stage: str) -> dict[str, object]:
+        normalized = dict(marker)
+        if stage == "Received":
+            normalized["all_received"] = True
+            normalized.setdefault("received_at", datetime.now().isoformat(timespec="seconds"))
+        else:
+            normalized["all_received"] = False
+            normalized["paid"] = False
+            for field in ("received_at", "archived_at", "archived_from"):
+                normalized.pop(field, None)
+        return normalized
+
+    def _cleanup_sheet_received_side_effects(self, source_sheet_name: str, source_path: Path) -> dict[str, int]:
+        clear_result = clear_received_in_workbooks([source_path])
+        company_result = remove_company_sheet_rows_for_source(COMPANY_SHEETS_DIR, source_sheet_name)
+        profit_rows_removed = self._remove_profit_ledger_rows_for_source(source_sheet_name)
+        errors = list(clear_result.get("errors") or []) + list(company_result.get("errors") or [])
+        if errors:
+            raise RuntimeError("Move cleanup failed: " + "; ".join(str(error) for error in errors[:5]))
+        return {
+            "received_rows_cleared": int(clear_result.get("rows_cleared") or 0),
+            "company_rows_removed": int(company_result.get("rows_removed") or 0),
+            "profit_rows_removed": profit_rows_removed,
+        }
+
+    def _remove_profit_ledger_rows_for_source(self, source_sheet_name: str) -> int:
+        source_name = Path(str(source_sheet_name or "")).name
+        if not source_name:
+            return 0
+        ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        kept = [
+            record
+            for record in ledger
+            if Path(str(record.get("source_sheet") or "")).name != source_name
+        ]
+        removed = len(ledger) - len(kept)
+        if removed:
+            self._save_profit_ledger(kept)
+        return removed
 
     def _sheet_path_for_stage(self, kind: str, name: str) -> Path:
         if kind == "Working":
@@ -2354,6 +2474,20 @@ class CardPipelineApp(tk.Tk):
         if kind == "Received":
             return self.received_sheet_paths.get(name) or RECEIVED_SHEETS_DIR / name
         return Path(name)
+
+    def _sheet_path_is_visible_home_sheet(self, kind: str, path: Path) -> bool:
+        expected = {
+            "Incoming": INCOMING_SHEETS_DIR,
+            "Working": WORKING_SHEETS_DIR,
+            "Received": RECEIVED_SHEETS_DIR,
+        }.get(kind)
+        if expected is None:
+            return False
+        try:
+            path.resolve().relative_to(expected.resolve())
+            return path.suffix.lower() == ".xlsx"
+        except Exception:
+            return False
 
     def _move_fully_received_sheets_to_received(self, paths: list[Path]) -> list[str]:
         moved: list[str] = []

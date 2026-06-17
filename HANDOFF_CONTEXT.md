@@ -139,7 +139,7 @@ Do not commit:
 
 ### Home
 
-Home lists `Incoming`, `Working`, and `Received` sheets. Payment state is handled in `Payouts/Tabs`.
+Home lists `Incoming`, `Working`, and `Received` sheets. It supports right-click move between `Incoming`, `Working`, and `Received`. Moving a sheet out of `Received` clears received/paid marker state, clears workbook received marks, removes company-sheet rows created from that source sheet, and removes matching profit ledger rows. Payment state is handled in `Payouts/Tabs`.
 
 ### Create
 

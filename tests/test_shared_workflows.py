@@ -990,6 +990,112 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.SHEET_MARKERS_PATH = old_markers
 
+    def test_moving_received_sheet_back_clears_received_profit_and_company_rows(self) -> None:
+        class MoveDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_path_for_stage = app.CardPipelineApp._sheet_path_for_stage
+            _delete_sheet_marker = app.CardPipelineApp._delete_sheet_marker
+            _marker_for_stage = app.CardPipelineApp._marker_for_stage
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _remove_profit_ledger_rows_for_source = app.CardPipelineApp._remove_profit_ledger_rows_for_source
+            _cleanup_sheet_received_side_effects = app.CardPipelineApp._cleanup_sheet_received_side_effects
+            _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            incoming_dir = root / "INCOMING SHEETS"
+            working_dir = root / "WORKING SHEETS"
+            received_dir = root / "RECEIVED SHEETS"
+            company_dir = root / "COMPANY SHEETS"
+            received_dir.mkdir(parents=True)
+            working_dir.mkdir()
+
+            source_path = received_dir / "Lot A.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Card Description", "RECEIVED"])
+            sheet.append(["123", "Test Card", "X"])
+            workbook.save(source_path)
+
+            company_path = company_dir / "Arena Club" / "Arena Club.xlsx"
+            company_path.parent.mkdir(parents=True)
+            company_workbook = Workbook()
+            company_sheet = company_workbook.active
+            company_sheet.title = "Week of 2026-06-15"
+            company_sheet.append(["Date Added", "Source Sheet", "Source", "Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder Value", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Status", "Notes"])
+            company_sheet.append(["2026-06-17", "Lot A.xlsx", "", "123", "PSA", "Test Card", 40, "", 100, "", "", "Arena Club", 90, "Received", ""])
+            company_workbook.save(company_path)
+
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_company = app.COMPANY_SHEETS_DIR
+            old_ledger = app.PROFIT_LEDGER_PATH
+            app.INCOMING_SHEETS_DIR = incoming_dir
+            app.WORKING_SHEETS_DIR = working_dir
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.COMPANY_SHEETS_DIR = company_dir
+            app.PROFIT_LEDGER_PATH = root / "profit_ledger.json"
+            app.PROFIT_LEDGER_PATH.write_text(
+                json.dumps([
+                    {
+                        "date_added": "2026-06-17",
+                        "company": "Arena Club",
+                        "weekly_sheet_name": "Arena Club.xlsx:Week of 2026-06-15",
+                        "source_sheet": "Lot A.xlsx",
+                        "cert_number": "123",
+                        "card_title": "Test Card",
+                        "purchase_price": 40,
+                        "sale_price": 90,
+                    }
+                ]),
+                encoding="utf-8",
+            )
+            dummy = MoveDummy()
+            dummy.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {}}
+            dummy.received_sheet_paths = {"Lot A.xlsx": source_path}
+            dummy.home_sheet_markers = {
+                "Received|Lot A.xlsx": {
+                    "assigned_person": "Lucas",
+                    "paid": True,
+                    "all_received": True,
+                    "received_at": "2026-06-17T10:00:00",
+                }
+            }
+            dummy.deleted_sheet_marker_keys = set()
+            try:
+                moved_key, cleanup = dummy._move_home_sheet_to_stage("Received|Lot A.xlsx", "Working")
+
+                self.assertEqual(moved_key, "Working|Lot A.xlsx")
+                self.assertTrue((working_dir / "Lot A.xlsx").exists())
+                moved_workbook = load_workbook(working_dir / "Lot A.xlsx", data_only=True)
+                try:
+                    self.assertEqual(moved_workbook.active.cell(2, 3).value, None)
+                finally:
+                    moved_workbook.close()
+                company_rows = read_company_profit_records(company_dir)
+                ledger = json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8"))
+                marker = dummy.home_sheet_markers[moved_key]
+                self.assertEqual(company_rows, [])
+                self.assertEqual(ledger, [])
+                self.assertFalse(marker["paid"])
+                self.assertFalse(marker["all_received"])
+                self.assertNotIn("received_at", marker)
+                self.assertEqual(cleanup["received_rows_cleared"], 1)
+                self.assertEqual(cleanup["company_rows_removed"], 1)
+                self.assertEqual(cleanup["profit_rows_removed"], 1)
+            finally:
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.COMPANY_SHEETS_DIR = old_company
+                app.PROFIT_LEDGER_PATH = old_ledger
+
     def test_profit_sales_are_deduped_and_delta_is_recorded(self) -> None:
         class ProfitDummy:
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
