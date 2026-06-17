@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-dedicated-profile-debugger-v9";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-wait-for-cardladder-login-v10";
 let lastGraderOpenDebug = [];
 const COMP_SOURCE_LABELS = [
   "eBay",

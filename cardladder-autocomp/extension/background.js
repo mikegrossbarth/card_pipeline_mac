@@ -6,7 +6,7 @@ const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
-const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-dedicated-profile-debugger-v9";
+const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-wait-for-cardladder-login-v10";
 
 let runInProgress = false;
 let activeWindowId = null;
@@ -87,6 +87,7 @@ async function startCardLadderRun(focusWindow, options = {}) {
     });
 
     const tab = await createSalesHistoryWindow(focusWindow);
+    await waitForCardLadderLoggedIn(tab.id, rows.length);
     await runRows(tab.id, rows, options);
     return { ok: true };
   } catch (error) {
@@ -158,6 +159,7 @@ async function startBridgeRun(rows, bridgeUrl = activeBridgeUrl) {
       cardladderResults: [],
     });
     const tab = await createSalesHistoryWindow(true);
+    await waitForCardLadderLoggedIn(tab.id, rows.length);
     await runRows(tab.id, rows, { postToBridge: true });
   } catch (error) {
     await postBridgeFinish({ ok: false, error: String(error?.message || error) });
@@ -657,6 +659,55 @@ async function waitForTabNotLoading(tabId) {
     }
     await delay(1000);
   }
+}
+
+async function waitForCardLadderLoggedIn(tabId, totalRows = 0) {
+  const started = Date.now();
+  let lastNavigateAt = 0;
+  while (Date.now() - started < 10 * 60 * 1000) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) throw new Error("Card Ladder tab closed while waiting for login.");
+    await chrome.storage.local.set({
+      cardladderStatus: {
+        ok: true,
+        stage: "waiting for Card Ladder login",
+        total: totalRows,
+        completed: 0,
+        current: null,
+        message: "Log into Card Ladder in the automation Chrome window. L.U.C.A.S will continue automatically.",
+        updatedAt: new Date().toISOString(),
+      },
+    });
+
+    await waitForTabNotLoading(tabId);
+    const readiness = await cardLadderPageReadiness(tabId);
+    if (readiness.ready) return;
+
+    const now = Date.now();
+    if (readiness.loggedIn && !readiness.onSalesHistory && now - lastNavigateAt > 5000) {
+      lastNavigateAt = now;
+      await chrome.tabs.update(tabId, { url: SALES_HISTORY_URL }).catch(() => {});
+    }
+    await delay(1500);
+  }
+  throw new Error("Timed out waiting for Card Ladder login in the automation Chrome profile.");
+}
+
+async function cardLadderPageReadiness(tabId) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const url = location.href;
+      const text = (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 4000);
+      const onSalesHistory = /\/sales-history/i.test(url);
+      const loggedOut = /\b(log\s*in|sign\s*in|sign\s*up|create\s+account|forgot\s+password)\b/i.test(text);
+      const loggedIn = /\b(DASHBOARD|COLLECTION|SALES|SHOP|LADDER|PROFILES|WATCHLIST)\b/i.test(text) && !loggedOut;
+      const ready = onSalesHistory && loggedIn && /\bSALES\b/i.test(text);
+      return { url, onSalesHistory, loggedIn, loggedOut, ready };
+    },
+  }).catch(() => [{ result: { url: tab?.url || "", onSalesHistory: false, loggedIn: false, loggedOut: true, ready: false } }]);
+  return result?.result || { url: tab?.url || "", onSalesHistory: false, loggedIn: false, loggedOut: true, ready: false };
 }
 
 function delay(ms) {

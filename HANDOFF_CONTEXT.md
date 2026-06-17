@@ -196,16 +196,16 @@ Current comping flow opens a dedicated automation Chrome profile at:
 work/cardladder-chrome-profile
 ```
 
-The app launches that profile with the unpacked extension loaded before queuing Card Ladder rows. It opens the profile to `about:blank`; the extension then opens the actual Card Ladder run window after it receives the queue. The extension version `2026-06-17-dedicated-profile-debugger-v9` uses Chrome debugger clicks only as a fallback for Card Ladder's grader dropdown. The debugger banner is expected inside that dedicated automation window/profile, not the user's normal Chrome profile.
+The app launches that profile with the unpacked extension loaded before queuing Card Ladder rows. It opens the profile to `about:blank`; the extension then opens the actual Card Ladder run window after it receives the queue. The extension version `2026-06-17-wait-for-cardladder-login-v10` waits at `waiting for Card Ladder login` until the automation profile is logged in and Card Ladder Sales History is available, then starts rows automatically. It uses Chrome debugger clicks only as a fallback for Card Ladder's grader dropdown. The debugger banner is expected inside that dedicated automation window/profile, not the user's normal Chrome profile.
 
 The desktop bridge binds to the first available port from `8765` to `8772`. The extension manifest grants access to the same local range.
 
 Common gotchas:
 
-- User must be logged into Card Ladder in Chrome.
+- User must log into Card Ladder in the dedicated automation Chrome profile once. First run may pause at login, then continue automatically.
 - Old unpacked extension versions should be removed or disabled.
-- Current restored extension/background version: `2026-06-10-no-results-ocr-fallback-v3`.
-- Current restored content-script version: `2026-06-10-no-results-profile-v2`.
+- Current restored extension/background version: `2026-06-17-wait-for-cardladder-login-v10`.
+- Current restored content-script version: `2026-06-17-wait-for-cardladder-login-v10`.
 - App warns if the extension version seen by the bridge is stale.
 - No-results pages preserve the Card Ladder title when available.
 
