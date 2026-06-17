@@ -1166,6 +1166,33 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_inventory_record_assignment_enrichment_adds_company_and_payout(self) -> None:
+        class FakeAssignment:
+            def recommend(self, row, person=""):
+                return types.SimpleNamespace(company="Arena Club", payout=95)
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
+            _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
+
+        dummy = InventoryDummy()
+        dummy.assignment_engine = FakeAssignment()
+        record = dummy._enrich_inventory_record_assignment(
+            {
+                "assigned_person": "Hambone",
+                "cert_number": "123",
+                "card_title": "Test Card",
+                "source_sheet": "Lot.xlsx",
+                "purchase_price": 40,
+                "inventory_value": 100,
+            }
+        )
+        self.assertEqual(record["best_company"], "Arena Club")
+        self.assertEqual(record["estimated_payout"], 95)
+
     def test_received_inventory_reconcile_skips_company_sheet_rows(self) -> None:
         class ReconcileDummy:
             _money_value = app.CardPipelineApp._money_value

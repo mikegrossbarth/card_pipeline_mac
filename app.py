@@ -1003,7 +1003,7 @@ class CardPipelineApp(tk.Tk):
 
         self.inventory_tree = self._build_home_tree(
             self.inventory_tab,
-            columns=("date", "person", "sport", "cert", "grader", "card", "purchase", "value", "source", "status"),
+            columns=("date", "person", "sport", "cert", "grader", "card", "purchase", "value", "company", "payout", "source", "status"),
             headings={
                 "date": "Date",
                 "person": "Person",
@@ -1013,10 +1013,12 @@ class CardPipelineApp(tk.Tk):
                 "card": "Card",
                 "purchase": "Purchase",
                 "value": "Value",
+                "company": "Best Company",
+                "payout": "Payout",
                 "source": "Source Sheet",
                 "status": "Status",
             },
-            widths={"date": 95, "person": 130, "sport": 95, "cert": 110, "grader": 80, "card": 390, "purchase": 100, "value": 100, "source": 190, "status": 110},
+            widths={"date": 95, "person": 130, "sport": 95, "cert": 110, "grader": 80, "card": 320, "purchase": 100, "value": 100, "company": 140, "payout": 100, "source": 170, "status": 110},
             height=22,
         )
         self.refresh_inventory_tab()
@@ -1143,6 +1145,8 @@ class CardPipelineApp(tk.Tk):
         normalized["card_title"] = str(normalized.get("card_title") or "").strip()
         normalized["purchase_price"] = self._money_value(normalized.get("purchase_price"))
         normalized["inventory_value"] = self._money_value(normalized.get("inventory_value") or normalized.get("value") or normalized.get("sale_price") or normalized.get("estimated_payout"))
+        normalized["best_company"] = str(normalized.get("best_company") or normalized.get("company") or "").strip()
+        normalized["estimated_payout"] = self._money_value(normalized.get("estimated_payout") or normalized.get("payout"))
         normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
         normalized["source"] = str(normalized.get("source") or "").strip()
         normalized["status"] = str(normalized.get("status") or "Active").strip() or "Active"
@@ -1163,6 +1167,8 @@ class CardPipelineApp(tk.Tk):
                 "card_title": row.card_title,
                 "purchase_price": row.existing_value,
                 "inventory_value": row.card_ladder_comps_average or row.card_ladder_value or row.cy_value,
+                "best_company": row.best_company,
+                "estimated_payout": row.estimated_payout,
                 "source_sheet": source_sheet,
                 "source": source,
                 "status": status,
@@ -1266,6 +1272,8 @@ class CardPipelineApp(tk.Tk):
                                 "card_title": card_title,
                                 "purchase_price": row.get("purchase_price"),
                                 "inventory_value": row.get("card_ladder_comps_average") or row.get("card_ladder_value") or row.get("cy_value"),
+                                "best_company": row.get("best_company") or "",
+                                "estimated_payout": row.get("estimated_payout"),
                                 "source_sheet": path.name,
                                 "source": row.get("source") or "",
                                 "status": "Active",
@@ -1299,12 +1307,29 @@ class CardPipelineApp(tk.Tk):
             existing_value=self._money_value(record.get("purchase_price")),
             card_ladder_value=value,
             card_ladder_comps_average=value,
-            best_company="",
-            estimated_payout=None,
+            best_company=str(record.get("best_company") or ""),
+            estimated_payout=self._money_value(record.get("estimated_payout")),
             company_pile=True,
             status="Moved from inventory",
             notes=str(record.get("notes") or "Moved from inventory"),
         )
+
+    def _enrich_inventory_record_assignment(self, record: dict[str, object]) -> dict[str, object]:
+        normalized = self._normalize_inventory_record(record)
+        if normalized.get("best_company") and normalized.get("estimated_payout") is not None:
+            return normalized
+        try:
+            row = self._inventory_workbook_row(normalized, 1)
+            recommendation = self.assignment_engine.recommend(row, person=str(normalized.get("assigned_person") or ""))
+        except Exception:
+            return normalized
+        if recommendation.payout is None:
+            normalized["best_company"] = normalized.get("best_company") or NO_COMPANY_TAKES_LABEL
+            normalized["estimated_payout"] = None
+            return normalized
+        normalized["best_company"] = recommendation.company
+        normalized["estimated_payout"] = recommendation.payout
+        return normalized
 
     def _mark_inventory_records_moved_to_company(self, moved_keys: set[str]) -> None:
         if not moved_keys:
@@ -1389,7 +1414,10 @@ class CardPipelineApp(tk.Tk):
                 self._sync_received_inventory_to_ledger()
             finally:
                 self._inventory_reconcile_running = False
-        self.inventory_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        self.inventory_rows = [self._enrich_inventory_record_assignment(record) for record in self._load_inventory_ledger()]
+        stored_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        if self.inventory_rows != stored_rows:
+            self._save_inventory_ledger(self.inventory_rows)
         self.filtered_inventory_rows = self._filtered_inventory_records(self.inventory_rows)
         if not hasattr(self, "inventory_tree"):
             return
@@ -1417,6 +1445,8 @@ class CardPipelineApp(tk.Tk):
                     record.get("card_title") or "",
                     format_money(purchase),
                     format_money(value),
+                    record.get("best_company") or "",
+                    format_money(record.get("estimated_payout")),
                     record.get("source_sheet") or "",
                     record.get("status") or "",
                 ),
@@ -1463,7 +1493,7 @@ class CardPipelineApp(tk.Tk):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Inventory"
-        headers = ["Date Added", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Inventory Value", "Source Sheet", "Source", "Status", "Notes"]
+        headers = ["Date Added", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Inventory Value", "Best Company", "Payout", "Source Sheet", "Source", "Status", "Notes"]
         sheet.append(headers)
         for record in rows:
             sheet.append([
@@ -1475,6 +1505,8 @@ class CardPipelineApp(tk.Tk):
                 record.get("card_title") or "",
                 record.get("purchase_price"),
                 record.get("inventory_value"),
+                record.get("best_company") or "",
+                record.get("estimated_payout"),
                 record.get("source_sheet") or "",
                 record.get("source") or "",
                 record.get("status") or "",
@@ -1482,7 +1514,7 @@ class CardPipelineApp(tk.Tk):
             ])
         sheet.auto_filter.ref = sheet.dimensions
         sheet.freeze_panes = "A2"
-        for index, width in enumerate([14, 18, 14, 22, 12, 60, 16, 16, 28, 24, 14, 36], start=1):
+        for index, width in enumerate([14, 18, 14, 22, 12, 60, 16, 16, 20, 16, 28, 24, 14, 36], start=1):
             sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
         workbook.save(path)
         self.status_var.set(f"Exported inventory: {path}")
