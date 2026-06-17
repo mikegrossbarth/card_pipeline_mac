@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-open-select-v5";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-dropdown-position-v6";
 let lastGraderOpenDebug = [];
 const COMP_SOURCE_LABELS = [
   "eBay",
@@ -553,7 +553,8 @@ async function selectGraderForAutomation(grader) {
 async function clickDropdownThenOption(modal, control, grader, optionLabel) {
   lastGraderOpenDebug = [];
   await clickGraderDropdown(modal, control);
-  const option = findGraderOption(optionLabel) || findGraderOptionByPosition(grader);
+  const rect = graderFieldRect(modal, control);
+  const option = findGraderOption(optionLabel, rect) || findGraderOptionByPosition(grader, rect);
   if (option) {
     clickLikeHuman(option);
     await sleep(650);
@@ -705,7 +706,7 @@ async function clickGraderDropdown(modal, control) {
   for (const open of clickTargets) {
     open();
     await sleep(550);
-    const opened = findAnyGraderOptions();
+    const opened = findAnyGraderOptions(rect);
     rememberGraderOpenDebug(opened ? "opened" : "still-closed", document.activeElement || control);
     if (opened) return;
   }
@@ -781,18 +782,23 @@ function openDropdownWithKeyboard(control) {
   }
 }
 
-function findAnyGraderOptions() {
+function findAnyGraderOptions(controlRect = null) {
   return [...document.querySelectorAll("[role='option'], [role='menuitem'], li, button, div, span")]
     .filter((el) => isVisible(el))
-    .some((el) => /^(PSA|BECKETT|BGS|SGC|CGC)$/i.test(visibleText(el).replace(/\s+/g, " ").trim()));
+    .some((el) => {
+      const text = visibleText(el).replace(/\s+/g, " ").trim();
+      return /^(PSA|BECKETT|BGS|SGC|CGC)$/i.test(text) &&
+        isNearGraderDropdown(el.getBoundingClientRect(), controlRect);
+    });
 }
 
-function findGraderOption(grader) {
+function findGraderOption(grader, controlRect = null) {
   const pattern = new RegExp(`(^|\\b)${escapeRegExp(grader)}($|\\b)`, "i");
   const candidates = [...document.querySelectorAll("[role='option'], [role='menuitem'], li, button, div, span")]
     .filter((el) => isVisible(el))
     .map((el) => ({ el, text: visibleText(el).replace(/\s+/g, " ").trim(), rect: el.getBoundingClientRect() }))
     .filter(({ text, rect }) => text && text.length <= 40 && pattern.test(text) && rect.top > 80)
+    .filter(({ rect }) => isNearGraderDropdown(rect, controlRect))
     .filter(({ text }) => !/grader|cert|submit|search/i.test(text));
 
   candidates.sort((a, b) => {
@@ -804,7 +810,7 @@ function findGraderOption(grader) {
   return candidates[0]?.el || null;
 }
 
-function findGraderOptionByPosition(grader) {
+function findGraderOptionByPosition(grader, controlRect = null) {
   const indexByGrader = {
     PSA: 0,
     BGS: 1,
@@ -818,8 +824,16 @@ function findGraderOptionByPosition(grader) {
     .filter((el) => isVisible(el))
     .map((el) => ({ el, text: visibleText(el).replace(/\s+/g, " ").trim(), rect: el.getBoundingClientRect() }))
     .filter(({ text, rect }) => text && text.length <= 40 && /^(PSA|BECKETT|BGS|SGC|CGC)$/i.test(text) && rect.top > 80)
+    .filter(({ rect }) => isNearGraderDropdown(rect, controlRect))
     .sort((a, b) => a.rect.top - b.rect.top);
   return options[targetIndex]?.el || null;
+}
+
+function isNearGraderDropdown(rect, controlRect) {
+  if (!controlRect) return true;
+  const verticallyNear = rect.top >= controlRect.bottom - 12 && rect.top <= controlRect.bottom + 360;
+  const horizontallyNear = rect.right >= controlRect.left - 24 && rect.left <= controlRect.right + 80;
+  return verticallyNear && horizontallyNear;
 }
 
 async function clickGraderOptionByKnownPosition(modal, control, grader) {
@@ -1396,6 +1410,8 @@ function clickAtPoint(x, y, reason = "point") {
     target.closest("[role='combobox']"),
     target.closest("[aria-haspopup='listbox']"),
     target.closest("[aria-expanded]"),
+    target.closest(".select-input"),
+    target.closest("[class*='select-input']"),
     target.closest(".MuiSelect-select"),
     target.closest(".MuiInputBase-root"),
     target.closest("button, [role='button']"),
