@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-parent-arrow-v7";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-framework-handler-v8";
 let lastGraderOpenDebug = [];
 const COMP_SOURCE_LABELS = [
   "eBay",
@@ -791,7 +791,9 @@ function openDropdownWithKeyboard(control) {
   ];
   for (const init of keys) {
     control.dispatchEvent(new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true }));
+    invokeFrameworkHandlers(control, "keyDown", init);
     control.dispatchEvent(new KeyboardEvent("keyup", { ...init, bubbles: true, cancelable: true }));
+    invokeFrameworkHandlers(control, "keyUp", init);
   }
 }
 
@@ -1469,6 +1471,75 @@ function clickLikeHuman(node, clientX = null, clientY = null, reason = "click") 
   });
   if (typeof node.click === "function") node.click();
   node.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, detail: 2 }));
+  invokeFrameworkHandlers(node, "mouseDown", { clientX: x, clientY: y });
+  invokeFrameworkHandlers(node, "click", { clientX: x, clientY: y });
+}
+
+function invokeFrameworkHandlers(node, eventKind, init = {}) {
+  const eventNamesByKind = {
+    mouseDown: ["onPointerDown", "onMouseDown"],
+    click: ["onClick"],
+    keyDown: ["onKeyDown"],
+    keyUp: ["onKeyUp"],
+  };
+  const eventNames = eventNamesByKind[eventKind] || [];
+  const candidates = uniqueElements([node, ...clickableAncestors(node, 6)]);
+  for (const candidate of candidates) {
+    const props = frameworkProps(candidate);
+    if (!props) continue;
+    for (const eventName of eventNames) {
+      const handler = props[eventName] || props[eventName.toLowerCase?.()];
+      if (typeof handler !== "function") continue;
+      try {
+        rememberGraderOpenDebug(`handler-${eventName}`, candidate);
+        handler(fakeFrameworkEvent(candidate, eventKind, init));
+      } catch (error) {
+        rememberGraderOpenDebug(`handler-error-${eventName}`, candidate, null, String(error?.message || error).slice(0, 80));
+      }
+    }
+  }
+}
+
+function frameworkProps(node) {
+  if (!node) return null;
+  const directKey = Object.keys(node).find((key) =>
+    /^__reactProps\$|^__reactEventHandlers\$/.test(key)
+  );
+  if (directKey && node[directKey]) return node[directKey];
+  const fiberKey = Object.keys(node).find((key) =>
+    /^__reactFiber\$|^__reactInternalInstance\$/.test(key)
+  );
+  const fiber = fiberKey ? node[fiberKey] : null;
+  return fiber?.memoizedProps || fiber?.return?.memoizedProps || null;
+}
+
+function fakeFrameworkEvent(target, eventKind, init = {}) {
+  const event = {
+    ...init,
+    target,
+    currentTarget: target,
+    bubbles: true,
+    cancelable: true,
+    defaultPrevented: false,
+    isTrusted: true,
+    nativeEvent: null,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+    stopPropagation() {},
+    persist() {},
+  };
+  event.nativeEvent = event;
+  if (eventKind === "keyDown" || eventKind === "keyUp") {
+    event.key = init.key || "ArrowDown";
+    event.code = init.code || event.key;
+    event.altKey = Boolean(init.altKey);
+  } else {
+    event.button = 0;
+    event.buttons = eventKind === "mouseDown" ? 1 : 0;
+    event.type = eventKind === "mouseDown" ? "mousedown" : "click";
+  }
+  return event;
 }
 
 function uniqueElements(items) {
