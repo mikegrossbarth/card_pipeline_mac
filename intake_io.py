@@ -741,7 +741,7 @@ def clear_received_in_workbooks(paths: list[Path]) -> dict[str, Any]:
     return result
 
 
-def remove_company_sheet_rows_for_source(directory: Path, source_sheet_name: str) -> dict[str, Any]:
+def remove_company_sheet_rows_for_source(directory: Path, source_sheet_name: str, cert_numbers: set[str] | None = None) -> dict[str, Any]:
     result = {
         "files_scanned": 0,
         "files_updated": 0,
@@ -751,6 +751,7 @@ def remove_company_sheet_rows_for_source(directory: Path, source_sheet_name: str
     source_name = Path(str(source_sheet_name or "")).name
     if not source_name or not directory.exists():
         return result
+    target_certs = {normalize_cert(cert) for cert in (cert_numbers or set()) if normalize_cert(cert)}
     for path in sorted(directory.glob("*/*.xlsx")):
         result["files_scanned"] += 1
         try:
@@ -763,11 +764,13 @@ def remove_company_sheet_rows_for_source(directory: Path, source_sheet_name: str
             for sheet in workbook.worksheets:
                 headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
                 source_col = headers.get("sourcesheet")
+                cert_col = headers.get("certificationnumber") or headers.get("certnumber") or headers.get("cert")
                 if not source_col:
                     continue
                 for row_index in range(_sheet_max_row(sheet), 1, -1):
                     row_source = Path(clean_part(sheet.cell(row_index, source_col).value)).name
-                    if row_source == source_name:
+                    row_cert = normalize_cert(sheet.cell(row_index, cert_col).value) if cert_col else ""
+                    if row_source == source_name and (not target_certs or row_cert in target_certs):
                         sheet.delete_rows(row_index, 1)
                         result["rows_removed"] += 1
                         changed = True

@@ -1134,6 +1134,118 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
 
+    def test_inventory_records_are_deduped_and_reactivated(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            refresh_inventory_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                record = {
+                    "assigned_person": "Lucas",
+                    "cert_number": "123",
+                    "card_title": "Test Card",
+                    "source_sheet": "Lot A.xlsx",
+                    "purchase_price": 40,
+                    "inventory_value": 100,
+                    "status": "Refunded",
+                }
+                self.assertEqual(dummy.add_inventory_records([record]), 1)
+                self.assertEqual(dummy.add_inventory_records([{**record, "status": "Active"}]), 0)
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger[0]["status"], "Active")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_refund_profit_record_returns_card_to_inventory_and_removes_company_row(self) -> None:
+        class RefundDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            refresh_inventory_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            company_dir = root / "COMPANY SHEETS"
+            company_path = company_dir / "Arena Club" / "Arena Club.xlsx"
+            company_path.parent.mkdir(parents=True)
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Week of 2026-06-15"
+            sheet.append(["Date Added", "Source Sheet", "Source", "Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder Value", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Status", "Notes"])
+            sheet.append(["2026-06-17", "Lot A.xlsx", "", "123", "PSA", "Test Card", 40, "", 100, "", "", "Arena Club", 90, "Received", ""])
+            workbook.save(company_path)
+
+            old_company = app.COMPANY_SHEETS_DIR
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.COMPANY_SHEETS_DIR = company_dir
+            app.PROFIT_LEDGER_PATH = root / "profit_ledger.json"
+            app.INVENTORY_LEDGER_PATH = root / "inventory_ledger.json"
+            record = {
+                "date_added": "2026-06-17",
+                "company": "Arena Club",
+                "weekly_sheet_name": "Arena Club.xlsx:Week of 2026-06-15",
+                "source_sheet": "Lot A.xlsx",
+                "cert_number": "123",
+                "grader": "PSA",
+                "card_title": "Test Card",
+                "purchase_price": 40,
+                "sale_price": 90,
+                "assigned_person": "Lucas",
+            }
+            dummy = RefundDummy()
+            normalized = dummy._normalize_profit_record(record)
+            app.PROFIT_LEDGER_PATH.write_text(json.dumps([normalized]), encoding="utf-8")
+            try:
+                ledger = [dummy._normalize_profit_record(item) for item in dummy._load_profit_ledger()]
+                kept = [item for item in ledger if item["ledger_key"] != normalized["ledger_key"]]
+                dummy._save_profit_ledger(kept)
+                remove_company_sheet_rows_for_source = app.remove_company_sheet_rows_for_source
+                remove_company_sheet_rows_for_source(app.COMPANY_SHEETS_DIR, "Lot A.xlsx", {"123"})
+                dummy.add_inventory_records([
+                    dummy._normalize_inventory_record(
+                        {
+                            "assigned_person": "Lucas",
+                            "cert_number": "123",
+                            "grader": "PSA",
+                            "card_title": "Test Card",
+                            "purchase_price": 40,
+                            "inventory_value": 90,
+                            "source_sheet": "Lot A.xlsx",
+                            "status": "Active",
+                            "notes": "Refunded from sold cards",
+                        }
+                    )
+                ])
+
+                self.assertEqual(json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8")), [])
+                self.assertEqual(read_company_profit_records(company_dir), [])
+                inventory = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(len(inventory), 1)
+                self.assertEqual(inventory[0]["status"], "Active")
+                self.assertEqual(inventory[0]["assigned_person"], "Lucas")
+            finally:
+                app.COMPANY_SHEETS_DIR = old_company
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_profit_records_are_enriched_with_assigned_person_from_sheet_marker(self) -> None:
         class ProfitDummy:
             _profit_record_key = app.CardPipelineApp._profit_record_key

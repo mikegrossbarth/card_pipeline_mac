@@ -9,7 +9,7 @@ L.U.C.A.S means Lot Upload, Comping & Assignment System.
 - Branches kept current: `main` and `master`
 - Latest commit at handoff time: see `git log -1 --oneline`
 - Purpose: macOS-focused fork/copy so Mac setup and CourtYard automation can change without touching the Windows project.
-- Current visible tabs: `Home`, `Create`, `Comp`, `Receive`, `Assignment`, `Payouts/Tabs`, `Profit`
+- Current visible tabs: `Home`, `Create`, `Comp`, `Receive`, `Assignment`, `Payouts/Tabs`, `Inventory`, `Profit`
 - Mac setup walkthrough: `FIRST_RUN_SETUP.md`
 
 The old visible `Review` workflow was split into `Receive` and `Assignment`. Many internal names still use `review_*`; that is intentional legacy naming to avoid risky churn.
@@ -31,6 +31,9 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
   - weekly tab name: `Week of YYYY-MM-DD`
 - Old legacy weekly company files remain readable for profit backfill.
 - Sunday at midnight rolls forward to the next Monday's company-sheet tab.
+- `Inventory` tracks active person-level inventory in `inventory_ledger.json`.
+- Received cards that are not checked for the company pile are automatically added to active inventory for the assigned person.
+- Profit rows can be refunded individually from the `Profit` tab. Refunds remove the sold-card profit/company-sheet row and return that card to active inventory.
 - Create now has `Manual Entry` mode. Use the `+ Add row` line in the Create table, then double-click cells to edit. The extra toolbar button was removed.
 - Card Ladder recovery note, 2026-06-17: known-good helper version is `2026-06-17-no-blind-grader-option-v22`. The verified CGC grader test opens the cert modal, uses trusted debugger clicks only when synthetic clicks fail, selects CGC, and leaves the modal open. Do not restore blind guessed grader-option coordinates; they closed/submitted the modal.
 
@@ -109,6 +112,7 @@ CARD_PIPELINE
   sheet_markers.json
   weekly_company_sheets.json
   profit_ledger.json
+  inventory_ledger.json
   unassigned_players.json
   assignment_player_overrides.json
   .locks

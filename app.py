@@ -17,6 +17,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from openpyxl import Workbook
+
 ROOT = Path(__file__).resolve().parent
 APP_DEBUG_LOG = ROOT / "work" / "lucas-debug.log"
 ENGINE_DIR = ROOT / "comp_engine"
@@ -103,6 +105,7 @@ COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
 SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
 PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
+INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
 UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
 PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
@@ -181,7 +184,7 @@ def app_debug_log(message: str) -> None:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -190,6 +193,7 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
     WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
     PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
+    INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
     UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
     PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 
@@ -436,6 +440,15 @@ class CardPipelineApp(tk.Tk):
         self.payout_status_var = tk.StringVar(value="No unpaid sheets loaded.")
         self.payout_summary_people: dict[str, str] = {}
         self.payout_detail_keys: dict[str, str] = {}
+        self.inventory_status_var = tk.StringVar(value="No inventory loaded.")
+        self.inventory_metric_var = tk.StringVar(value="")
+        self.inventory_person_var = tk.StringVar()
+        self.inventory_sport_var = tk.StringVar()
+        self.inventory_min_var = tk.StringVar()
+        self.inventory_max_var = tk.StringVar()
+        self.inventory_active_only_var = tk.BooleanVar(value=True)
+        self.inventory_rows: list[dict[str, object]] = []
+        self.filtered_inventory_rows: list[dict[str, object]] = []
         self.profit_status_var = tk.StringVar(value="No profit ledger loaded.")
         self.profit_metric_var = tk.StringVar(value="")
         self.profit_person_var = tk.StringVar()
@@ -444,6 +457,7 @@ class CardPipelineApp(tk.Tk):
         self.profit_view_mode = tk.StringVar(value="Sold Cards")
         self.profit_rows: list[dict[str, object]] = []
         self.filtered_profit_rows: list[dict[str, object]] = []
+        self.profit_tree_records: dict[str, dict[str, object]] = {}
 
         self._build_ui()
         self._show_mode()
@@ -643,6 +657,7 @@ class CardPipelineApp(tk.Tk):
         self.receive_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.review_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.payouts_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
+        self.inventory_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.profit_tab = ttk.Frame(self.tabs, style="App.TFrame", padding=0)
         self.tabs.add(self.home_tab, text="Home")
         self.tabs.add(self.intake_tab, text="Create")
@@ -650,6 +665,7 @@ class CardPipelineApp(tk.Tk):
         self.tabs.add(self.receive_tab, text="Receive")
         self.tabs.add(self.review_tab, text="Assignment")
         self.tabs.add(self.payouts_tab, text="Payouts/Tabs")
+        self.tabs.add(self.inventory_tab, text="Inventory")
         self.tabs.add(self.profit_tab, text="Profit")
         self.row_trees: list[ttk.Treeview] = []
 
@@ -797,6 +813,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(review_bottom, text="Clear Assignment Rows", command=self.clear_review_rows, style="Soft.TButton").pack(side=tk.RIGHT)
         self._show_review_mode()
         self._build_payouts_tab()
+        self._build_inventory_tab()
         self._build_profit_tab()
 
         bottom = ttk.Frame(self, style="App.TFrame", padding=(16, 0, 16, 14))
@@ -954,6 +971,52 @@ class CardPipelineApp(tk.Tk):
         self.payout_detail_tree.configure(selectmode="extended")
         self.payout_detail_tree.bind("<ButtonRelease-1>", self.open_payout_marker_editor)
 
+    def _build_inventory_tab(self) -> None:
+        controls = ttk.Frame(self.inventory_tab, style="Panel.TFrame", padding=(16, 12))
+        controls.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(controls, text="Inventory", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, sticky="w")
+        ttk.Label(controls, text="Person", style="Muted.TLabel").grid(row=0, column=1, sticky="e", padx=(18, 6))
+        self.inventory_person_combo = ttk.Combobox(controls, textvariable=self.inventory_person_var, width=22)
+        self.inventory_person_combo.grid(row=0, column=2, sticky="w")
+        self._bind_person_autocomplete(self.inventory_person_combo, refresh_callback=self.refresh_inventory_tab)
+        self.inventory_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_inventory_tab(), add="+")
+        ttk.Label(controls, text="Sport", style="Muted.TLabel").grid(row=0, column=3, sticky="e", padx=(14, 6))
+        sport_combo = ttk.Combobox(controls, textvariable=self.inventory_sport_var, values=ASSIGNMENT_CATEGORY_OPTIONS, width=14)
+        sport_combo.grid(row=0, column=4, sticky="w")
+        sport_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_inventory_tab(), add="+")
+        ttk.Label(controls, text="Min", style="Muted.TLabel").grid(row=0, column=5, sticky="e", padx=(14, 6))
+        ttk.Entry(controls, textvariable=self.inventory_min_var, width=9).grid(row=0, column=6, sticky="w")
+        ttk.Label(controls, text="Max", style="Muted.TLabel").grid(row=0, column=7, sticky="e", padx=(10, 6))
+        ttk.Entry(controls, textvariable=self.inventory_max_var, width=9).grid(row=0, column=8, sticky="w")
+        ttk.Checkbutton(controls, text="Active only", variable=self.inventory_active_only_var, command=self.refresh_inventory_tab, style="Panel.TCheckbutton").grid(row=0, column=9, sticky="w", padx=(12, 0))
+        ttk.Button(controls, text="Refresh", command=self.refresh_inventory_tab, style="Soft.TButton").grid(row=0, column=10, sticky="w", padx=(10, 0))
+        ttk.Button(controls, text="Export", command=self.export_inventory, style="Primary.TButton").grid(row=0, column=11, sticky="w", padx=(8, 0))
+        controls.columnconfigure(12, weight=1)
+        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=12, sticky="e")
+        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=13, sticky="w", pady=(8, 0))
+        for var in (self.inventory_sport_var, self.inventory_min_var, self.inventory_max_var):
+            var.trace_add("write", lambda *_args: self.refresh_inventory_tab())
+
+        self.inventory_tree = self._build_home_tree(
+            self.inventory_tab,
+            columns=("date", "person", "sport", "cert", "grader", "card", "purchase", "value", "source", "status"),
+            headings={
+                "date": "Date",
+                "person": "Person",
+                "sport": "Sport",
+                "cert": "Cert",
+                "grader": "Grader",
+                "card": "Card",
+                "purchase": "Purchase",
+                "value": "Value",
+                "source": "Source Sheet",
+                "status": "Status",
+            },
+            widths={"date": 95, "person": 130, "sport": 95, "cert": 110, "grader": 80, "card": 390, "purchase": 100, "value": 100, "source": 190, "status": 110},
+            height=22,
+        )
+        self.refresh_inventory_tab()
+
     def _build_profit_tab(self) -> None:
         controls = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(16, 12))
         controls.pack(fill=tk.X, pady=(0, 10))
@@ -1009,6 +1072,7 @@ class CardPipelineApp(tk.Tk):
         self.profit_cards_button.pack(side=tk.LEFT)
         self.profit_sheets_button = ttk.Button(view_row, text="Sold Sheets", command=lambda: self._set_profit_view_mode("Sold Sheets"), style="Soft.TButton")
         self.profit_sheets_button.pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(view_row, text="Refund Selected", command=self.refund_selected_profit_to_inventory, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         self.profit_table_title_var = tk.StringVar(value="Sold Cards")
         ttk.Label(ledger_panel, textvariable=self.profit_table_title_var, style="Panel.TLabel").pack(anchor=tk.W)
         self.profit_tree = self._build_home_tree(
@@ -1044,6 +1108,183 @@ class CardPipelineApp(tk.Tk):
 
     def _save_profit_ledger(self, rows: list[dict[str, object]]) -> None:
         atomic_write_json(PROFIT_LEDGER_PATH, rows)
+
+    def _load_inventory_ledger(self) -> list[dict[str, object]]:
+        if not INVENTORY_LEDGER_PATH.exists():
+            return []
+        try:
+            raw = json.loads(INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        entries = raw.get("items", raw) if isinstance(raw, dict) else raw
+        return [item for item in entries if isinstance(item, dict)] if isinstance(entries, list) else []
+
+    def _save_inventory_ledger(self, rows: list[dict[str, object]]) -> None:
+        INVENTORY_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(INVENTORY_LEDGER_PATH, {"items": rows})
+
+    def _inventory_record_key(self, record: dict[str, object]) -> str:
+        return "|".join(
+            str(record.get(field) or "").strip().lower()
+            for field in ("cert_number", "source_sheet", "assigned_person")
+        )
+
+    def _normalize_inventory_record(self, record: dict[str, object]) -> dict[str, object]:
+        normalized = dict(record)
+        normalized["date_added"] = str(normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"))[:10]
+        normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip() or "Unassigned"
+        normalized["sport"] = str(normalized.get("sport") or "").strip()
+        normalized["cert_number"] = str(normalized.get("cert_number") or "").strip()
+        normalized["grader"] = str(normalized.get("grader") or "").strip()
+        normalized["card_title"] = str(normalized.get("card_title") or "").strip()
+        normalized["purchase_price"] = self._money_value(normalized.get("purchase_price"))
+        normalized["inventory_value"] = self._money_value(normalized.get("inventory_value") or normalized.get("value") or normalized.get("sale_price") or normalized.get("estimated_payout"))
+        normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
+        normalized["source"] = str(normalized.get("source") or "").strip()
+        normalized["status"] = str(normalized.get("status") or "Active").strip() or "Active"
+        normalized["notes"] = str(normalized.get("notes") or "").strip()
+        normalized["inventory_key"] = str(normalized.get("inventory_key") or self._inventory_record_key(normalized))
+        return normalized
+
+    def _inventory_record_from_row(self, row: WorkbookRow, person: str, source_sheet: str = "", source: str = "", status: str = "Active", notes: str = "") -> dict[str, object]:
+        card_title = str(row.card_title or "")
+        sport = assignment_engine.parse_card_for_matching(card_title).get("sport") if card_title else ""
+        return self._normalize_inventory_record(
+            {
+                "date_added": datetime.now().strftime("%Y-%m-%d"),
+                "assigned_person": person or "Unassigned",
+                "sport": sport,
+                "cert_number": row.cert_number,
+                "grader": row.grader,
+                "card_title": row.card_title,
+                "purchase_price": row.existing_value,
+                "inventory_value": row.card_ladder_comps_average or row.card_ladder_value or row.cy_value,
+                "source_sheet": source_sheet,
+                "source": source,
+                "status": status,
+                "notes": notes,
+            }
+        )
+
+    def add_inventory_records(self, records: list[dict[str, object]]) -> int:
+        if not records:
+            return 0
+        ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        by_key = {str(record.get("inventory_key") or ""): record for record in ledger}
+        added = 0
+        for record in records:
+            normalized = self._normalize_inventory_record(record)
+            key = str(normalized.get("inventory_key") or "")
+            if not key:
+                continue
+            if key not in by_key:
+                ledger.append(normalized)
+                by_key[key] = normalized
+                added += 1
+            else:
+                existing = by_key[key]
+                existing.update(normalized)
+                existing["status"] = "Active"
+        self._save_inventory_ledger(ledger)
+        self.refresh_inventory_tab()
+        return added
+
+    def refresh_inventory_tab(self) -> None:
+        self.inventory_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        self.filtered_inventory_rows = self._filtered_inventory_records(self.inventory_rows)
+        if not hasattr(self, "inventory_tree"):
+            return
+        self._refresh_person_combo_values()
+        self.inventory_tree.delete(*self.inventory_tree.get_children())
+        total_purchase = 0.0
+        total_value = 0.0
+        for record in self.filtered_inventory_rows:
+            purchase = self._money_value(record.get("purchase_price"))
+            value = self._money_value(record.get("inventory_value"))
+            if purchase is not None:
+                total_purchase += purchase
+            if value is not None:
+                total_value += value
+            self.inventory_tree.insert(
+                "",
+                tk.END,
+                values=(
+                    record.get("date_added") or "",
+                    record.get("assigned_person") or "Unassigned",
+                    record.get("sport") or "",
+                    record.get("cert_number") or "",
+                    record.get("grader") or "",
+                    record.get("card_title") or "",
+                    format_money(purchase),
+                    format_money(value),
+                    record.get("source_sheet") or "",
+                    record.get("status") or "",
+                ),
+            )
+        self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Cost: {format_money(total_purchase)}   Value: {format_money(total_value)}")
+        self.inventory_status_var.set(f"Loaded {len(self.filtered_inventory_rows)}/{len(self.inventory_rows)} inventory card(s) from {INVENTORY_LEDGER_PATH.name}.")
+
+    def _filtered_inventory_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        person = self.inventory_person_var.get().strip().lower() if hasattr(self, "inventory_person_var") else ""
+        sport = self.inventory_sport_var.get().strip().lower() if hasattr(self, "inventory_sport_var") else ""
+        min_value = self._money_value(self.inventory_min_var.get()) if hasattr(self, "inventory_min_var") else None
+        max_value = self._money_value(self.inventory_max_var.get()) if hasattr(self, "inventory_max_var") else None
+        active_only = bool(self.inventory_active_only_var.get()) if hasattr(self, "inventory_active_only_var") else True
+        filtered: list[dict[str, object]] = []
+        for record in rows:
+            if active_only and str(record.get("status") or "").lower() != "active":
+                continue
+            if person and person not in str(record.get("assigned_person") or "Unassigned").lower():
+                continue
+            if sport and sport not in str(record.get("sport") or "").lower():
+                continue
+            value = self._money_value(record.get("inventory_value") or record.get("purchase_price")) or 0.0
+            if min_value is not None and value < min_value:
+                continue
+            if max_value is not None and value > max_value:
+                continue
+            filtered.append(record)
+        return filtered
+
+    def export_inventory(self) -> None:
+        rows = self.filtered_inventory_rows if hasattr(self, "filtered_inventory_rows") else []
+        if not rows:
+            messagebox.showinfo("No inventory", "No inventory rows match the current filters.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export inventory",
+            defaultextension=".xlsx",
+            filetypes=[("Excel workbook", "*.xlsx")],
+            initialfile=f"inventory-{datetime.now():%Y%m%d-%H%M%S}.xlsx",
+        )
+        if not path:
+            return
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Inventory"
+        headers = ["Date Added", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Inventory Value", "Source Sheet", "Source", "Status", "Notes"]
+        sheet.append(headers)
+        for record in rows:
+            sheet.append([
+                record.get("date_added") or "",
+                record.get("assigned_person") or "",
+                record.get("sport") or "",
+                record.get("cert_number") or "",
+                record.get("grader") or "",
+                record.get("card_title") or "",
+                record.get("purchase_price"),
+                record.get("inventory_value"),
+                record.get("source_sheet") or "",
+                record.get("source") or "",
+                record.get("status") or "",
+                record.get("notes") or "",
+            ])
+        sheet.auto_filter.ref = sheet.dimensions
+        sheet.freeze_panes = "A2"
+        for index, width in enumerate([14, 18, 14, 22, 12, 60, 16, 16, 28, 24, 14, 36], start=1):
+            sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
+        workbook.save(path)
+        self.status_var.set(f"Exported inventory: {path}")
 
     def _profit_record_key(self, record: dict[str, object]) -> str:
         return "|".join(
@@ -1287,6 +1528,58 @@ class CardPipelineApp(tk.Tk):
         self.refresh_profit_tab()
         return added
 
+    def refund_selected_profit_to_inventory(self) -> None:
+        if not hasattr(self, "profit_tree"):
+            return
+        selected = list(self.profit_tree.selection())
+        records = [self.profit_tree_records.get(iid) for iid in selected if self.profit_tree_records.get(iid)]
+        if not records:
+            messagebox.showinfo("Choose sold cards", "Select one or more sold card rows to refund.")
+            return
+        confirmed = messagebox.askyesno(
+            "Refund selected card(s)?",
+            f"Refund {len(records)} sold card(s) and return them to active inventory?",
+        )
+        if not confirmed:
+            return
+        refunded = 0
+        inventory_records: list[dict[str, object]] = []
+        with shared_lock(CARD_PIPELINE_DIR, "refund-inventory", self.lucas_identity):
+            ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+            refund_keys = {str(self._normalize_profit_record(record).get("ledger_key") or "") for record in records}
+            kept = [record for record in ledger if str(record.get("ledger_key") or "") not in refund_keys]
+            refunded = len(ledger) - len(kept)
+            if refunded:
+                self._save_profit_ledger(kept)
+            for record in records:
+                normalized = self._normalize_profit_record(record)
+                source_sheet = str(normalized.get("source_sheet") or "")
+                cert = str(normalized.get("cert_number") or "")
+                if source_sheet and cert:
+                    remove_company_sheet_rows_for_source(COMPANY_SHEETS_DIR, source_sheet, {cert})
+                inventory_records.append(
+                    self._normalize_inventory_record(
+                        {
+                            "date_added": datetime.now().strftime("%Y-%m-%d"),
+                            "assigned_person": normalized.get("assigned_person") or self._person_for_profit_record(normalized) or "Unassigned",
+                            "sport": assignment_engine.parse_card_for_matching(str(normalized.get("card_title") or "")).get("sport"),
+                            "cert_number": normalized.get("cert_number") or "",
+                            "grader": normalized.get("grader") or "",
+                            "card_title": normalized.get("card_title") or "",
+                            "purchase_price": normalized.get("purchase_price"),
+                            "inventory_value": normalized.get("sale_price") or normalized.get("card_ladder_value") or normalized.get("comps") or normalized.get("cy_estimate"),
+                            "source_sheet": normalized.get("source_sheet") or "",
+                            "source": normalized.get("source") or "",
+                            "status": "Active",
+                            "notes": "Refunded from sold cards",
+                        }
+                    )
+                )
+            self.add_inventory_records(inventory_records)
+        self.refresh_profit_tab()
+        self.refresh_inventory_tab()
+        self.status_var.set(f"Refunded {refunded or len(records)} card(s) back to active inventory.")
+
     def refresh_profit_tab(self) -> None:
         ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
         existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
@@ -1319,6 +1612,7 @@ class CardPipelineApp(tk.Tk):
         mode = self.profit_view_mode.get()
         self._configure_profit_tree(mode)
         self.profit_tree.delete(*self.profit_tree.get_children())
+        self.profit_tree_records = {}
         total_purchase = 0.0
         total_sale = 0.0
         total_profit = 0.0
@@ -1336,7 +1630,7 @@ class CardPipelineApp(tk.Tk):
                 complete_count += 1
             if mode != "Sold Sheets":
                 tag = "profit_negative" if profit is not None and profit < 0 else "profit_positive"
-                self.profit_tree.insert(
+                iid = self.profit_tree.insert(
                     "",
                     tk.END,
                     values=(
@@ -1352,6 +1646,7 @@ class CardPipelineApp(tk.Tk):
                     ),
                     tags=(tag,),
                 )
+                self.profit_tree_records[iid] = record
         if mode == "Sold Sheets":
             for sheet_row in self._profit_sheet_rows(self.filtered_profit_rows):
                 profit = self._money_value(sheet_row.get("profit"))
@@ -1981,6 +2276,12 @@ class CardPipelineApp(tk.Tk):
                 for record in self.profit_rows
                 if str(record.get("assigned_person") or "").strip()
             )
+        if hasattr(self, "inventory_rows"):
+            people_set.update(
+                str(record.get("assigned_person") or "").strip()
+                for record in self.inventory_rows
+                if str(record.get("assigned_person") or "").strip()
+            )
         people = sorted(people_set, key=str.lower)
         if filter_text:
             needle = filter_text.strip().lower()
@@ -1989,6 +2290,8 @@ class CardPipelineApp(tk.Tk):
             self.payout_person_combo["values"] = people
         if hasattr(self, "profit_person_combo"):
             self.profit_person_combo["values"] = people
+        if hasattr(self, "inventory_person_combo"):
+            self.inventory_person_combo["values"] = people
 
     def _bind_person_autocomplete(self, combo: ttk.Combobox, refresh_callback=None) -> None:
         combo["values"] = self._known_assigned_people()
@@ -3249,11 +3552,18 @@ class CardPipelineApp(tk.Tk):
                 certs_marked = len(result.get("certs_marked") or set())
                 company_rows_added = 0
                 company_rows_missing_company = 0
+                inventory_rows_added = 0
                 if rows_marked:
+                    marked_certs = result.get("certs_marked", set())
                     company_rows = [
                         row
                         for row in self.review_rows
-                        if row.company_pile and scan_to_cert(row.cert_number) in result.get("certs_marked", set())
+                        if row.company_pile and scan_to_cert(row.cert_number) in marked_certs
+                    ]
+                    inventory_rows = [
+                        row
+                        for row in self.review_rows
+                        if not row.company_pile and scan_to_cert(row.cert_number) in marked_certs
                     ]
                     self._apply_recommendations_to_rows(company_rows, force=True)
                     eligible_company_rows = [row for row in company_rows if self._row_has_assignable_company(row)]
@@ -3268,6 +3578,18 @@ class CardPipelineApp(tk.Tk):
                         company_rows_added = int(company_result.get("rows_added") or 0)
                         self.record_profit_sales(list(company_result.get("added_records") or []))
                         errors.extend(company_result.get("errors") or [])
+                    if inventory_rows:
+                        inventory_records = [
+                            self._inventory_record_from_row(
+                                row,
+                                person=self._assignment_person_for_row(row),
+                                source_sheet=self.review_sheet_sources.get(row.excel_row, ""),
+                                source=self.review_sources.get(row.excel_row, ""),
+                                notes="Received without company pile",
+                            )
+                            for row in inventory_rows
+                        ]
+                        inventory_rows_added = self.add_inventory_records(inventory_records)
                 moved_received = self._move_fully_received_sheets_to_received(paths)
                 if moved_received:
                     self._save_sheet_markers()
@@ -3288,6 +3610,8 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(f"Moved {len(moved_received)} fully received sheet(s) to RECEIVED SHEETS.")
         if company_rows_added:
             self.status_var.set(f"Added {company_rows_added} card(s) to weekly company sheet(s).")
+        if inventory_rows_added:
+            self.status_var.set(f"Added {inventory_rows_added} received card(s) to active inventory.")
         elif company_rows_missing_company:
             self.status_var.set(f"{company_rows_missing_company} checked company pile card(s) had no Best Company.")
         self.refresh_home()
@@ -3300,6 +3624,8 @@ class CardPipelineApp(tk.Tk):
             summary_lines.append(f"Moved to received: {len(moved_received)}")
         if company_rows_added:
             summary_lines.append(f"Company sheet rows added: {company_rows_added}")
+        if inventory_rows_added:
+            summary_lines.append(f"Inventory rows added: {inventory_rows_added}")
         if company_rows_missing_company:
             summary_lines.append(f"Company pile rows missing Best Company: {company_rows_missing_company}")
         if errors:
