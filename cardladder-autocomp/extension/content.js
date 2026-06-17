@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-direct-grader-set-v13";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-click-sweep-v14";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -733,20 +733,42 @@ async function clickGraderDropdown(modal, control) {
   await sleep(150);
   if (typeof control.focus === "function") control.focus();
   const rect = graderFieldRect(modal, control);
-  const y = rect.top + rect.height / 2;
-  const xPoints = [
-    rect.left + Math.min(42, rect.width * 0.2),
-    rect.left + rect.width / 2,
-    Math.max(rect.left + 20, rect.right - 32),
-  ];
-  for (const x of xPoints) {
+  const points = graderBarClickSweepPoints(rect);
+  for (const { x, y } of points) {
     clickLikeHuman(control, x, y);
-    await sleep(350);
+    await sleep(220);
     if (findAnyGraderOptions()) return;
     clickAtPoint(x, y);
-    await sleep(450);
+    await sleep(280);
     if (findAnyGraderOptions()) return;
   }
+}
+
+function graderBarClickSweepPoints(rect) {
+  const inset = Math.min(28, Math.max(10, rect.width * 0.08));
+  const xs = [
+    rect.left + inset,
+    rect.left + rect.width * 0.25,
+    rect.left + rect.width * 0.5,
+    rect.left + rect.width * 0.75,
+    rect.right - inset,
+  ];
+  const ys = [
+    rect.top + rect.height * 0.35,
+    rect.top + rect.height * 0.5,
+    rect.top + rect.height * 0.65,
+    Math.min(window.innerHeight - 8, rect.bottom + 4),
+  ];
+  const points = [];
+  for (const y of ys) {
+    for (const x of xs) {
+      points.push({
+        x: Math.round(Math.max(4, Math.min(window.innerWidth - 4, x))),
+        y: Math.round(Math.max(4, Math.min(window.innerHeight - 4, y))),
+      });
+    }
+  }
+  return points;
 }
 
 function graderFieldRect(modal, control) {
