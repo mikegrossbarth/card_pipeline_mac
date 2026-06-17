@@ -449,6 +449,7 @@ class CardPipelineApp(tk.Tk):
         self.inventory_active_only_var = tk.BooleanVar(value=True)
         self.inventory_rows: list[dict[str, object]] = []
         self.filtered_inventory_rows: list[dict[str, object]] = []
+        self.inventory_tree_records: dict[str, dict[str, object]] = {}
         self.profit_status_var = tk.StringVar(value="No profit ledger loaded.")
         self.profit_metric_var = tk.StringVar(value="")
         self.profit_person_var = tk.StringVar()
@@ -991,9 +992,10 @@ class CardPipelineApp(tk.Tk):
         ttk.Checkbutton(controls, text="Active only", variable=self.inventory_active_only_var, command=self.refresh_inventory_tab, style="Panel.TCheckbutton").grid(row=0, column=9, sticky="w", padx=(12, 0))
         ttk.Button(controls, text="Refresh", command=self.refresh_inventory_tab, style="Soft.TButton").grid(row=0, column=10, sticky="w", padx=(10, 0))
         ttk.Button(controls, text="Export", command=self.export_inventory, style="Primary.TButton").grid(row=0, column=11, sticky="w", padx=(8, 0))
-        controls.columnconfigure(12, weight=1)
-        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=12, sticky="e")
-        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=13, sticky="w", pady=(8, 0))
+        ttk.Button(controls, text="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets, style="Soft.TButton").grid(row=0, column=12, sticky="w", padx=(8, 0))
+        controls.columnconfigure(13, weight=1)
+        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=13, sticky="e")
+        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=14, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_min_var, self.inventory_max_var):
             var.trace_add("write", lambda *_args: self.refresh_inventory_tab())
 
@@ -1189,6 +1191,99 @@ class CardPipelineApp(tk.Tk):
         self.refresh_inventory_tab()
         return added
 
+    def _inventory_workbook_row(self, record: dict[str, object], excel_row: int) -> WorkbookRow:
+        value = self._money_value(record.get("inventory_value"))
+        return WorkbookRow(
+            excel_row=excel_row,
+            cert_number=str(record.get("cert_number") or ""),
+            grader=str(record.get("grader") or ""),
+            card_title=str(record.get("card_title") or ""),
+            existing_value=self._money_value(record.get("purchase_price")),
+            card_ladder_value=value,
+            card_ladder_comps_average=value,
+            best_company="",
+            estimated_payout=None,
+            company_pile=True,
+            status="Moved from inventory",
+            notes=str(record.get("notes") or "Moved from inventory"),
+        )
+
+    def _mark_inventory_records_moved_to_company(self, moved_keys: set[str]) -> None:
+        if not moved_keys:
+            return
+        ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        today = datetime.now().strftime("%Y-%m-%d")
+        for record in ledger:
+            key = str(record.get("inventory_key") or "")
+            if key not in moved_keys:
+                continue
+            record["status"] = "Company Sheet"
+            record["moved_to_company_at"] = today
+            notes = str(record.get("notes") or "").strip()
+            record["notes"] = f"{notes}; Moved to company sheet".strip("; ")
+        self._save_inventory_ledger(ledger)
+
+    def move_selected_inventory_to_company_sheets(self) -> None:
+        if not hasattr(self, "inventory_tree"):
+            return
+        selected = list(self.inventory_tree.selection())
+        records = [self.inventory_tree_records.get(iid) for iid in selected if self.inventory_tree_records.get(iid)]
+        active_records = [record for record in records if str(record.get("status") or "").lower() == "active"]
+        if not active_records:
+            messagebox.showinfo("Choose inventory", "Select one or more active inventory rows to move.")
+            return
+        confirmed = messagebox.askyesno(
+            "Move inventory card(s)?",
+            f"Move {len(active_records)} active inventory card(s) to company sheets?",
+        )
+        if not confirmed:
+            return
+        rows: list[WorkbookRow] = []
+        source_lookup: dict[int, str] = {}
+        sheet_source_lookup: dict[int, str] = {}
+        people_by_cert: dict[str, str] = {}
+        keys_by_cert: dict[str, str] = {}
+        unassigned = 0
+        for index, record in enumerate(active_records, start=1):
+            row = self._inventory_workbook_row(record, index)
+            recommendation = self.assignment_engine.recommend(row, person=str(record.get("assigned_person") or ""))
+            if recommendation.payout is None:
+                unassigned += 1
+                continue
+            row.best_company = recommendation.company
+            row.estimated_payout = recommendation.payout
+            rows.append(row)
+            source_lookup[index] = str(record.get("source") or "Inventory")
+            sheet_source_lookup[index] = str(record.get("source_sheet") or "Inventory")
+            cert = scan_to_cert(row.cert_number)
+            if cert:
+                people_by_cert[cert] = str(record.get("assigned_person") or "")
+                keys_by_cert[cert] = str(record.get("inventory_key") or "")
+        if not rows:
+            messagebox.showinfo("No company match", "No selected inventory cards matched an assignable company.")
+            return
+        with shared_lock(CARD_PIPELINE_DIR, "inventory-company-sheets", self.lucas_identity):
+            company_result = append_company_sheet_rows(COMPANY_SHEETS_DIR, rows, source_lookup, sheet_source_lookup)
+            added_records = list(company_result.get("added_records") or [])
+            moved_keys: set[str] = set()
+            for record in added_records:
+                cert = scan_to_cert(record.get("cert_number"))
+                record["assigned_person"] = people_by_cert.get(cert, "")
+                key = keys_by_cert.get(cert, "")
+                if key:
+                    moved_keys.add(key)
+            if added_records:
+                self.record_profit_sales(added_records)
+            self._mark_inventory_records_moved_to_company(moved_keys)
+        self.refresh_inventory_tab()
+        self.refresh_profit_tab()
+        added = int(company_result.get("rows_added") or 0)
+        errors = company_result.get("errors") or []
+        suffix = f" {unassigned} card(s) had no assignable company." if unassigned else ""
+        self.status_var.set(f"Moved {added} inventory card(s) to company sheets.{suffix}")
+        if errors:
+            messagebox.showwarning("Inventory move completed with warnings", "\n".join([f"Moved rows: {added}", *errors[:8]]))
+
     def refresh_inventory_tab(self) -> None:
         self.inventory_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         self.filtered_inventory_rows = self._filtered_inventory_records(self.inventory_rows)
@@ -1196,6 +1291,7 @@ class CardPipelineApp(tk.Tk):
             return
         self._refresh_person_combo_values()
         self.inventory_tree.delete(*self.inventory_tree.get_children())
+        self.inventory_tree_records = {}
         total_purchase = 0.0
         total_value = 0.0
         for record in self.filtered_inventory_rows:
@@ -1205,7 +1301,7 @@ class CardPipelineApp(tk.Tk):
                 total_purchase += purchase
             if value is not None:
                 total_value += value
-            self.inventory_tree.insert(
+            iid = self.inventory_tree.insert(
                 "",
                 tk.END,
                 values=(
@@ -1221,6 +1317,7 @@ class CardPipelineApp(tk.Tk):
                     record.get("status") or "",
                 ),
             )
+            self.inventory_tree_records[iid] = record
         self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Cost: {format_money(total_purchase)}   Value: {format_money(total_value)}")
         self.inventory_status_var.set(f"Loaded {len(self.filtered_inventory_rows)}/{len(self.inventory_rows)} inventory card(s) from {INVENTORY_LEDGER_PATH.name}.")
 

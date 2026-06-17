@@ -1166,6 +1166,86 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_inventory_records_can_move_to_company_sheets(self) -> None:
+        class FakeTree:
+            def selection(self):
+                return ["row-1"]
+
+        class FakeAssignment:
+            def recommend(self, row, person=""):
+                return types.SimpleNamespace(company="Arena Club", payout=90)
+
+        class FakeStatus:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class InventoryMoveDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
+            _mark_inventory_records_moved_to_company = app.CardPipelineApp._mark_inventory_records_moved_to_company
+            move_selected_inventory_to_company_sheets = app.CardPipelineApp.move_selected_inventory_to_company_sheets
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            record_profit_sales = app.CardPipelineApp.record_profit_sales
+            refresh_inventory_tab = lambda self: None
+            refresh_profit_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_company = app.COMPANY_SHEETS_DIR
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = root
+            app.COMPANY_SHEETS_DIR = root / "COMPANY SHEETS"
+            app.PROFIT_LEDGER_PATH = root / "profit_ledger.json"
+            app.INVENTORY_LEDGER_PATH = root / "inventory_ledger.json"
+            dummy = InventoryMoveDummy()
+            dummy.assignment_engine = FakeAssignment()
+            dummy.inventory_tree = FakeTree()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.status_var = FakeStatus()
+            record = dummy._normalize_inventory_record(
+                {
+                    "assigned_person": "Lucas",
+                    "cert_number": "123",
+                    "grader": "PSA",
+                    "card_title": "Test Card",
+                    "source_sheet": "Quick Load.xlsx",
+                    "purchase_price": 40,
+                    "inventory_value": 100,
+                    "status": "Active",
+                }
+            )
+            dummy._save_inventory_ledger([record])
+            dummy.inventory_tree_records = {"row-1": record}
+            try:
+                with patch("app.messagebox.askyesno", return_value=True):
+                    dummy.move_selected_inventory_to_company_sheets()
+
+                company_rows = read_company_profit_records(app.COMPANY_SHEETS_DIR)
+                profit_rows = json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8"))
+                inventory = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(len(company_rows), 1)
+                self.assertEqual(company_rows[0]["company"], "Arena Club")
+                self.assertEqual(len(profit_rows), 1)
+                self.assertEqual(profit_rows[0]["assigned_person"], "Lucas")
+                self.assertEqual(inventory[0]["status"], "Company Sheet")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.COMPANY_SHEETS_DIR = old_company
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_refund_profit_record_returns_card_to_inventory_and_removes_company_row(self) -> None:
         class RefundDummy:
             _money_value = app.CardPipelineApp._money_value
