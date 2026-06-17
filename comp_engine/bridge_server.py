@@ -20,7 +20,7 @@ from cy_automation.cy_macos import CYMacOSAdapter
 from workbook_io import WorkbookRow
 
 BRIDGE_VERSION = "2026-06-17-cardladder-dedupe-date-weight-v4"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-grader-same-row-v3"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-grader-arrow-target-v4"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 DEBUG_LOG = DEBUG_DIR / "bridge.log"

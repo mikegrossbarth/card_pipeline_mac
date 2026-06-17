@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-same-row-v3";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-arrow-target-v4";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -605,6 +605,9 @@ function normalizeGraderLabel(value) {
 }
 
 function findGraderControlInModal(modal) {
+  const direct = findDirectGraderControl(modal);
+  if (direct) return direct;
+
   const labels = [...modal.querySelectorAll("label, legend, span, div")]
     .filter((el) => isVisible(el) && /^grader$/i.test(visibleText(el).replace(/[:*]/g, "").trim()));
 
@@ -624,7 +627,8 @@ function findGraderControlInModal(modal) {
         rect.width >= 80 &&
         rect.height >= 20 &&
         !/^cert/i.test(text) &&
-        (!text || text.length <= 80 || normalizeGraderLabel(text))
+        text.length <= 120 &&
+        (!text || normalizeGraderLabel(text) || /expand_more|arrow_drop_down|▾|▼/i.test(text))
       )
       .sort((a, b) =>
         graderControlScore(a) - graderControlScore(b) ||
@@ -636,7 +640,39 @@ function findGraderControlInModal(modal) {
 
   return [...modal.querySelectorAll("[role='combobox'], select, button")]
     .filter((el) => isVisible(el))
-    .find((el) => /PSA|BECKETT|BGS|SGC|CGC|CSG|TAG|ISA|HGA/i.test(selectedControlText(el))) || null;
+    .find((el) => {
+      const text = selectedControlText(el);
+      return text.length <= 120 && /PSA|BECKETT|BGS|SGC|CGC|CSG|TAG|ISA|HGA/i.test(text);
+    }) || null;
+}
+
+function findDirectGraderControl(modal) {
+  const selectors = [
+    "[role='combobox']",
+    "[aria-haspopup='listbox']",
+    "[aria-expanded]",
+    "button",
+    "select",
+    "input",
+    "div",
+  ];
+  return [...modal.querySelectorAll(selectors.join(","))]
+    .filter((el) => isVisible(el))
+    .map((el) => ({ el, rect: el.getBoundingClientRect(), text: selectedControlText(el), rawText: visibleText(el).replace(/\s+/g, " ").trim() }))
+    .filter(({ rect, text, rawText }) =>
+      rect.width >= 50 &&
+      rect.width <= 260 &&
+      rect.height >= 18 &&
+      rect.height <= 72 &&
+      `${text} ${rawText}`.length <= 160 &&
+      /(?:^|\b)(?:PSA|BECKETT|BGS|SGC|CGC)(?:\b|$)/i.test(`${text} ${rawText}`) &&
+      !/cert|submit|search sales/i.test(`${text} ${rawText}`)
+    )
+    .sort((a, b) =>
+      graderControlScore(a) - graderControlScore(b) ||
+      (a.rect.top - b.rect.top) ||
+      (a.rect.left - b.rect.left)
+    )[0]?.el || null;
 }
 
 function graderControlScore(item) {
@@ -656,10 +692,11 @@ async function clickGraderDropdown(modal, control) {
   if (typeof control.focus === "function") control.focus();
   const rect = graderFieldRect(modal, control);
   const clickTargets = [
-    () => clickLikeHuman(control, Math.max(rect.left + 20, rect.right - 32), rect.top + rect.height / 2),
+    () => clickAtPoint(Math.max(rect.left + 20, rect.right - 20), rect.top + rect.height / 2),
     () => clickGraderExpandIcon(modal, control),
     () => clickAtPoint(Math.max(rect.left + 20, rect.right - 32), rect.top + rect.height / 2),
-    () => clickLikeHuman(control, rect.left + Math.min(90, rect.width / 2), rect.top + rect.height / 2),
+    () => clickAtPoint(rect.left + Math.min(90, rect.width / 2), rect.top + rect.height / 2),
+    () => clickLikeHuman(control, Math.max(rect.left + 20, rect.right - 20), rect.top + rect.height / 2),
     () => openDropdownWithKeyboard(control),
   ];
   for (const open of clickTargets) {
@@ -699,11 +736,15 @@ function graderFieldRect(modal, control) {
 
 function clickGraderExpandIcon(modal, control) {
   const controlRect = control.getBoundingClientRect();
-  const icons = [...modal.querySelectorAll("svg, span, div, button")]
+  const icons = [...modal.querySelectorAll("svg, [class*='Select-icon'], [data-testid*='ArrowDropDown'], span, div, button")]
     .filter((el) => isVisible(el))
-    .map((el) => ({ el, text: visibleText(el).replace(/\s+/g, " ").trim(), rect: el.getBoundingClientRect() }))
+    .map((el) => ({
+      el,
+      text: `${visibleText(el)} ${el.getAttribute("aria-label") || ""} ${el.getAttribute("data-testid") || ""} ${el.getAttribute("class") || ""}`.replace(/\s+/g, " ").trim(),
+      rect: el.getBoundingClientRect(),
+    }))
     .filter(({ text, rect }) =>
-      /expand_more|arrow_drop_down|▾|▼/i.test(text) &&
+      (/expand_more|arrow_drop_down|arrowdropdown|select-icon|▾|▼/i.test(text) || rect.width <= 40) &&
       rect.top >= controlRect.top - 12 &&
       rect.bottom <= controlRect.bottom + 18 &&
       rect.left >= controlRect.left &&
@@ -712,6 +753,7 @@ function clickGraderExpandIcon(modal, control) {
     .sort((a, b) => b.rect.left - a.rect.left);
   const icon = icons[0];
   if (icon) {
+    clickAtPoint(icon.rect.left + icon.rect.width / 2, icon.rect.top + icon.rect.height / 2);
     clickLikeHuman(icon.el, icon.rect.left + icon.rect.width / 2, icon.rect.top + icon.rect.height / 2);
     return true;
   }
