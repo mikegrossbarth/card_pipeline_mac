@@ -33,7 +33,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - Sunday at midnight rolls forward to the next Monday's company-sheet tab.
 - `Inventory` tracks active person-level inventory in `inventory_ledger.json`.
 - Received cards that are not checked for the company pile are automatically added to active inventory for the assigned person.
-- `Inventory` auto-reconciles received rows on refresh and also has `Reconcile Received`, which backfills active inventory from received-marked sheet rows that are not already present in company sheets. This is needed for sheets received before inventory capture existed.
+- `Inventory` fast-loads the saved ledger on app open. The `Refresh` and `Reconcile Received` actions backfill active inventory from received-marked sheet rows that are not already present in company sheets. This is needed for sheets received before inventory capture existed.
 - `Inventory` displays and exports `Best Company` and `Payout`; refresh enriches existing inventory rows with current assignment recommendations.
 - Selected active inventory cards can be moved to company sheets later with `Move to Company Sheets`; the move runs assignment recommendations, writes company/profit rows, and marks those inventory records as `Company Sheet`.
 - Selected active inventory cards can be sold directly with `Mark Sold`; this prompts for company/buyer and sale price, writes the sold card to `profit_ledger.json`, and marks the inventory row `Sold`.

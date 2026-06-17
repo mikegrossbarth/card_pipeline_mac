@@ -991,7 +991,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(controls, text="Max", style="Muted.TLabel").grid(row=0, column=7, sticky="e", padx=(10, 6))
         ttk.Entry(controls, textvariable=self.inventory_max_var, width=9).grid(row=0, column=8, sticky="w")
         ttk.Checkbutton(controls, text="Active only", variable=self.inventory_active_only_var, command=self.refresh_inventory_tab, style="Panel.TCheckbutton").grid(row=0, column=9, sticky="w", padx=(12, 0))
-        ttk.Button(controls, text="Refresh", command=self.refresh_inventory_tab, style="Soft.TButton").grid(row=0, column=10, sticky="w", padx=(10, 0))
+        ttk.Button(controls, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True), style="Soft.TButton").grid(row=0, column=10, sticky="w", padx=(10, 0))
         ttk.Button(controls, text="Export", command=self.export_inventory, style="Primary.TButton").grid(row=0, column=11, sticky="w", padx=(8, 0))
         ttk.Button(controls, text="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets, style="Soft.TButton").grid(row=0, column=12, sticky="w", padx=(8, 0))
         ttk.Button(controls, text="Reconcile Received", command=self.reconcile_received_inventory, style="Soft.TButton").grid(row=0, column=13, sticky="w", padx=(8, 0))
@@ -1499,16 +1499,16 @@ class CardPipelineApp(tk.Tk):
         if errors:
             messagebox.showwarning("Inventory move completed with warnings", "\n".join([f"Moved rows: {added}", *errors[:8]]))
 
-    def refresh_inventory_tab(self) -> None:
-        if not getattr(self, "_inventory_reconcile_running", False):
+    def refresh_inventory_tab(self, reconcile: bool = False, enrich: bool = False) -> None:
+        if reconcile and not getattr(self, "_inventory_reconcile_running", False):
             self._inventory_reconcile_running = True
             try:
                 self._sync_received_inventory_to_ledger()
             finally:
                 self._inventory_reconcile_running = False
-        self.inventory_rows = [self._enrich_inventory_record_assignment(record) for record in self._load_inventory_ledger()]
         stored_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-        if self.inventory_rows != stored_rows:
+        self.inventory_rows = [self._enrich_inventory_record_assignment(record) for record in stored_rows] if enrich else stored_rows
+        if enrich and self.inventory_rows != stored_rows:
             self._save_inventory_ledger(self.inventory_rows)
         self.filtered_inventory_rows = self._filtered_inventory_records(self.inventory_rows)
         if not hasattr(self, "inventory_tree"):
