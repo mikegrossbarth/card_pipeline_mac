@@ -61,6 +61,7 @@ CARD_PIPELINE
   WORKING SHEETS
   INCOMING SHEETS
   RECEIVED SHEETS
+  ARCHIVED SHEETS
   COMPANY SHEETS
   ASSIGNMENT RULES
   sheet_markers.json
@@ -84,11 +85,14 @@ Card Ladder comping requires a Card Ladder account and an active Chrome login se
 
 The app starts the local Card Ladder bridge automatically when L.U.C.A.S opens. The extension talks to `127.0.0.1` ports `8765` through `8772`, which works the same on macOS.
 
+The bridge currently expects helper version `2026-06-17-no-blind-grader-option-v22`. If Chrome shows a debugger warning during non-PSA grader selection, that is Chrome's browser-level warning for the trusted-click fallback; the attach is scoped to the Card Ladder tab and detached after the grader click.
+
 ## Input Modes
 
 Use the `Create` tab for all card entry.
 
 - `Barcode Scanner`: scanning station mode for continuous cert entry.
+- `Manual Entry`: add rows directly in the Create table.
 - `Photo OCR`: add photos or a folder, scan them in the app, and append detected card rows.
 - `Existing Spreadsheet`: load a simple workbook where column 1 is cert number, column 2 is card description, and column 3 is purchase price.
 
@@ -108,6 +112,8 @@ Use the `Receive` tab for physically receiving cards and source matching. Use th
 
 Assignment companies are local in `assignment_companies.json`. The manager supports manual rules, local files, Google Keep exports, workbook/CSV files, Google Sheets through OAuth, manual payout tiers, payout files, and linked `Payouts` tabs.
 
+Assignment can use comps, Card Ladder value, or imported `CY Estimate` as a company value source. If a company requires Card Ladder value or CY Estimate and the row is missing that value, the company is ignored.
+
 The company list in Assignment Rules can be filtered by name and by All, Active, or Inactive status.
 
 Example Mac source paths:
@@ -125,7 +131,7 @@ If no company can take a priced row, `Best Company` shows `NOBODY TAKES`.
 
 ## Payouts And Profit
 
-Use `Payouts/Tabs` to track active balances by assigned person and mark person-level balances paid.
+Use `Payouts/Tabs` to track active balances by assigned person and mark person-level balances paid. Company sheets are stored as one workbook per company under `COMPANY SHEETS/<Company>/<Company>.xlsx`, with weekly tabs named `Week of YYYY-MM-DD`.
 
 Use `Profit` to review sold cards and sold sheets. The Profit tab can filter by assigned person, shows a daily profit line chart, and can toggle between individual sold-card rows and grouped sold-sheet summaries.
 

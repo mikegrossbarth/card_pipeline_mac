@@ -498,17 +498,13 @@ async function selectGraderWithTrustedClicks(tabId, grader) {
     attached = true;
     const attempts = [];
     for (const point of geometry.points.slice(0, 24)) {
-      const target = await chrome.tabs.sendMessage(tabId, {
-        type: "CARDLADDER_GRADER_CLICK_TARGETS",
-        grader: normalized,
-      }).catch(() => null);
       await debuggerMouseClick(tabId, point.x, point.y, { holdMs: 140 });
       await delay(700);
       const option = await chrome.tabs.sendMessage(tabId, {
         type: "CARDLADDER_GRADER_OPTION_POINT",
         grader: normalized,
       }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
-      attempts.push({ point, target, option });
+      attempts.push({ point, option: compactGraderOptionResult(option) });
       if (!option?.ok || !option.clickPoint) {
         await debuggerMouseClick(tabId, point.x, point.y, { holdMs: 90 });
         await delay(500);
@@ -521,15 +517,25 @@ async function selectGraderWithTrustedClicks(tabId, grader) {
         grader: normalized,
       }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
       if (state?.ok && state.selected) {
-        return { ...state, trustedClick: true, geometry, option, attempts, version: CARDLADDER_BACKGROUND_VERSION };
+        return { ...state, trustedClick: true, geometry, option, clickedPoint: point, version: CARDLADDER_BACKGROUND_VERSION };
       }
     }
-    return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: "Trusted clicks did not open/select the grader dropdown.", geometry, attempts };
+    const targets = await chrome.tabs.sendMessage(tabId, {
+      type: "CARDLADDER_GRADER_CLICK_TARGETS",
+      grader: normalized,
+    }).catch(() => null);
+    return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: "Trusted clicks did not open/select the grader dropdown.", geometry, attempts, targets };
   } catch (error) {
     return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: String(error?.message || error), geometry };
   } finally {
     if (attached) await debuggerDetach(tabId);
   }
+}
+
+function compactGraderOptionResult(option) {
+  if (!option) return { ok: false, error: "no response" };
+  if (!option.ok) return { ok: false, error: option.error || "no option point" };
+  return { ok: true, clickPoint: option.clickPoint || null };
 }
 
 async function debuggerAttach(tabId) {

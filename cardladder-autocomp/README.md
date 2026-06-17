@@ -18,6 +18,14 @@ The main L.U.C.A.S app uses the project `.env` for OCR fallback. The Card Ladder
 
 The extension talks to the desktop bridge on `127.0.0.1` ports `8765` through `8772`. No Node/npm install or build step is required for normal use.
 
+Current helper version expected by the app bridge:
+
+```text
+2026-06-17-no-blind-grader-option-v22
+```
+
+For non-PSA graders, the helper first tries normal page/DOM clicks. If Card Ladder ignores those synthetic clicks, it briefly uses Chrome's `debugger` API to send a trusted click to the visible Grader bar. Chrome may show a browser-level debugger warning during that fallback. The debugger attach is scoped to the Card Ladder tab and is detached after the click.
+
 ## Files
 
 - `extension/background.js`: opens and controls the Card Ladder run window.

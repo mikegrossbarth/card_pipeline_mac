@@ -7,7 +7,7 @@ L.U.C.A.S means Lot Upload, Comping & Assignment System.
 - Repo: `C:\Users\User\Documents\Codex\2026-06-13\card-pipeline-mac`
 - Remote: `https://github.com/mikegrossbarth/card_pipeline_mac.git`
 - Branches kept current: `main` and `master`
-- Latest commit at handoff time: this recovery handoff commit
+- Latest commit at handoff time: see `git log -1 --oneline`
 - Purpose: macOS-focused fork/copy so Mac setup and CourtYard automation can change without touching the Windows project.
 - Current visible tabs: `Home`, `Create`, `Comp`, `Receive`, `Assignment`, `Payouts/Tabs`, `Profit`
 - Mac setup walkthrough: `FIRST_RUN_SETUP.md`
@@ -32,7 +32,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - Old legacy weekly company files remain readable for profit backfill.
 - Sunday at midnight rolls forward to the next Monday's company-sheet tab.
 - Create now has `Manual Entry` mode. Use the `+ Add row` line in the Create table, then double-click cells to edit. The extra toolbar button was removed.
-- Recovery note, 2026-06-17: Card Ladder was rolled back to the last working comping flow after the later DOM-sweep/grader-verification changes broke real usage. Do not reapply those changes without live browser QA against actual Card Ladder cert searches.
+- Card Ladder recovery note, 2026-06-17: known-good helper version is `2026-06-17-no-blind-grader-option-v22`. The verified CGC grader test opens the cert modal, uses trusted debugger clicks only when synthetic clicks fail, selects CGC, and leaves the modal open. Do not restore blind guessed grader-option coordinates; they closed/submitted the modal.
 
 ## Mac-Only CourtYard/CY Automation
 
@@ -192,14 +192,17 @@ cardladder-autocomp/extension
 
 Current comping flow uses the normal Chrome profile/session with the unpacked extension loaded. The app queues rows through the local desktop bridge; the extension checks in, opens Card Ladder Sales History, selects the requested grader, and submits cert searches. The grader selector first tries the DOM path, then briefly attaches Chrome debugger input only for trusted clicks on the visible grader bar if Card Ladder ignores synthetic clicks.
 
+`chrome.debugger` is scoped to the Card Ladder `tabId`, but Chrome may still show a browser-level debugger warning/banner while trusted clicks are active. That warning is expected when the trusted fallback runs.
+
 The desktop bridge binds to the first available port from `8765` to `8772`. The extension manifest grants access to the same local range.
 
 Common gotchas:
 
 - User must be logged into Card Ladder in the Chrome profile where the unpacked extension is loaded.
 - Old unpacked extension versions should be removed or disabled.
-- Current restored extension/background version: `2026-06-17-trusted-grader-click-v18`.
-- Current restored content-script version: `2026-06-17-trusted-grader-click-v18`.
+- Current extension/background version: `2026-06-17-no-blind-grader-option-v22`.
+- Current content-script version: `2026-06-17-no-blind-grader-option-v22`.
+- Current bridge expected helper version: `2026-06-17-no-blind-grader-option-v22`.
 - App warns if the extension version seen by the bridge is stale.
 - No-results pages preserve the Card Ladder title when available.
 
@@ -224,5 +227,13 @@ On an actual Mac, prefer:
 
 ## Current Git State At Handoff
 
-- `main` and `master` should both point at this recovery handoff commit.
-- Working tree was clean after this handoff file update was committed.
+- `main` and `master` should both be pushed after the cleanup/handoff commit.
+- Working tree should be clean after the handoff commit.
+
+## New Chat Bootstrap
+
+Tell a new chat:
+
+```text
+Work in C:\Users\User\Documents\Codex\2026-06-04\card_pipeline for Windows and C:\Users\User\Documents\Codex\2026-06-13\card-pipeline-mac for Mac. Read HANDOFF_CONTEXT.md first. Current known-good Card Ladder helper is 2026-06-17-no-blind-grader-option-v22. Do not reintroduce blind guessed grader-option coordinates; v22 fixed CGC by opening the cert modal, avoiding blind option clicks, re-preparing the modal if synthetic selection closes it, then using trusted chrome.debugger clicks on the visible grader bar only as fallback. The debugger banner is expected during trusted fallback because Chrome owns that UI. Windows has no CourtYard automation; Mac keeps CY automation. Keep main and master in both repos pushed.
+```
