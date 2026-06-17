@@ -198,8 +198,8 @@ Common gotchas:
 
 - User must be logged into Card Ladder in the Chrome profile where the unpacked extension is loaded.
 - Old unpacked extension versions should be removed or disabled.
-- Current restored extension/background version: `2026-06-17-simple-grader-flow-v12`.
-- Current restored content-script version: `2026-06-17-simple-grader-flow-v12`.
+- Current restored extension/background version: `2026-06-17-direct-grader-set-v13`.
+- Current restored content-script version: `2026-06-17-direct-grader-set-v13`.
 - App warns if the extension version seen by the bridge is stale.
 - No-results pages preserve the Card Ladder title when available.
 

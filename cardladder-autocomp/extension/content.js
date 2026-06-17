@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-simple-grader-flow-v12";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-direct-grader-set-v13";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -479,6 +479,7 @@ async function chooseGrader(grader) {
     const graderControl = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
     if (graderControl) {
       if (selectedGraderMatches(graderControl, normalized)) return;
+      if (await setGraderWithoutDropdown(modal, graderControl, normalized, optionLabel)) return;
       if (await clickDropdownThenOption(modal, graderControl, normalized, optionLabel)) {
         if (await waitForSelectedGrader(modal, normalized)) return;
       }
@@ -530,7 +531,7 @@ async function selectGraderForAutomation(grader) {
   }
   await chooseGrader(normalized);
   const afterControl = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
-  if (!selectedGraderMatches(afterControl, normalized)) {
+  if (!selectedGraderMatches(afterControl, normalized) && !hiddenGraderValueMatches(modal, normalized)) {
     return {
       ok: false,
       version: CARDLADDER_CONTENT_VERSION,
@@ -547,6 +548,100 @@ async function selectGraderForAutomation(grader) {
     selectedLabel: optionLabel,
     selectedText: selectedControlText(afterControl),
   };
+}
+
+async function setGraderWithoutDropdown(modal, control, grader, optionLabel) {
+  const candidates = graderValueCandidates(grader, optionLabel);
+  const fields = findGraderStateFields(modal, control);
+  for (const field of fields) {
+    for (const value of candidates) {
+      setNativeValue(field, value);
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+      invokeReactHandler(field, "onChange", { target: field, currentTarget: field, value });
+      await sleep(150);
+      if (hiddenGraderValueMatches(modal, grader) || selectedGraderMatches(control, grader)) return true;
+    }
+  }
+
+  for (const value of candidates) {
+    if (invokeReactHandler(control, "onChange", { target: { value }, currentTarget: { value }, value })) {
+      await sleep(250);
+      if (hiddenGraderValueMatches(modal, grader) || selectedGraderMatches(control, grader)) return true;
+    }
+  }
+  return false;
+}
+
+function graderValueCandidates(grader, optionLabel) {
+  return [...new Set([
+    grader,
+    optionLabel,
+    grader === "BGS" ? "BECKETT" : "",
+    grader === "BECKETT" ? "BGS" : "",
+  ].filter(Boolean))];
+}
+
+function findGraderStateFields(modal, control) {
+  const controlRect = control?.getBoundingClientRect?.();
+  const label = [...modal.querySelectorAll("label, legend, span, div")]
+    .filter((el) => isVisible(el) && /^grader$/i.test(visibleText(el).replace(/[:*]/g, "").trim()))
+    .map((el) => ({ el, rect: el.getBoundingClientRect() }))
+    .sort((a, b) => a.rect.top - b.rect.top)[0];
+  return [...modal.querySelectorAll("input, select")]
+    .map((el) => ({ el, rect: el.getBoundingClientRect(), text: `${el.name || ""} ${el.id || ""} ${el.getAttribute("aria-label") || ""} ${el.getAttribute("class") || ""}` }))
+    .filter(({ el, rect, text }) => {
+      if (el.type === "hidden" || /select|grader|nativeinput/i.test(text)) return true;
+      if (controlRect && rect.left >= controlRect.left - 8 && rect.right <= controlRect.right + 8 && Math.abs(rect.top - controlRect.top) <= 30) return true;
+      if (label && rect.top >= label.rect.top - 6 && rect.top <= label.rect.bottom + 70 && rect.left >= label.rect.left - 20 && rect.left <= label.rect.left + 620) return true;
+      return false;
+    })
+    .map(({ el }) => el);
+}
+
+function hiddenGraderValueMatches(modal, grader) {
+  return findGraderStateFields(modal, findGraderControlInModal(modal))
+    .some((field) => graderLabelMatches(field.value || field.getAttribute("value") || "", grader));
+}
+
+function invokeReactHandler(node, handlerName, eventShape) {
+  let invoked = false;
+  for (const target of [node, ...ancestorElements(node, 5)]) {
+    const props = reactProps(target);
+    const handler = props?.[handlerName] || props?.[handlerName.toLowerCase?.()];
+    if (typeof handler !== "function") continue;
+    handler({
+      ...eventShape,
+      bubbles: true,
+      cancelable: true,
+      defaultPrevented: false,
+      isTrusted: true,
+      nativeEvent: eventShape,
+      preventDefault() { this.defaultPrevented = true; },
+      stopPropagation() {},
+      persist() {},
+    });
+    invoked = true;
+  }
+  return invoked;
+}
+
+function reactProps(node) {
+  if (!node) return null;
+  const directKey = Object.keys(node).find((key) => /^__reactProps\$|^__reactEventHandlers\$/.test(key));
+  if (directKey && node[directKey]) return node[directKey];
+  const fiberKey = Object.keys(node).find((key) => /^__reactFiber\$|^__reactInternalInstance\$/.test(key));
+  const fiber = fiberKey ? node[fiberKey] : null;
+  return fiber?.memoizedProps || fiber?.return?.memoizedProps || null;
+}
+
+function ancestorElements(node, maxDepth = 5) {
+  const ancestors = [];
+  let current = node?.parentElement;
+  while (current && ancestors.length < maxDepth) {
+    ancestors.push(current);
+    current = current.parentElement;
+  }
+  return ancestors;
 }
 
 async function clickDropdownThenOption(modal, control, grader, optionLabel) {
@@ -638,11 +733,19 @@ async function clickGraderDropdown(modal, control) {
   await sleep(150);
   if (typeof control.focus === "function") control.focus();
   const rect = graderFieldRect(modal, control);
-  clickLikeHuman(control, Math.max(rect.left + 20, rect.right - 32), rect.top + rect.height / 2);
-  await sleep(700);
-  if (!findAnyGraderOptions()) {
-    clickAtPoint(Math.max(rect.left + 20, rect.right - 32), rect.top + rect.height / 2);
-    await sleep(700);
+  const y = rect.top + rect.height / 2;
+  const xPoints = [
+    rect.left + Math.min(42, rect.width * 0.2),
+    rect.left + rect.width / 2,
+    Math.max(rect.left + 20, rect.right - 32),
+  ];
+  for (const x of xPoints) {
+    clickLikeHuman(control, x, y);
+    await sleep(350);
+    if (findAnyGraderOptions()) return;
+    clickAtPoint(x, y);
+    await sleep(450);
+    if (findAnyGraderOptions()) return;
   }
 }
 
