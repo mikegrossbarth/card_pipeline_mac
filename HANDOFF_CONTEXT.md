@@ -7,7 +7,7 @@ L.U.C.A.S means Lot Upload, Comping & Assignment System.
 - Repo: `C:\Users\User\Documents\Codex\2026-06-13\card-pipeline-mac`
 - Remote: `https://github.com/mikegrossbarth/card_pipeline_mac.git`
 - Branches kept current: `main` and `master`
-- Latest commit at handoff time: `85bda6c Remove duplicate manual create button`
+- Latest commit at handoff time: this recovery handoff commit
 - Purpose: macOS-focused fork/copy so Mac setup and CourtYard automation can change without touching the Windows project.
 - Current visible tabs: `Home`, `Create`, `Comp`, `Receive`, `Assignment`, `Payouts/Tabs`, `Profit`
 - Mac setup walkthrough: `FIRST_RUN_SETUP.md`
@@ -32,6 +32,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - Old legacy weekly company files remain readable for profit backfill.
 - Sunday at midnight rolls forward to the next Monday's company-sheet tab.
 - Create now has `Manual Entry` mode. Use the `+ Add row` line in the Create table, then double-click cells to edit. The extra toolbar button was removed.
+- Recovery note, 2026-06-17: Card Ladder was rolled back to the last working comping flow after the later DOM-sweep/grader-verification changes broke real usage. Do not reapply those changes without live browser QA against actual Card Ladder cert searches.
 
 ## Mac-Only CourtYard/CY Automation
 
@@ -195,6 +196,8 @@ Common gotchas:
 
 - User must be logged into Card Ladder in Chrome.
 - Old unpacked extension versions should be removed or disabled.
+- Current restored extension/background version: `2026-06-10-no-results-ocr-fallback-v3`.
+- Current restored content-script version: `2026-06-10-no-results-profile-v2`.
 - App warns if the extension version seen by the bridge is stale.
 - No-results pages preserve the Card Ladder title when available.
 
@@ -207,7 +210,7 @@ C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\py
 C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m unittest tests.test_shared_workflows -v
 ```
 
-Last full Mac result in this Windows Codex workspace: `39 tests OK`.
+Last full Mac result after recovery in this Windows Codex workspace: `39 tests OK`.
 
 On an actual Mac, prefer:
 
@@ -219,6 +222,5 @@ On an actual Mac, prefer:
 
 ## Current Git State At Handoff
 
-- `main` and `master` should both point at `85bda6c`.
-- Working tree was clean before this handoff file update.
-- After editing this handoff, commit and push both `main` and `master`.
+- `main` and `master` should both point at this recovery handoff commit.
+- Working tree was clean after this handoff file update was committed.
