@@ -58,6 +58,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "CARDLADDER_TEST_GRADER_ACTIVE") {
+    testGraderInActiveTab(message.grader || "CGC").then(sendResponse);
+    return true;
+  }
+
 });
 
 async function startCardLadderRun(focusWindow, options = {}) {
@@ -430,6 +435,37 @@ async function selectGraderInPage(tabId, grader) {
     ...trusted,
     ok: false,
     error: `${trusted?.error || `Could not select grader ${grader}`} Synthetic attempt: ${synthetic?.error || "failed"}`,
+  };
+}
+
+async function testGraderInActiveTab(grader) {
+  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+  const tab = tabs.find((candidate) => candidate?.url?.startsWith("https://app.cardladder.com/")) || tabs[0];
+  if (!tab?.id || !tab.url?.startsWith("https://app.cardladder.com/")) {
+    return {
+      ok: false,
+      version: CARDLADDER_BACKGROUND_VERSION,
+      error: "Open Card Ladder Sales History in the active tab first.",
+      activeTabUrl: tab?.url || "",
+    };
+  }
+  const prepared = await chrome.tabs.sendMessage(tab.id, { type: "CARDLADDER_PREPARE_CERT_MODAL" })
+    .catch((error) => ({ ok: false, error: String(error?.message || error) }));
+  if (!prepared?.ok) {
+    return {
+      ok: false,
+      version: CARDLADDER_BACKGROUND_VERSION,
+      error: prepared?.error || "Could not prepare cert modal.",
+      activeTabUrl: tab.url || "",
+      prepared,
+    };
+  }
+  const selected = await selectGraderInPage(tab.id, grader);
+  return {
+    ...(selected || {}),
+    ok: Boolean(selected?.ok),
+    version: selected?.version || CARDLADDER_BACKGROUND_VERSION,
+    activeTabUrl: tab.url || "",
   };
 }
 

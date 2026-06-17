@@ -85,6 +85,9 @@ testGraderButton.addEventListener("click", async () => {
     grader,
   })
     .catch((error) => ({ ok: false, error: String(error?.message || error) }));
+  if (!selected) {
+    return setStatus("Grader test failed:\nNo response from background script. Reload the extension, then retry.", 60000);
+  }
   setStatus(`Grader test ${selected?.ok ? "passed" : "failed"}:\n${formatJson(selected)}`, 60000);
 });
 
