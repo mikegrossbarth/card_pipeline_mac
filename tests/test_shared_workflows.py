@@ -212,6 +212,37 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
 
 
 class CYLookupTests(unittest.TestCase):
+    def test_partial_cardladder_capture_preserves_usable_value_and_comps(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="64342605", grader="PSA", card_title="")
+
+        state._apply_cardladder_result_to_row(
+            row,
+            {
+                "excelRow": 2,
+                "certNumber": "64342605",
+                "grader": "PSA",
+                "status": "partial_comp_capture",
+                "value": 120,
+                "error": "Only captured 1 comp(s); expected 2. Re-run this row.",
+                "ocr": {
+                    "profileTitle": "2001 Upper Deck Tiger Woods",
+                    "profileGrader": "PSA",
+                    "profileGrade": "4",
+                    "resultCount": 2,
+                    "comps": [
+                        {"source": "EBAY", "title": "2001 Upper Deck Tiger Woods PSA 4", "date_sold": "Jun 8, 2026", "sale_type": "Auction", "price": "$100.00"},
+                    ],
+                },
+            },
+        )
+
+        self.assertEqual(row.status, "Card Ladder partial usable")
+        self.assertEqual(row.card_title, "2001 Upper Deck Tiger Woods PSA 4")
+        self.assertEqual(row.card_ladder_value, 120)
+        self.assertEqual(row.card_ladder_comps_average, 100)
+        self.assertIn("Only captured 1 comp", row.notes)
+
     def test_cardladder_result_triggers_cy_lookup_on_mac(self) -> None:
         state = bridge_server.BridgeState()
         row = WorkbookRow(
