@@ -6,7 +6,7 @@ const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
-const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-visible-grader-click-v21";
+const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-no-blind-grader-option-v22";
 
 let runInProgress = false;
 let activeWindowId = null;
@@ -429,6 +429,12 @@ async function selectGraderInPage(tabId, grader) {
     grader,
   }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
   if (synthetic?.ok) return synthetic;
+  const modalState = await chrome.tabs.sendMessage(tabId, { type: "CARDLADDER_MODAL_STATE" })
+    .catch(() => ({ open: false }));
+  if (!modalState?.open) {
+    await chrome.tabs.sendMessage(tabId, { type: "CARDLADDER_PREPARE_CERT_MODAL" })
+      .catch(() => null);
+  }
   const trusted = await selectGraderWithTrustedClicks(tabId, grader);
   if (trusted?.ok) return trusted;
   return {

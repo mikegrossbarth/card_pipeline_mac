@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-visible-grader-click-v21";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-no-blind-grader-option-v22";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -686,7 +686,7 @@ async function clickDropdownThenOption(modal, control, grader, optionLabel) {
     await sleep(900);
     return true;
   }
-  return clickGraderOptionByKnownPosition(modal, control, grader);
+  return false;
 }
 
 async function waitForAnyGraderOptions() {
@@ -903,8 +903,6 @@ function graderOptionPoint(grader) {
   const normalized = String(grader || "").toUpperCase();
   const optionLabel = cardLadderGraderLabel(normalized);
   const modal = certSearchModal();
-  const control = modal ? (findVisibleGraderBar(modal) || findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i)) : null;
-  const rect = control ? graderSweepRect(modal, control) : null;
   const option = findGraderOption(optionLabel) || findGraderOptionByPosition(normalized);
   if (option) {
     const optionRect = option.getBoundingClientRect();
@@ -918,28 +916,7 @@ function graderOptionPoint(grader) {
       },
     };
   }
-  if (rect) {
-    const fallback = knownGraderOptionPoint(rect, normalized);
-    if (fallback) return { ok: true, version: CARDLADDER_CONTENT_VERSION, grader: normalized, clickPoint: fallback, fallback: "known-position" };
-  }
   return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Could not find grader option point." };
-}
-
-function knownGraderOptionPoint(rect, grader) {
-  const indexByGrader = {
-    PSA: 0,
-    BGS: 1,
-    BECKETT: 1,
-    SGC: 2,
-    CGC: 3,
-  };
-  const targetIndex = indexByGrader[grader];
-  if (targetIndex == null) return null;
-  const optionHeight = Math.max(48, Math.min(58, rect.height));
-  return {
-    x: Math.round(Math.min(rect.right - 24, rect.left + 38)),
-    y: Math.round(rect.bottom + optionHeight * targetIndex + optionHeight / 2),
-  };
 }
 
 function graderSelectionState(grader) {
