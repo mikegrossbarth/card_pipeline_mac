@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 ROOT = Path(__file__).resolve().parent
 APP_DEBUG_LOG = ROOT / "work" / "lucas-debug.log"
@@ -994,9 +994,10 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(controls, text="Refresh", command=self.refresh_inventory_tab, style="Soft.TButton").grid(row=0, column=10, sticky="w", padx=(10, 0))
         ttk.Button(controls, text="Export", command=self.export_inventory, style="Primary.TButton").grid(row=0, column=11, sticky="w", padx=(8, 0))
         ttk.Button(controls, text="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets, style="Soft.TButton").grid(row=0, column=12, sticky="w", padx=(8, 0))
-        controls.columnconfigure(13, weight=1)
-        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=13, sticky="e")
-        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=14, sticky="w", pady=(8, 0))
+        ttk.Button(controls, text="Reconcile Received", command=self.reconcile_received_inventory, style="Soft.TButton").grid(row=0, column=13, sticky="w", padx=(8, 0))
+        controls.columnconfigure(14, weight=1)
+        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=14, sticky="e")
+        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=15, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_min_var, self.inventory_max_var):
             var.trace_add("write", lambda *_args: self.refresh_inventory_tab())
 
@@ -1191,6 +1192,96 @@ class CardPipelineApp(tk.Tk):
         self._save_inventory_ledger(ledger)
         self.refresh_inventory_tab()
         return added
+
+    def _received_certs_in_workbook(self, path: Path) -> set[str]:
+        certs: set[str] = set()
+        if not path.exists():
+            return certs
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        try:
+            for sheet in workbook.worksheets:
+                headers = {
+                    re.sub(r"[^a-z0-9]", "", str(cell.value or "").strip().lower()): index
+                    for index, cell in enumerate(sheet[1], start=1)
+                    if str(cell.value or "").strip()
+                }
+                received_col = headers.get("received")
+                cert_col = headers.get("certificationnumber") or headers.get("certnumber") or headers.get("cert")
+                if not received_col or not cert_col:
+                    continue
+                for row_index in range(2, sheet.max_row + 1):
+                    received_text = str(sheet.cell(row_index, received_col).value or "").strip().upper()
+                    if received_text not in {"X", "Y", "YES", "TRUE", "1", "RECEIVED"}:
+                        continue
+                    cert = scan_to_cert(sheet.cell(row_index, cert_col).value)
+                    if cert:
+                        certs.add(cert)
+        finally:
+            workbook.close()
+        return certs
+
+    def _company_sheet_source_cert_keys(self) -> set[tuple[str, str]]:
+        keys: set[tuple[str, str]] = set()
+        for record in read_company_profit_records(COMPANY_SHEETS_DIR):
+            source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+            cert = scan_to_cert(record.get("cert_number"))
+            if source_sheet and cert:
+                keys.add((source_sheet, cert))
+        return keys
+
+    def _received_inventory_candidate_records(self) -> list[dict[str, object]]:
+        company_keys = self._company_sheet_source_cert_keys()
+        candidates: list[dict[str, object]] = []
+        for stage, directory in (("Received", RECEIVED_SHEETS_DIR), ("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR)):
+            if not directory.exists():
+                continue
+            for path in sorted(directory.glob("*.xlsx"), key=lambda item: item.name.lower()):
+                marker = self.home_sheet_markers.get(self._home_sheet_key(stage, path.name), {})
+                person = str(marker.get("assigned_person") or "").strip() or "Unassigned"
+                received_certs = None if stage == "Received" else self._received_certs_in_workbook(path)
+                if received_certs == set():
+                    continue
+                try:
+                    rows = read_simple_spreadsheet(path)
+                except Exception:
+                    continue
+                for row in rows:
+                    cert = scan_to_cert(row.get("cert_number"))
+                    if not cert:
+                        continue
+                    if received_certs is not None and cert not in received_certs:
+                        continue
+                    if (path.name.lower(), cert) in company_keys:
+                        continue
+                    card_title = str(row.get("card_title") or "")
+                    candidates.append(
+                        self._normalize_inventory_record(
+                            {
+                                "date_added": datetime.now().strftime("%Y-%m-%d"),
+                                "assigned_person": person,
+                                "sport": assignment_engine.parse_card_for_matching(card_title).get("sport") if card_title else "",
+                                "cert_number": cert,
+                                "grader": row.get("grader") or "",
+                                "card_title": card_title,
+                                "purchase_price": row.get("purchase_price"),
+                                "inventory_value": row.get("card_ladder_comps_average") or row.get("card_ladder_value") or row.get("cy_value"),
+                                "source_sheet": path.name,
+                                "source": row.get("source") or "",
+                                "status": "Active",
+                                "notes": "Backfilled from received sheets",
+                            }
+                        )
+                    )
+        return candidates
+
+    def reconcile_received_inventory(self) -> None:
+        records = self._received_inventory_candidate_records()
+        added = self.add_inventory_records(records)
+        self.status_var.set(f"Reconciled received inventory: added {added} active card(s) from {len(records)} candidate row(s).")
+        if added:
+            messagebox.showinfo("Inventory reconciled", f"Added {added} received card(s) to active inventory.")
+        else:
+            messagebox.showinfo("Inventory reconciled", "No missing received inventory cards were found.")
 
     def _inventory_workbook_row(self, record: dict[str, object], excel_row: int) -> WorkbookRow:
         value = self._money_value(record.get("inventory_value"))

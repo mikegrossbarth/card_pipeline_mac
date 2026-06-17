@@ -1166,6 +1166,59 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_received_inventory_reconcile_skips_company_sheet_rows(self) -> None:
+        class ReconcileDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _company_sheet_source_cert_keys = app.CardPipelineApp._company_sheet_source_cert_keys
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            received_dir.mkdir()
+            received_path = received_dir / "Hambone Lot.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Comps"])
+            sheet.append(["111", "PSA", "Hambone Inventory Card", 40, 100])
+            sheet.append(["222", "PSA", "Company Card", 50, 120])
+            workbook.save(received_path)
+
+            company_dir = root / "COMPANY SHEETS"
+            company_path = company_dir / "Arena Club" / "Arena Club.xlsx"
+            company_path.parent.mkdir(parents=True)
+            company_workbook = Workbook()
+            company_sheet = company_workbook.active
+            company_sheet.title = "Week of 2026-06-15"
+            company_sheet.append(["Date Added", "Source Sheet", "Source", "Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder Value", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Status", "Notes"])
+            company_sheet.append(["2026-06-17", "Hambone Lot.xlsx", "", "222", "PSA", "Company Card", 50, "", 120, "", "", "Arena Club", 90, "Received", ""])
+            company_workbook.save(company_path)
+
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_company = app.COMPANY_SHEETS_DIR
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.COMPANY_SHEETS_DIR = company_dir
+            dummy = ReconcileDummy()
+            dummy.home_sheet_markers = {"Received|Hambone Lot.xlsx": {"assigned_person": "Hambone"}}
+            try:
+                records = dummy._received_inventory_candidate_records()
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0]["cert_number"], "111")
+                self.assertEqual(records[0]["assigned_person"], "Hambone")
+            finally:
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.COMPANY_SHEETS_DIR = old_company
+
     def test_delete_person_records_unassigns_markers_inventory_and_profit(self) -> None:
         class DeletePersonDummy:
             _money_value = app.CardPipelineApp._money_value
