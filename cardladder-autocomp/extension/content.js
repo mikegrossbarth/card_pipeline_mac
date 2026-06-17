@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-select-verify-v1";
+const CARDLADDER_CONTENT_VERSION = "2026-06-16-dom-comp-sweep-v1";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -484,22 +484,19 @@ async function chooseGrader(grader) {
   if (modal) {
     const graderControl = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
     if (graderControl) {
-      if (graderTextMatches(selectedControlText(graderControl), normalized)) return;
-      if (await clickDropdownThenOption(modal, graderControl, normalized, optionLabel)) {
-        await assertSelectedGrader(modal, normalized);
-        return;
-      }
+      if (selectedControlText(graderControl).toUpperCase() === optionLabel) return;
+      if (await clickDropdownThenOption(modal, graderControl, normalized, optionLabel)) return;
     }
   }
 
   const select = [...document.querySelectorAll("select")].find((el) =>
-    [...el.options].some((option) => graderTextMatches(option.textContent, normalized))
+    [...el.options].some((option) => option.textContent.trim().toUpperCase() === optionLabel)
   );
   if (select) {
-    select.value = [...select.options].find((option) => graderTextMatches(option.textContent, normalized)).value;
+    select.value = [...select.options].find((option) => option.textContent.trim().toUpperCase() === optionLabel).value;
     select.dispatchEvent(new Event("change", { bubbles: true }));
     await sleep(300);
-    if (graderTextMatches(selectedControlText(select), normalized)) return;
+    return;
   }
 
   const combobox = document.querySelector("[role='combobox'], input[placeholder*='Company' i], input[placeholder*='Grader' i]");
@@ -510,7 +507,7 @@ async function chooseGrader(grader) {
     if (option) {
       option.click();
       await sleep(300);
-      if (await verifySelectedGrader(modal || certSearchModal(), normalized)) return;
+      return;
     }
   }
 
@@ -518,7 +515,7 @@ async function chooseGrader(grader) {
   if (textOption) {
     textOption.click();
     await sleep(300);
-    if (await verifySelectedGrader(modal || certSearchModal(), normalized)) return;
+    return;
   }
 
   throw new Error(`Could not select grader ${normalized}. ${graderSelectionDebug(modal, optionLabel)}`);
@@ -532,21 +529,11 @@ async function selectGraderForAutomation(grader) {
     return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Open the SEARCH SALES BY CERT # modal first." };
   }
   const control = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
-  if (control && graderTextMatches(selectedControlText(control), normalized)) {
+  if (control && selectedControlText(control).toUpperCase() === optionLabel) {
     return { ok: true, version: CARDLADDER_CONTENT_VERSION, grader: normalized, selectedLabel: optionLabel, skipped: "already selected" };
   }
   await chooseGrader(normalized);
   const afterControl = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
-  if (!graderTextMatches(selectedControlText(afterControl), normalized)) {
-    return {
-      ok: false,
-      version: CARDLADDER_CONTENT_VERSION,
-      grader: normalized,
-      selectedLabel: optionLabel,
-      selectedText: selectedControlText(afterControl),
-      error: `Card Ladder grader stayed on ${selectedControlText(afterControl) || "unknown"} instead of ${optionLabel}. ${graderSelectionDebug(modal, optionLabel)}`,
-    };
-  }
   return {
     ok: true,
     version: CARDLADDER_CONTENT_VERSION,
@@ -562,54 +549,16 @@ async function clickDropdownThenOption(modal, control, grader, optionLabel) {
   if (option) {
     clickLikeHuman(option);
     await sleep(650);
-    return verifySelectedGrader(modal, grader);
+    return true;
   }
-  if (await clickGraderOptionByKnownPosition(modal, control, grader)) {
-    return verifySelectedGrader(modal, grader);
-  }
-  return false;
+  return clickGraderOptionByKnownPosition(modal, control, grader);
 }
 
 function cardLadderGraderLabel(grader) {
   const labels = {
     BGS: "BECKETT",
-    BVG: "BECKETT",
   };
   return labels[grader] || grader;
-}
-
-async function assertSelectedGrader(modal, grader) {
-  if (await verifySelectedGrader(modal, grader)) return;
-  const control = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
-  throw new Error(`Card Ladder grader did not change to ${cardLadderGraderLabel(grader)}; selected ${selectedControlText(control) || "unknown"}. ${graderSelectionDebug(modal, cardLadderGraderLabel(grader))}`);
-}
-
-async function verifySelectedGrader(modal, grader) {
-  await sleep(250);
-  const currentModal = modal || certSearchModal();
-  const control = currentModal ? (findGraderControlInModal(currentModal) || findFieldControlInModal(currentModal, /grader/i)) : null;
-  return graderTextMatches(selectedControlText(control), grader);
-}
-
-function graderTextMatches(text, grader) {
-  const selected = normalizeGraderLabel(text);
-  const expected = normalizeGraderLabel(grader);
-  return Boolean(selected && expected && selected === expected);
-}
-
-function normalizeGraderLabel(value) {
-  const text = String(value || "")
-    .toUpperCase()
-    .replace(/\bGRADER\b|[:*]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!text) return "";
-  const labels = [];
-  if (/\bPSA\b/.test(text)) labels.push("PSA");
-  if (/\b(?:BGS|BECKETT|BVG)\b/.test(text)) labels.push("BGS");
-  if (/\bSGC\b/.test(text)) labels.push("SGC");
-  if (/\bCGC\b/.test(text)) labels.push("CGC");
-  return [...new Set(labels)].length === 1 ? [...new Set(labels)][0] : "";
 }
 
 function findGraderControlInModal(modal) {
@@ -675,7 +624,7 @@ function graderFieldRect(modal, control) {
 function findAnyGraderOptions() {
   return [...document.querySelectorAll("[role='option'], [role='menuitem'], li, button, div, span")]
     .filter((el) => isVisible(el))
-    .some((el) => /^(PSA|BECKETT|BGS|SGC|CGC)$/i.test(visibleText(el).replace(/\s+/g, " ").trim()));
+    .some((el) => /^(PSA|BECKETT|SGC|CGC)$/i.test(visibleText(el).replace(/\s+/g, " ").trim()));
 }
 
 function findGraderOption(grader) {
@@ -708,7 +657,7 @@ function findGraderOptionByPosition(grader) {
   const options = [...document.querySelectorAll("[role='option'], [role='menuitem'], li, button, div")]
     .filter((el) => isVisible(el))
     .map((el) => ({ el, text: visibleText(el).replace(/\s+/g, " ").trim(), rect: el.getBoundingClientRect() }))
-    .filter(({ text, rect }) => text && text.length <= 40 && /^(PSA|BECKETT|BGS|SGC|CGC)$/i.test(text) && rect.top > 80)
+    .filter(({ text, rect }) => text && text.length <= 40 && /^(PSA|BECKETT|SGC|CGC)$/i.test(text) && rect.top > 80)
     .sort((a, b) => a.rect.top - b.rect.top);
   return options[targetIndex]?.el || null;
 }
