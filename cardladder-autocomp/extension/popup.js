@@ -5,12 +5,15 @@ const stop = document.getElementById("stop");
 const capture = document.getElementById("capture");
 const download = document.getElementById("download");
 const status = document.getElementById("status");
+const testGrader = document.getElementById("testGrader");
+const testGraderButton = document.getElementById("testGraderButton");
 const BRIDGE_PORTS = [8765, 8766, 8767, 8768, 8769, 8770, 8771, 8772];
 const BRIDGE_URLS = BRIDGE_PORTS.map((port) => `http://127.0.0.1:${port}`);
 
 let queue = null;
 let results = [];
 let activeBridgeUrl = BRIDGE_URLS[0];
+let manualStatusUntil = 0;
 
 loadQueue.addEventListener("click", async () => {
   const file = queueFile.files?.[0];
@@ -74,7 +77,30 @@ download.addEventListener("click", async () => {
   });
 });
 
+testGraderButton.addEventListener("click", async () => {
+  const grader = testGrader.value || "CGC";
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url?.startsWith("https://app.cardladder.com/")) {
+    return setStatus("Open Card Ladder Sales History in the active tab first.");
+  }
+
+  setStatus(`Testing ${grader} grader dropdown...`, 60000);
+  const prepared = await chrome.tabs.sendMessage(tab.id, { type: "CARDLADDER_PREPARE_CERT_MODAL" })
+    .catch((error) => ({ ok: false, error: String(error?.message || error) }));
+  if (!prepared?.ok) {
+    return setStatus(`Could not prepare cert modal:\n${formatJson(prepared)}`, 60000);
+  }
+
+  const selected = await chrome.tabs.sendMessage(tab.id, {
+    type: "CARDLADDER_SELECT_GRADER",
+    grader,
+  }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
+
+  setStatus(`Grader test ${selected?.ok ? "passed" : "failed"}:\n${formatJson(selected)}`, 60000);
+});
+
 setInterval(async () => {
+  if (Date.now() < manualStatusUntil) return;
   const stored = await chrome.runtime.sendMessage({ type: "CARDLADDER_GET_STATUS" }).catch(() => null);
   const currentStatus = stored?.cardladderStatus;
   if (!currentStatus) return;
@@ -88,8 +114,13 @@ setInterval(async () => {
   status.textContent = lines.join("\n");
 }, 1000);
 
-function setStatus(message) {
+function setStatus(message, holdMs = 0) {
+  if (holdMs > 0) manualStatusUntil = Date.now() + holdMs;
   status.textContent = message;
+}
+
+function formatJson(value) {
+  return JSON.stringify(value, null, 2);
 }
 
 async function postBridgeResult(result) {

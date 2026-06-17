@@ -32,12 +32,26 @@ button {
   margin-bottom: 10px;
 }
 
+.grader-test {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
 button {
   border: 1px solid #b8c2d1;
   border-radius: 6px;
   background: #ffffff;
   padding: 7px 8px;
   cursor: pointer;
+}
+
+select {
+  border: 1px solid #b8c2d1;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 7px 8px;
 }
 
 button:hover {
