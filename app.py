@@ -924,12 +924,32 @@ class CardPipelineApp(tk.Tk):
         )
         self.partial_received_tree.tag_configure("partial_sheet", background="#4a3d12", foreground="#fff3b0")
 
-    def _build_home_tree(self, parent: ttk.Frame, columns: tuple[str, ...], headings: dict[str, str], widths: dict[str, int], height: int) -> ttk.Treeview:
-        tree = ttk.Treeview(parent, columns=columns, show="headings", selectmode="browse", height=height)
+    def _build_home_tree(
+        self,
+        parent: ttk.Frame,
+        columns: tuple[str, ...],
+        headings: dict[str, str],
+        widths: dict[str, int],
+        height: int,
+        scrollbars: bool = False,
+    ) -> ttk.Treeview:
+        container = ttk.Frame(parent, style="Panel.TFrame") if scrollbars else parent
+        tree = ttk.Treeview(container, columns=columns, show="headings", selectmode="browse", height=height)
         for col in columns:
             tree.heading(col, text=headings[col], anchor=tk.W)
             tree.column(col, width=widths[col], minwidth=60, stretch=col == "sheet", anchor=tk.W)
-        tree.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        if scrollbars:
+            container.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+            tree.grid(row=0, column=0, sticky="nsew")
+            y_scroll = ttk.Scrollbar(container, orient=tk.VERTICAL, command=tree.yview)
+            y_scroll.grid(row=0, column=1, sticky="ns")
+            x_scroll = ttk.Scrollbar(container, orient=tk.HORIZONTAL, command=tree.xview)
+            x_scroll.grid(row=1, column=0, sticky="ew")
+            tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+            container.columnconfigure(0, weight=1)
+            container.rowconfigure(0, weight=1)
+        else:
+            tree.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         return tree
 
     def _build_payouts_tab(self) -> None:
@@ -1021,6 +1041,7 @@ class CardPipelineApp(tk.Tk):
             },
             widths={"date": 95, "person": 130, "sport": 95, "cert": 110, "grader": 80, "card": 320, "purchase": 100, "value": 100, "company": 140, "payout": 100, "source": 170, "status": 110},
             height=22,
+            scrollbars=True,
         )
         self.inventory_tree.configure(selectmode="extended")
         self.refresh_inventory_tab()
@@ -1546,7 +1567,7 @@ class CardPipelineApp(tk.Tk):
                 ),
             )
             self.inventory_tree_records[iid] = record
-        self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Cost: {format_money(total_purchase)}   Value: {format_money(total_value)}")
+        self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Purchase Total: {format_money(total_purchase)}   Value: {format_money(total_value)}")
         self.inventory_status_var.set(f"Loaded {len(self.filtered_inventory_rows)}/{len(self.inventory_rows)} inventory card(s) from {INVENTORY_LEDGER_PATH.name}.")
 
     def _filtered_inventory_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
