@@ -190,7 +190,7 @@ Chrome extension folder:
 cardladder-autocomp/extension
 ```
 
-Current comping flow uses the normal Chrome profile/session with the unpacked extension loaded. The app queues rows through the local desktop bridge; the extension checks in, opens Card Ladder Sales History, selects the requested grader with the restored simple DOM click flow, and submits cert searches. No dedicated Chrome profile or Chrome debugger permission is used.
+Current comping flow uses the normal Chrome profile/session with the unpacked extension loaded. The app queues rows through the local desktop bridge; the extension checks in, opens Card Ladder Sales History, selects the requested grader, and submits cert searches. The grader selector first tries the DOM path, then briefly attaches Chrome debugger input only for trusted clicks on the visible grader bar if Card Ladder ignores synthetic clicks.
 
 The desktop bridge binds to the first available port from `8765` to `8772`. The extension manifest grants access to the same local range.
 
@@ -198,8 +198,8 @@ Common gotchas:
 
 - User must be logged into Card Ladder in the Chrome profile where the unpacked extension is loaded.
 - Old unpacked extension versions should be removed or disabled.
-- Current restored extension/background version: `2026-06-17-visible-grader-bar-v17`.
-- Current restored content-script version: `2026-06-17-visible-grader-bar-v17`.
+- Current restored extension/background version: `2026-06-17-trusted-grader-click-v18`.
+- Current restored content-script version: `2026-06-17-trusted-grader-click-v18`.
 - App warns if the extension version seen by the bridge is stale.
 - No-results pages preserve the Card Ladder title when available.
 

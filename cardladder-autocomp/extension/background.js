@@ -6,7 +6,7 @@ const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
-const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-visible-grader-bar-v17";
+const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-trusted-grader-click-v18";
 
 let runInProgress = false;
 let activeWindowId = null;
@@ -419,10 +419,92 @@ async function submitRowWithGrader(tabId, row) {
 }
 
 async function selectGraderInPage(tabId, grader) {
-  return chrome.tabs.sendMessage(tabId, {
+  const synthetic = await chrome.tabs.sendMessage(tabId, {
     type: "CARDLADDER_SELECT_GRADER",
     grader,
   }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
+  if (synthetic?.ok) return synthetic;
+  const trusted = await selectGraderWithTrustedClicks(tabId, grader);
+  if (trusted?.ok) return trusted;
+  return {
+    ...trusted,
+    ok: false,
+    error: `${trusted?.error || `Could not select grader ${grader}`} Synthetic attempt: ${synthetic?.error || "failed"}`,
+  };
+}
+
+async function selectGraderWithTrustedClicks(tabId, grader) {
+  const normalized = String(grader || "").toUpperCase();
+  const geometry = await chrome.tabs.sendMessage(tabId, {
+    type: "CARDLADDER_GRADER_BAR_GEOMETRY",
+    grader: normalized,
+  }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
+  if (!geometry?.ok || !Array.isArray(geometry.points) || !geometry.points.length) {
+    return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: geometry?.error || "Could not locate visible grader bar.", geometry };
+  }
+
+  let attached = false;
+  try {
+    await debuggerAttach(tabId);
+    attached = true;
+    for (const point of geometry.points.slice(0, 16)) {
+      await debuggerMouseClick(tabId, point.x, point.y);
+      await delay(350);
+      const option = await chrome.tabs.sendMessage(tabId, {
+        type: "CARDLADDER_GRADER_OPTION_POINT",
+        grader: normalized,
+      }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
+      if (!option?.ok || !option.clickPoint) continue;
+      await debuggerMouseClick(tabId, option.clickPoint.x, option.clickPoint.y);
+      await delay(750);
+      const state = await chrome.tabs.sendMessage(tabId, {
+        type: "CARDLADDER_GRADER_SELECTION_STATE",
+        grader: normalized,
+      }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
+      if (state?.ok && state.selected) {
+        return { ...state, trustedClick: true, geometry, option, version: CARDLADDER_BACKGROUND_VERSION };
+      }
+    }
+    return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: "Trusted clicks did not open/select the grader dropdown.", geometry };
+  } catch (error) {
+    return { ok: false, version: CARDLADDER_BACKGROUND_VERSION, error: String(error?.message || error), geometry };
+  } finally {
+    if (attached) await debuggerDetach(tabId);
+  }
+}
+
+async function debuggerAttach(tabId) {
+  await chrome.debugger.attach({ tabId }, "1.3");
+}
+
+async function debuggerDetach(tabId) {
+  await chrome.debugger.detach({ tabId }).catch(() => {});
+}
+
+async function debuggerMouseClick(tabId, x, y) {
+  await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x,
+    y,
+    button: "none",
+  });
+  await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x,
+    y,
+    button: "left",
+    buttons: 1,
+    clickCount: 1,
+  });
+  await delay(80);
+  await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x,
+    y,
+    button: "left",
+    buttons: 0,
+    clickCount: 1,
+  });
 }
 
 async function captureValueFromDom(tabId, row, pageResult = {}) {
