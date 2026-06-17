@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-trusted-grader-click-v18";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-cert-modal-plus-v19";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -141,7 +141,9 @@ async function prepareCertModal() {
   await clickLoginIfNeeded();
   await ensureSalesHistory();
   await clickCertMode();
-  if (!certSearchModal()) throw new Error("Could not open cert search modal.");
+  if (!(await waitForCertSearchModal(4500))) {
+    throw new Error("Could not open cert search modal. " + certModeDiagnostics());
+  }
   return { ok: true, version: CARDLADDER_CONTENT_VERSION };
 }
 
@@ -395,6 +397,7 @@ async function clickCertMode() {
   if (certSearchModal()) return;
 
   await resetSearchFocus();
+  if (await clickTopBarAddCertSearch()) return;
 
   const searchInput = findSearchInput();
   if (searchInput) {
@@ -454,7 +457,9 @@ async function clickCertMode() {
     return;
   }
 
-  throw new Error("Could not find # cert search mode. Page clue: " + pageClue());
+  if (await clickTopBarAddCertSearch()) return;
+
+  throw new Error("Could not find # cert search mode. " + certModeDiagnostics());
 }
 
 async function resetSearchFocus() {
@@ -1452,6 +1457,79 @@ function findClickable(pattern) {
     .find((el) => pattern.test(visibleText(el)));
 }
 
+async function waitForCertSearchModal(timeoutMs = 2500) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (certSearchModal()) return true;
+    await sleep(200);
+  }
+  return false;
+}
+
+async function clickTopBarAddCertSearch() {
+  const addButton = findTopBarAddButton();
+  if (!addButton) return false;
+
+  clickLikeHuman(addButton);
+  await sleep(650);
+  if (await waitForCertSearchModal(1500)) return true;
+  if (await clickCertMenuOptionIfShown()) {
+    return waitForCertSearchModal(3000);
+  }
+
+  const rect = addButton.getBoundingClientRect();
+  const points = [
+    [rect.left + rect.width / 2, rect.top + rect.height / 2],
+    [rect.left + 8, rect.top + rect.height / 2],
+    [rect.right - 8, rect.top + rect.height / 2],
+  ];
+  for (const [x, y] of points) {
+    clickAtPoint(x, y);
+    await sleep(450);
+    if (await waitForCertSearchModal(1000)) return true;
+    if (await clickCertMenuOptionIfShown()) return waitForCertSearchModal(2500);
+  }
+  return false;
+}
+
+function findTopBarAddButton() {
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const candidates = [...document.querySelectorAll("button, [role='button'], a, span, div, i, svg")]
+    .filter((el) => isVisible(el))
+    .map((el) => {
+      const rect = el.getBoundingClientRect();
+      const text = [
+        visibleText(el),
+        el.getAttribute("aria-label") || "",
+        el.getAttribute("title") || "",
+        el.getAttribute("data-testid") || "",
+        el.getAttribute("class") || "",
+      ].join(" ").replace(/\s+/g, " ").trim();
+      return { el, rect, text };
+    })
+    .filter(({ rect }) =>
+      rect.top >= 70 &&
+      rect.top <= 190 &&
+      rect.left >= viewportWidth * 0.52 &&
+      rect.right <= viewportWidth - 20
+    )
+    .filter(({ text }) => /(^|\s)(add_circle|add|create|\+)(\s|$)/i.test(text))
+    .map((item) => ({
+      ...item,
+      el: item.el.closest("button, [role='button'], a") || item.el,
+    }))
+    .filter((item, index, arr) => arr.findIndex((other) => other.el === item.el) === index);
+
+  candidates.sort((a, b) => {
+    const aExact = /add_circle|\+/i.test(a.text) ? 0 : 1;
+    const bExact = /add_circle|\+/i.test(b.text) ? 0 : 1;
+    const aCenter = Math.abs((a.rect.left + a.rect.right) / 2 - viewportWidth * 0.86);
+    const bCenter = Math.abs((b.rect.left + b.rect.right) / 2 - viewportWidth * 0.86);
+    return aExact - bExact || aCenter - bCenter || a.rect.top - b.rect.top;
+  });
+  return candidates[0]?.el || null;
+}
+
 function findSearchInput() {
   const inputs = [...document.querySelectorAll("input:not([type='hidden']), textarea")];
   return inputs.find((el) =>
@@ -1574,7 +1652,13 @@ async function clickCertMenuOptionIfShown() {
   await sleep(250);
   const option = [...document.querySelectorAll("button, [role='button'], [role='option'], li, div, span")]
     .filter((el) => isVisible(el))
-    .find((el) => /^(#|cert\s*#|certification\s*#|certification number|cert number)$/i.test(visibleText(el)));
+    .map((el) => ({ el, text: visibleText(el).replace(/\s+/g, " ").trim(), rect: el.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.top >= 40 && rect.left >= window.innerWidth * 0.35)
+    .filter(({ text }) =>
+      /^(#|cert\s*#|certification\s*#|certification number|cert number)$/i.test(text) ||
+      /\b(search sales by cert|sales by cert|cert\s*#|certification\s*(?:#|number)|cert number)\b/i.test(text)
+    )
+    .sort((a, b) => a.text.length - b.text.length || a.rect.top - b.rect.top)[0]?.el;
   if (!option) return false;
   clickLikeHuman(option);
   await sleep(400);
@@ -1640,6 +1724,19 @@ function isVisible(node) {
 
 function pageClue() {
   return String(document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 1500);
+}
+
+function certModeDiagnostics() {
+  const topControls = visibleTextItems()
+    .filter((item) =>
+      item.rect.top >= 70 &&
+      item.rect.top <= 190 &&
+      item.rect.left >= (window.innerWidth || document.documentElement.clientWidth || 0) * 0.5
+    )
+    .map((item) => item.text)
+    .slice(0, 24)
+    .join(" | ");
+  return `Top controls: ${topControls || "none"}. Page clue: ${pageClue()}`;
 }
 
 function sleep(ms) {
