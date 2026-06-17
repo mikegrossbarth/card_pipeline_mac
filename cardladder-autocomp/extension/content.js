@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-label-sweep-v15";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-patient-grader-dropdown-v16";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -645,14 +645,35 @@ function ancestorElements(node, maxDepth = 5) {
 }
 
 async function clickDropdownThenOption(modal, control, grader, optionLabel) {
-  await clickGraderDropdown(modal, control);
-  const option = findGraderOption(optionLabel) || findGraderOptionByPosition(grader);
+  for (let round = 0; round < 3; round += 1) {
+    await clickGraderDropdown(modal, control);
+    if (await waitForAnyGraderOptions()) break;
+    await sleep(700);
+  }
+  const option = await waitForGraderOption(grader, optionLabel);
   if (option) {
     clickLikeHuman(option);
-    await sleep(650);
+    await sleep(900);
     return true;
   }
   return clickGraderOptionByKnownPosition(modal, control, grader);
+}
+
+async function waitForAnyGraderOptions() {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    if (findAnyGraderOptions()) return true;
+    await sleep(250);
+  }
+  return false;
+}
+
+async function waitForGraderOption(grader, optionLabel) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const option = findGraderOption(optionLabel) || findGraderOptionByPosition(grader);
+    if (option) return option;
+    await sleep(250);
+  }
+  return null;
 }
 
 function cardLadderGraderLabel(grader) {
@@ -736,10 +757,10 @@ async function clickGraderDropdown(modal, control) {
   const points = graderBarClickSweepPoints(rect);
   for (const { x, y } of points) {
     clickAtPoint(x, y);
-    await sleep(220);
+    await sleep(350);
     if (findAnyGraderOptions()) return;
     clickElementStackAtPoint(x, y);
-    await sleep(280);
+    await sleep(450);
     if (findAnyGraderOptions()) return;
   }
 }
