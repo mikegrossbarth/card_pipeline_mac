@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-click-sweep-v14";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-label-sweep-v15";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -732,16 +732,32 @@ function findGraderControlInModal(modal) {
 async function clickGraderDropdown(modal, control) {
   await sleep(150);
   if (typeof control.focus === "function") control.focus();
-  const rect = graderFieldRect(modal, control);
+  const rect = graderSweepRect(modal, control);
   const points = graderBarClickSweepPoints(rect);
   for (const { x, y } of points) {
-    clickLikeHuman(control, x, y);
+    clickAtPoint(x, y);
     await sleep(220);
     if (findAnyGraderOptions()) return;
-    clickAtPoint(x, y);
+    clickElementStackAtPoint(x, y);
     await sleep(280);
     if (findAnyGraderOptions()) return;
   }
+}
+
+function graderSweepRect(modal, control) {
+  const fieldRect = graderFieldRect(modal, control);
+  const modalRect = modal.getBoundingClientRect();
+  const label = [...modal.querySelectorAll("label, legend, span, div")]
+    .filter((el) => isVisible(el) && /^grader$/i.test(visibleText(el).replace(/[:*]/g, "").trim()))
+    .map((el) => ({ el, rect: el.getBoundingClientRect() }))
+    .sort((a, b) => a.rect.top - b.rect.top)[0];
+  if (!label) return fieldRect;
+
+  const top = Math.max(modalRect.top + 12, Math.min(fieldRect.top, label.rect.top - 6));
+  const bottom = Math.min(modalRect.bottom - 12, Math.max(fieldRect.bottom, label.rect.bottom + 76));
+  const left = Math.max(modalRect.left + 12, Math.min(fieldRect.left, label.rect.left - 8));
+  const right = Math.min(modalRect.right - 12, Math.max(fieldRect.right, label.rect.left + 660));
+  return { left, top, right, bottom, width: right - left, height: bottom - top };
 }
 
 function graderBarClickSweepPoints(rect) {
@@ -1407,12 +1423,32 @@ function clickAtPoint(x, y) {
   clickLikeHuman(clickable, x, y);
 }
 
+function clickElementStackAtPoint(x, y) {
+  const target = document.elementFromPoint(x, y);
+  if (!target) return;
+  const nodes = [];
+  let current = target;
+  while (current && nodes.length < 7) {
+    if (current.nodeType === 1 && isVisible(current)) nodes.push(current);
+    current = current.parentElement;
+  }
+  for (const node of nodes) {
+    clickLikeHuman(node, x, y);
+  }
+}
+
 function clickLikeHuman(node, clientX = null, clientY = null) {
   const rect = node.getBoundingClientRect();
   const x = clientX ?? rect.left + rect.width / 2;
   const y = clientY ?? rect.top + rect.height / 2;
-  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
-    node.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }));
+  ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove", "pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
+    if (type.startsWith("pointer") && window.PointerEvent) {
+      const pressed = /down|move/.test(type);
+      node.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: pressed ? 1 : 0, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+    } else {
+      const pressed = /down|move/.test(type);
+      node.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: pressed ? 1 : 0, detail: 1 }));
+    }
   });
   if (typeof node.click === "function") node.click();
 }
