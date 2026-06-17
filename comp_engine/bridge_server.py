@@ -19,7 +19,7 @@ from cardladder_ocr import extract_cl_value_from_data_url
 from cy_automation.cy_macos import CYMacOSAdapter
 from workbook_io import WorkbookRow
 
-BRIDGE_VERSION = "2026-06-17-cardladder-grader-same-row-v3"
+BRIDGE_VERSION = "2026-06-17-cardladder-dedupe-date-weight-v4"
 EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-grader-same-row-v3"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
@@ -520,11 +520,15 @@ def dedupe_comps(comps: list[dict]) -> list[dict]:
             same_price = existing_key[1] == price
             same_sale_type = existing_key[2] == sale_type
             same_date_price_type = existing_key[:3] == key_base
-            if not same_price:
-                continue
+            same_date = existing_key[0] == key_base[0]
             existing_title_key = compact_comp_title(existing.get("title"))[:80]
             same_source = clean_comp_source(existing.get("source")).lower() == clean_comp_source(comp.get("source")).lower()
             similar_title = bool(title_key and existing_title_key and (title_key in existing_title_key or existing_title_key in title_key))
+            if same_date and same_source and similar_title:
+                target_key = existing_key
+                break
+            if not same_price:
+                continue
             if same_date_price_type and (same_source or similar_title):
                 target_key = existing_key
                 break
@@ -586,6 +590,8 @@ def comp_quality(comp: dict) -> int:
         score += 20
     if re.search(r"#\s*[A-Za-z0-9-]+|\b[A-Za-z]{1,5}\d{1,4}\b", title):
         score += 10
+    if re.search(r"\$\s*[\d,]+(?:\.\d{1,2})?", title):
+        score -= 40
     if is_junk_comp_title(title):
         score -= 200
     return score

@@ -642,6 +642,16 @@ class AssignmentEngineTests(unittest.TestCase):
 
         self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 11.25)
 
+    def test_date_weighted_dedupes_same_sale_before_comparing_newest_dates(self) -> None:
+        comps = [
+            {"date_sold": "Apr 5, 2026", "price": "$11.50", "source": "EBAY", "title": "ZANDGEMPORIUM Pokemon Magnezone Stormfront Holo Rare #5 PSA 7 $12.02"},
+            {"date_sold": "Apr 5, 2026", "price": "$12.02", "source": "EBAY", "title": "ZANDGEMPORIUM Pokemon Magnezone Stormfront Holo Rare #5 PSA 7"},
+            {"date_sold": "Aug 24, 2025", "price": "$10.50", "source": "EBAY", "title": "ALMAR ENTERPRISES 2008 POKEMON DIAMOND & PEARL STORMFRONT MAGNEZONE LV. 44 #5/100 RARE HOLO PSA 7"},
+            {"date_sold": "Oct 2, 2022", "price": "$11.50", "source": "EBAY", "title": "Pokemon Magnezone D&P Stormfront Holo Rare #5 PSA 7 -454"},
+        ]
+
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 12.02)
+
     def test_accepted_company_without_matching_payout_cannot_win(self) -> None:
         row = WorkbookRow(
             excel_row=2,
