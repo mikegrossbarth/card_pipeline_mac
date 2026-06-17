@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-and-date-weight-v1";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-dropdown-open-v2";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -612,7 +612,7 @@ function findGraderControlInModal(modal) {
     const labelRect = label.getBoundingClientRect();
     const controls = [...modal.querySelectorAll("select, [role='combobox'], button, input, div")]
       .filter((el) => isVisible(el) && el !== label && !label.contains(el))
-      .map((el) => ({ el, rect: el.getBoundingClientRect(), text: selectedControlText(el) }))
+      .map((el) => ({ el, rect: el.getBoundingClientRect(), text: selectedControlText(el), rawText: visibleText(el).replace(/\s+/g, " ").trim() }))
       .filter(({ rect }) =>
         rect.top >= labelRect.bottom - 10 &&
         rect.top <= labelRect.bottom + 95 &&
@@ -625,7 +625,11 @@ function findGraderControlInModal(modal) {
         !/^cert/i.test(text) &&
         (!text || text.length <= 80 || normalizeGraderLabel(text))
       )
-      .sort((a, b) => (a.rect.top - b.rect.top) || (b.rect.width - a.rect.width));
+      .sort((a, b) =>
+        graderControlScore(a) - graderControlScore(b) ||
+        (a.rect.top - b.rect.top) ||
+        (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height)
+      );
     if (controls[0]) return controls[0].el;
   }
 
@@ -634,15 +638,33 @@ function findGraderControlInModal(modal) {
     .find((el) => /PSA|BECKETT|BGS|SGC|CGC|CSG|TAG|ISA|HGA/i.test(selectedControlText(el))) || null;
 }
 
+function graderControlScore(item) {
+  const text = String(item.text || item.rawText || "");
+  let score = 0;
+  if (!normalizeGraderLabel(text)) score += 8;
+  if (!/expand_more|arrow_drop_down|▾|▼/i.test(text)) score += 2;
+  if (item.el.getAttribute("role") === "combobox") score -= 3;
+  if (item.el.matches?.("button, select, input")) score -= 2;
+  if (item.rect.width > 420) score += 4;
+  if (item.rect.height > 80) score += 3;
+  return score;
+}
+
 async function clickGraderDropdown(modal, control) {
   await sleep(150);
   if (typeof control.focus === "function") control.focus();
   const rect = graderFieldRect(modal, control);
-  clickLikeHuman(control, Math.max(rect.left + 20, rect.right - 32), rect.top + rect.height / 2);
-  await sleep(700);
-  if (!findAnyGraderOptions()) {
-    clickAtPoint(Math.max(rect.left + 20, rect.right - 32), rect.top + rect.height / 2);
-    await sleep(700);
+  const clickTargets = [
+    () => clickLikeHuman(control, Math.max(rect.left + 20, rect.right - 32), rect.top + rect.height / 2),
+    () => clickGraderExpandIcon(modal, control),
+    () => clickAtPoint(Math.max(rect.left + 20, rect.right - 32), rect.top + rect.height / 2),
+    () => clickLikeHuman(control, rect.left + Math.min(90, rect.width / 2), rect.top + rect.height / 2),
+    () => openDropdownWithKeyboard(control),
+  ];
+  for (const open of clickTargets) {
+    open();
+    await sleep(550);
+    if (findAnyGraderOptions()) return;
   }
 }
 
@@ -667,6 +689,40 @@ function graderFieldRect(modal, control) {
     width: Math.min(modalRect.right - 36, controlRect.right || modalRect.right - 20) - Math.max(modalRect.left + 18, controlRect.left || modalRect.left + 20),
     height,
   };
+}
+
+function clickGraderExpandIcon(modal, control) {
+  const controlRect = control.getBoundingClientRect();
+  const icons = [...modal.querySelectorAll("svg, span, div, button")]
+    .filter((el) => isVisible(el))
+    .map((el) => ({ el, text: visibleText(el).replace(/\s+/g, " ").trim(), rect: el.getBoundingClientRect() }))
+    .filter(({ text, rect }) =>
+      /expand_more|arrow_drop_down|▾|▼/i.test(text) &&
+      rect.top >= controlRect.top - 12 &&
+      rect.bottom <= controlRect.bottom + 18 &&
+      rect.left >= controlRect.left &&
+      rect.right <= controlRect.right + 24
+    )
+    .sort((a, b) => b.rect.left - a.rect.left);
+  const icon = icons[0];
+  if (icon) {
+    clickLikeHuman(icon.el, icon.rect.left + icon.rect.width / 2, icon.rect.top + icon.rect.height / 2);
+    return true;
+  }
+  return false;
+}
+
+function openDropdownWithKeyboard(control) {
+  if (typeof control.focus === "function") control.focus();
+  const keys = [
+    { key: "ArrowDown", code: "ArrowDown", altKey: true },
+    { key: " ", code: "Space" },
+    { key: "Enter", code: "Enter" },
+  ];
+  for (const init of keys) {
+    control.dispatchEvent(new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true }));
+    control.dispatchEvent(new KeyboardEvent("keyup", { ...init, bubbles: true, cancelable: true }));
+  }
 }
 
 function findAnyGraderOptions() {
