@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-framework-handler-v8";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-dedicated-profile-debugger-v9";
 let lastGraderOpenDebug = [];
 const COMP_SOURCE_LABELS = [
   "eBay",
@@ -61,6 +61,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     selectGraderForAutomation(message.grader || "PSA")
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ ok: false, error: error.message, version: CARDLADDER_CONTENT_VERSION }));
+    return true;
+  }
+  if (message.type === "CARDLADDER_GRADER_GEOMETRY") {
+    sendResponse(graderGeometry(message.grader || "PSA"));
+    return true;
+  }
+  if (message.type === "CARDLADDER_GRADER_OPTION_GEOMETRY") {
+    sendResponse(graderOptionGeometry(message.grader || "PSA"));
     return true;
   }
   if (message.type === "CARDLADDER_EXTRACT_DOM_RESULT") {
@@ -547,6 +555,89 @@ async function selectGraderForAutomation(grader) {
     grader: normalized,
     selectedLabel: optionLabel,
     selectedText: selectedControlText(afterControl),
+  };
+}
+
+function graderGeometry(grader) {
+  const normalized = String(grader || "").toUpperCase();
+  const modal = certSearchModal();
+  if (!modal) return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Open the SEARCH SALES BY CERT # modal first." };
+  const control = findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i);
+  if (!control) return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Could not find grader control." };
+  const rect = graderFieldRect(modal, control);
+  return {
+    ok: true,
+    version: CARDLADDER_CONTENT_VERSION,
+    grader: normalized,
+    selectedText: selectedControlText(control),
+    control: describeNode(control, rect),
+    rect: plainRect(rect),
+    clickPoint: {
+      x: Math.round(Math.max(rect.left + 20, rect.right - 20)),
+      y: Math.round(rect.top + rect.height / 2),
+    },
+    optionPoint: knownGraderOptionPoint(rect, normalized),
+  };
+}
+
+function graderOptionGeometry(grader) {
+  const normalized = String(grader || "").toUpperCase();
+  const optionLabel = cardLadderGraderLabel(normalized);
+  const modal = certSearchModal();
+  const control = modal ? (findGraderControlInModal(modal) || findFieldControlInModal(modal, /grader/i)) : null;
+  const rect = control ? graderFieldRect(modal, control) : null;
+  const option = findGraderOption(optionLabel, rect) || findGraderOptionByPosition(normalized, rect);
+  if (option) {
+    const optionRect = option.getBoundingClientRect();
+    return {
+      ok: true,
+      version: CARDLADDER_CONTENT_VERSION,
+      grader: normalized,
+      option: describeNode(option, optionRect),
+      rect: plainRect(optionRect),
+      clickPoint: {
+        x: Math.round(optionRect.left + Math.min(38, Math.max(12, optionRect.width / 2))),
+        y: Math.round(optionRect.top + optionRect.height / 2),
+      },
+    };
+  }
+  if (rect) {
+    return {
+      ok: true,
+      version: CARDLADDER_CONTENT_VERSION,
+      grader: normalized,
+      fallback: "known-position",
+      clickPoint: knownGraderOptionPoint(rect, normalized),
+    };
+  }
+  return { ok: false, version: CARDLADDER_CONTENT_VERSION, error: "Could not find grader option geometry." };
+}
+
+function knownGraderOptionPoint(rect, grader) {
+  const indexByGrader = {
+    PSA: 0,
+    BGS: 1,
+    BECKETT: 1,
+    SGC: 2,
+    CGC: 3,
+  };
+  const targetIndex = indexByGrader[grader];
+  if (targetIndex == null) return null;
+  const optionHeight = Math.max(48, Math.min(58, rect.height));
+  return {
+    x: Math.round(Math.min(rect.right - 24, rect.left + 38)),
+    y: Math.round(rect.bottom + optionHeight * targetIndex + optionHeight / 2),
+  };
+}
+
+function plainRect(rect) {
+  return {
+    left: Math.round(rect.left),
+    top: Math.round(rect.top),
+    right: Math.round(rect.right),
+    bottom: Math.round(rect.bottom),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
   };
 }
 

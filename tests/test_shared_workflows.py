@@ -684,6 +684,19 @@ class AssignmentEngineTests(unittest.TestCase):
 
 
 class AppSharedWorkflowLogicTests(unittest.TestCase):
+    def test_bridge_only_hands_commands_to_expected_extension_version(self) -> None:
+        bridge = app.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="123", grader="CGC", card_title="Test Card CGC 9")
+        bridge.set_rows([row])
+        bridge.start_all_comps(requery_all=True)
+
+        stale = bridge.extension_poll({"extensionVersion": "older-helper"})
+        self.assertIsNone(stale["command"])
+
+        current = bridge.extension_poll({"extensionVersion": app.EXPECTED_CARDLADDER_EXTENSION_VERSION})
+        self.assertIsNotNone(current["command"])
+        self.assertEqual(current["command"]["type"], "RUN_ALL_COMPS")
+
     def test_unassigned_player_is_recorded_for_unmatched_valued_row(self) -> None:
         class Dummy:
             _load_unassigned_players = app.CardPipelineApp._load_unassigned_players

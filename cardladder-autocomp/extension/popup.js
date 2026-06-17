@@ -79,23 +79,12 @@ download.addEventListener("click", async () => {
 
 testGraderButton.addEventListener("click", async () => {
   const grader = testGrader.value || "CGC";
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url?.startsWith("https://app.cardladder.com/")) {
-    return setStatus("Open Card Ladder Sales History in the active tab first.");
-  }
-
   setStatus(`Testing ${grader} grader dropdown...`, 60000);
-  const prepared = await chrome.tabs.sendMessage(tab.id, { type: "CARDLADDER_PREPARE_CERT_MODAL" })
-    .catch((error) => ({ ok: false, error: String(error?.message || error) }));
-  if (!prepared?.ok) {
-    return setStatus(`Could not prepare cert modal:\n${formatJson(prepared)}`, 60000);
-  }
-
-  const selected = await chrome.tabs.sendMessage(tab.id, {
-    type: "CARDLADDER_SELECT_GRADER",
+  const selected = await chrome.runtime.sendMessage({
+    type: "CARDLADDER_TEST_GRADER_ACTIVE",
     grader,
-  }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
-
+  })
+    .catch((error) => ({ ok: false, error: String(error?.message || error) }));
   setStatus(`Grader test ${selected?.ok ? "passed" : "failed"}:\n${formatJson(selected)}`, 60000);
 });
 
