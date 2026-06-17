@@ -107,7 +107,7 @@ PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
 CARDLADDER_AUTOMATION_PROFILE_DIR = ROOT / "work" / "cardladder-chrome-profile"
-CARDLADDER_SALES_HISTORY_URL = "https://app.cardladder.com/sales-history"
+CARDLADDER_AUTOMATION_START_URL = "about:blank"
 APP_TITLE = "L.U.C.A.S"
 APP_SUBTITLE = "Lot Upload, Comping & Assignment System"
 
@@ -3226,7 +3226,7 @@ class CardPipelineApp(tk.Tk):
             "--no-first-run",
             "--no-default-browser-check",
             "--new-window",
-            CARDLADDER_SALES_HISTORY_URL,
+            CARDLADDER_AUTOMATION_START_URL,
         ]
         try:
             subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
