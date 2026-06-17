@@ -1,4 +1,5 @@
-const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-arrow-target-v4";
+const CARDLADDER_CONTENT_VERSION = "2026-06-17-grader-open-select-v5";
+let lastGraderOpenDebug = [];
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -550,6 +551,7 @@ async function selectGraderForAutomation(grader) {
 }
 
 async function clickDropdownThenOption(modal, control, grader, optionLabel) {
+  lastGraderOpenDebug = [];
   await clickGraderDropdown(modal, control);
   const option = findGraderOption(optionLabel) || findGraderOptionByPosition(grader);
   if (option) {
@@ -691,18 +693,21 @@ async function clickGraderDropdown(modal, control) {
   await sleep(150);
   if (typeof control.focus === "function") control.focus();
   const rect = graderFieldRect(modal, control);
+  rememberGraderOpenDebug("control", control, rect);
   const clickTargets = [
-    () => clickAtPoint(Math.max(rect.left + 20, rect.right - 20), rect.top + rect.height / 2),
+    () => clickAtPoint(Math.max(rect.left + 20, rect.right - 20), rect.top + rect.height / 2, "right-edge"),
+    () => clickAtPoint(Math.max(rect.left + 20, rect.right - 36), rect.top + rect.height / 2, "select-face-right"),
+    () => clickAtPoint(rect.left + Math.min(90, rect.width / 2), rect.top + rect.height / 2, "select-face-mid"),
     () => clickGraderExpandIcon(modal, control),
-    () => clickAtPoint(Math.max(rect.left + 20, rect.right - 32), rect.top + rect.height / 2),
-    () => clickAtPoint(rect.left + Math.min(90, rect.width / 2), rect.top + rect.height / 2),
-    () => clickLikeHuman(control, Math.max(rect.left + 20, rect.right - 20), rect.top + rect.height / 2),
+    () => clickLikeHuman(control, Math.max(rect.left + 20, rect.right - 20), rect.top + rect.height / 2, "control-direct"),
     () => openDropdownWithKeyboard(control),
   ];
   for (const open of clickTargets) {
     open();
     await sleep(550);
-    if (findAnyGraderOptions()) return;
+    const opened = findAnyGraderOptions();
+    rememberGraderOpenDebug(opened ? "opened" : "still-closed", document.activeElement || control);
+    if (opened) return;
   }
 }
 
@@ -753,15 +758,18 @@ function clickGraderExpandIcon(modal, control) {
     .sort((a, b) => b.rect.left - a.rect.left);
   const icon = icons[0];
   if (icon) {
-    clickAtPoint(icon.rect.left + icon.rect.width / 2, icon.rect.top + icon.rect.height / 2);
-    clickLikeHuman(icon.el, icon.rect.left + icon.rect.width / 2, icon.rect.top + icon.rect.height / 2);
+    rememberGraderOpenDebug("icon", icon.el, icon.rect);
+    clickAtPoint(icon.rect.left + icon.rect.width / 2, icon.rect.top + icon.rect.height / 2, "icon-point");
+    clickLikeHuman(icon.el, icon.rect.left + icon.rect.width / 2, icon.rect.top + icon.rect.height / 2, "icon-direct");
     return true;
   }
+  rememberGraderOpenDebug("icon-missing", control);
   return false;
 }
 
 function openDropdownWithKeyboard(control) {
   if (typeof control.focus === "function") control.focus();
+  rememberGraderOpenDebug("keyboard", control);
   const keys = [
     { key: "ArrowDown", code: "ArrowDown", altKey: true },
     { key: " ", code: "Space" },
@@ -850,7 +858,8 @@ function graderSelectionDebug(modal, optionLabel) {
     .slice(0, 12)
     .join(" | ");
   const modalText = modal ? visibleText(modal).replace(/\s+/g, " ").slice(0, 220) : "no modal";
-  return `[${CARDLADDER_CONTENT_VERSION}; wanted ${optionLabel}; options ${visibleOptions || "none"}; modal ${modalText}]`;
+  const openDebug = lastGraderOpenDebug.length ? `; open ${lastGraderOpenDebug.join(" || ")}` : "";
+  return `[${CARDLADDER_CONTENT_VERSION}; wanted ${optionLabel}; options ${visibleOptions || "none"}${openDebug}; modal ${modalText}]`;
 }
 
 async function fillCert(certNumber) {
@@ -1379,21 +1388,79 @@ async function clickCertMenuOptionIfShown() {
   return true;
 }
 
-function clickAtPoint(x, y) {
+function clickAtPoint(x, y, reason = "point") {
   const target = document.elementFromPoint(x, y);
   if (!target) return;
-  const clickable = target.closest("button, [role='button'], span, div, label") || target;
-  clickLikeHuman(clickable, x, y);
+  const candidates = uniqueElements([
+    target,
+    target.closest("[role='combobox']"),
+    target.closest("[aria-haspopup='listbox']"),
+    target.closest("[aria-expanded]"),
+    target.closest(".MuiSelect-select"),
+    target.closest(".MuiInputBase-root"),
+    target.closest("button, [role='button']"),
+    target.closest("label"),
+  ]).filter(Boolean);
+  const clickNodes = candidates.length ? candidates.slice(0, 4) : [target];
+  rememberGraderOpenDebug(`click-${reason}`, target, null, `${Math.round(x)},${Math.round(y)}`);
+  for (const node of clickNodes) {
+    clickLikeHuman(node, x, y, reason);
+  }
 }
 
-function clickLikeHuman(node, clientX = null, clientY = null) {
+function clickLikeHuman(node, clientX = null, clientY = null, reason = "click") {
+  if (!node) return;
   const rect = node.getBoundingClientRect();
   const x = clientX ?? rect.left + rect.width / 2;
   const y = clientY ?? rect.top + rect.height / 2;
+  rememberGraderOpenDebug(reason, node, rect, `${Math.round(x)},${Math.round(y)}`);
   ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
-    node.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }));
+    if (type.startsWith("pointer") && window.PointerEvent) {
+      node.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+    } else {
+      node.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }));
+    }
   });
   if (typeof node.click === "function") node.click();
+}
+
+function uniqueElements(items) {
+  const seen = new Set();
+  const elements = [];
+  for (const item of items) {
+    if (!item || seen.has(item)) continue;
+    seen.add(item);
+    elements.push(item);
+  }
+  return elements;
+}
+
+function rememberGraderOpenDebug(label, node, rect = null, extra = "") {
+  if (!node && !extra) return;
+  const bits = [label];
+  if (extra) bits.push(extra);
+  if (node) bits.push(describeNode(node, rect));
+  lastGraderOpenDebug.push(bits.filter(Boolean).join(" "));
+  if (lastGraderOpenDebug.length > 18) {
+    lastGraderOpenDebug = lastGraderOpenDebug.slice(-18);
+  }
+}
+
+function describeNode(node, rect = null) {
+  const box = rect || node.getBoundingClientRect?.();
+  const classes = String(node.getAttribute?.("class") || "")
+    .replace(/\s+/g, ".")
+    .slice(0, 80);
+  const attrs = [
+    node.tagName?.toLowerCase() || "node",
+    node.getAttribute?.("role") ? `role=${node.getAttribute("role")}` : "",
+    node.getAttribute?.("aria-expanded") ? `expanded=${node.getAttribute("aria-expanded")}` : "",
+    node.getAttribute?.("aria-haspopup") ? `popup=${node.getAttribute("aria-haspopup")}` : "",
+    classes ? `class=${classes}` : "",
+    box ? `rect=${Math.round(box.left)},${Math.round(box.top)},${Math.round(box.width)}x${Math.round(box.height)}` : "",
+  ].filter(Boolean).join("/");
+  const text = visibleText(node).replace(/\s+/g, " ").slice(0, 70);
+  return `${attrs}${text ? ` text=${text}` : ""}`;
 }
 
 function setNativeValue(input, value) {
