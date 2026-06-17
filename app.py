@@ -1170,7 +1170,7 @@ class CardPipelineApp(tk.Tk):
             }
         )
 
-    def add_inventory_records(self, records: list[dict[str, object]]) -> int:
+    def add_inventory_records(self, records: list[dict[str, object]], refresh: bool = True) -> int:
         if not records:
             return 0
         ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
@@ -1190,7 +1190,8 @@ class CardPipelineApp(tk.Tk):
                 existing.update(normalized)
                 existing["status"] = "Active"
         self._save_inventory_ledger(ledger)
-        self.refresh_inventory_tab()
+        if refresh:
+            self.refresh_inventory_tab()
         return added
 
     def _received_certs_in_workbook(self, path: Path) -> set[str]:
@@ -1275,13 +1276,18 @@ class CardPipelineApp(tk.Tk):
         return candidates
 
     def reconcile_received_inventory(self) -> None:
-        records = self._received_inventory_candidate_records()
-        added = self.add_inventory_records(records)
-        self.status_var.set(f"Reconciled received inventory: added {added} active card(s) from {len(records)} candidate row(s).")
+        added, candidates = self._sync_received_inventory_to_ledger()
+        self.refresh_inventory_tab()
+        self.status_var.set(f"Reconciled received inventory: added {added} active card(s) from {candidates} candidate row(s).")
         if added:
             messagebox.showinfo("Inventory reconciled", f"Added {added} received card(s) to active inventory.")
         else:
             messagebox.showinfo("Inventory reconciled", "No missing received inventory cards were found.")
+
+    def _sync_received_inventory_to_ledger(self) -> tuple[int, int]:
+        records = self._received_inventory_candidate_records()
+        added = self.add_inventory_records(records, refresh=False)
+        return added, len(records)
 
     def _inventory_workbook_row(self, record: dict[str, object], excel_row: int) -> WorkbookRow:
         value = self._money_value(record.get("inventory_value"))
@@ -1377,6 +1383,12 @@ class CardPipelineApp(tk.Tk):
             messagebox.showwarning("Inventory move completed with warnings", "\n".join([f"Moved rows: {added}", *errors[:8]]))
 
     def refresh_inventory_tab(self) -> None:
+        if not getattr(self, "_inventory_reconcile_running", False):
+            self._inventory_reconcile_running = True
+            try:
+                self._sync_received_inventory_to_ledger()
+            finally:
+                self._inventory_reconcile_running = False
         self.inventory_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         self.filtered_inventory_rows = self._filtered_inventory_records(self.inventory_rows)
         if not hasattr(self, "inventory_tree"):
