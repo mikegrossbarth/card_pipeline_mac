@@ -747,6 +747,8 @@ def read_source_text(source: Any, base_dir: Path, interactive_google: bool = Fal
     raw = normalize_source_value(source)
     if not raw:
         return ""
+    if is_google_keep_url(raw):
+        return read_keep_note_cache({"kind": "google_keep", "url": raw}, base_dir)
     if raw.startswith(("http://", "https://")):
         return read_url_text(raw)
     path = Path(raw).expanduser()
@@ -773,6 +775,8 @@ def read_structured_source_text(source: dict[str, Any], base_dir: Path, interact
     path_value = source.get("path") or source.get("file")
     url = str(source.get("url") or "").strip()
     sheet_name = str(source.get("sheet_name") or source.get("sheet") or "").strip()
+    if kind == "google_keep":
+        return read_keep_note_cache(source, base_dir)
     if kind == "google_sheet" and url:
         path = path_from_source_value(path_value, base_dir) if path_value else None
         try:
@@ -807,10 +811,47 @@ def read_structured_source_text(source: dict[str, Any], base_dir: Path, interact
     return read_source_text(path_value or url or source.get("doc_id"), base_dir, interactive_google=interactive_google)
 
 
+def read_keep_note_cache(source: dict[str, Any], base_dir: Path) -> str:
+    path_value = source.get("path") or source.get("file")
+    url = str(source.get("url") or "").strip()
+    path = path_from_source_value(path_value, base_dir) if path_value else keep_note_cache_path(url, base_dir)
+    try:
+        if path.exists():
+            return path.read_text(encoding="utf-8-sig")
+    except OSError as error:
+        raise ValueError(f"Could not open Google Keep cache: {path}") from error
+    raise ValueError(
+        "Google Keep note has not been synced yet. Open the linked Keep note in Chrome with the bundled "
+        "Card Ladder Auto-Comp Helper extension enabled, then click Preview Source again."
+    )
+
+
 def path_from_source_value(value: Any, base_dir: Path) -> Path:
     raw = normalize_source_value(value)
     path = Path(raw).expanduser()
     return path if path.is_absolute() else base_dir / path
+
+
+def is_google_keep_url(value: Any) -> bool:
+    parsed = urllib.parse.urlparse(str(value or "").strip())
+    return parsed.scheme in {"http", "https"} and parsed.netloc.lower().endswith("keep.google.com")
+
+
+def google_keep_note_id(url: str) -> str:
+    parsed = urllib.parse.urlparse(str(url or "").strip())
+    raw = f"{parsed.path}#{parsed.fragment}"
+    match = re.search(r"/notes/([^/?#]+)", raw)
+    if match:
+        return match.group(1)
+    match = re.search(r"(?:note|id|text)%3D([^&#]+)", raw, flags=re.I)
+    if match:
+        return urllib.parse.unquote(match.group(1))
+    return urllib.parse.quote(str(url or "google-keep-note"), safe="")[:80]
+
+
+def keep_note_cache_path(url: str, base_dir: Path, name: str = "") -> Path:
+    stem = safe_filename(name or google_keep_note_id(url) or "google-keep-note")
+    return base_dir / "ASSIGNMENT RULES" / "KEEP EXPORTS" / f"{stem}.txt"
 
 
 def normalize_source_value(source: Any) -> str:

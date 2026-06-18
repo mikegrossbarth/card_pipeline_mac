@@ -372,6 +372,50 @@ class GoogleSheetCacheTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.ASSIGNMENT_CONFIG_PATH = old_config
 
+    def test_google_keep_source_reads_cached_note_text(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_path = root / "ASSIGNMENT RULES" / "KEEP EXPORTS" / "note.txt"
+            cache_path.parent.mkdir(parents=True)
+            cache_path.write_text("Basketball $10-$100 90%\n", encoding="utf-8")
+
+            text = assignment_engine.read_source_text(
+                {
+                    "kind": "google_keep",
+                    "url": "https://keep.google.com/u/0/#NOTE/abc123",
+                    "path": str(cache_path),
+                    "name": "Rules",
+                },
+                root,
+            )
+
+            self.assertIn("Basketball $10-$100 90%", text)
+
+    def test_bridge_replaces_matching_google_keep_cache(self) -> None:
+        with TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "rules.txt"
+            bridge = app.BridgeState()
+            bridge.register_keep_note_sources(
+                [
+                    {
+                        "url": "https://keep.google.com/u/0/#NOTE/abc123",
+                        "path": str(cache_path),
+                        "name": "Rules",
+                    }
+                ]
+            )
+
+            result = bridge.post_google_keep_note(
+                {
+                    "url": "https://keep.google.com/u/0/#NOTE/abc123",
+                    "title": "Rules",
+                    "text": "Football $20-$200 95%",
+                }
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(cache_path.read_text(encoding="utf-8").strip(), "Football $20-$200 95%")
+
 
 class AssignmentEngineTests(unittest.TestCase):
     def test_kemba_walker_title_infers_basketball_without_short_name_false_matches(self) -> None:

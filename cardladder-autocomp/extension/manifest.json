@@ -6,6 +6,7 @@
   "permissions": ["activeTab", "alarms", "debugger", "downloads", "scripting", "storage", "tabs"],
   "host_permissions": [
     "https://app.cardladder.com/*",
+    "https://keep.google.com/*",
     "http://127.0.0.1:8765/*",
     "http://127.0.0.1:8766/*",
     "http://127.0.0.1:8767/*",
@@ -26,6 +27,11 @@
     {
       "matches": ["https://app.cardladder.com/*"],
       "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://keep.google.com/*"],
+      "js": ["keep_content.js"],
       "run_at": "document_idle"
     }
   ]

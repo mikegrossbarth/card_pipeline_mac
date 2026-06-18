@@ -9,11 +9,11 @@ import threading
 import time
 import uuid
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from cardladder_ocr import extract_cl_value_from_data_url
 from cy_automation.cy_macos import CYMacOSAdapter
@@ -55,6 +55,8 @@ class BridgeState:
         self.cancel_requested = False
         self.comp_strategy = COMP_STRATEGY_AVERAGE
         self.on_update: Callable[[], None] | None = None
+        self.keep_note_sources: list[dict[str, str]] = []
+        self.last_keep_sync: dict[str, str] = {}
         self.cy_lookup_inflight: set[int] = set()
         self.cy_lookup_pending: set[int] = set()
         self.cy_batch_running = False
@@ -66,6 +68,40 @@ class BridgeState:
     def set_comp_strategy(self, strategy: str) -> None:
         with self.lock:
             self.comp_strategy = strategy if strategy in COMP_STRATEGY_LABELS else COMP_STRATEGY_AVERAGE
+
+    def register_keep_note_sources(self, sources: list[dict[str, object]]) -> None:
+        normalized: list[dict[str, str]] = []
+        for source in sources:
+            url = str(source.get("url") or "").strip()
+            path = str(source.get("path") or source.get("file") or "").strip()
+            name = str(source.get("name") or Path(path).stem or "Google Keep note")
+            if url and path:
+                normalized.append({"url": url, "path": path, "name": name})
+        with self.lock:
+            self.keep_note_sources = normalized
+
+    def post_google_keep_note(self, payload: dict) -> dict:
+        text = str(payload.get("text") or "").strip()
+        url = str(payload.get("url") or "").strip()
+        title = str(payload.get("title") or "").strip() or "Google Keep note"
+        synced_at = str(payload.get("synced_at") or payload.get("syncedAt") or "").strip() or datetime.now(timezone.utc).isoformat()
+        if not text:
+            return {"ok": False, "saved": 0, "error": "Google Keep note text was empty."}
+        with self.lock:
+            sources = list(self.keep_note_sources)
+        matches = [source for source in sources if keep_urls_match(url, source.get("url", ""))]
+        saved_paths: list[str] = []
+        for source in matches:
+            path = Path(source["path"]).expanduser()
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text + "\n", encoding="utf-8")
+                saved_paths.append(str(path))
+            except OSError:
+                continue
+        with self.lock:
+            self.last_keep_sync = {"url": url, "title": title, "syncedAt": synced_at, "saved": str(len(saved_paths))}
+        return {"ok": bool(saved_paths), "saved": len(saved_paths), "paths": saved_paths}
 
     def start_all_comps(self, requery_all: bool = False) -> int:
         with self.lock:
@@ -361,6 +397,34 @@ def parse_value(value) -> float | None:
         return float(str(value).replace("$", "").replace(",", "").strip())
     except ValueError:
         return None
+
+
+def keep_urls_match(first: str, second: str) -> bool:
+    first_key = keep_url_key(first)
+    second_key = keep_url_key(second)
+    if first_key and second_key:
+        return first_key == second_key
+    first_norm = normalize_keep_url(first)
+    second_norm = normalize_keep_url(second)
+    return bool(first_norm and second_norm and (first_norm == second_norm or first_norm.startswith(second_norm) or second_norm.startswith(first_norm)))
+
+
+def keep_url_key(value: str) -> str:
+    raw = str(value or "")
+    parsed = urlparse(raw)
+    haystack = f"{parsed.path}#{parsed.fragment}"
+    match = re.search(r"/notes/([^/?#]+)", haystack)
+    if match:
+        return unquote(match.group(1)).strip().lower()
+    match = re.search(r"(?:note|id|text)%3D([^&#]+)", haystack, flags=re.I)
+    return unquote(match.group(1)).strip().lower() if match else ""
+
+
+def normalize_keep_url(value: str) -> str:
+    parsed = urlparse(str(value or "").strip())
+    if not parsed.netloc.lower().endswith("keep.google.com"):
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}#{parsed.fragment}".rstrip("/#").lower()
 
 
 def cy_lookup_enabled(platform: str | None = None) -> bool:
@@ -759,6 +823,9 @@ class BridgeServer:
                 if self.path.startswith("/finish/cardladder"):
                     state.finish_cardladder(payload)
                     self._send_json({"ok": True})
+                    return
+                if self.path.startswith("/source/google-keep"):
+                    self._send_json(state.post_google_keep_note(payload))
                     return
                 self._send_json({"ok": False, "error": "unknown endpoint"}, status=404)
 

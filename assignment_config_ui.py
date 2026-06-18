@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any, Callable
@@ -10,6 +11,8 @@ from typing import Any, Callable
 from assignment_engine import (
     CONFIG_PATH,
     gsheet_shortcut_url,
+    is_google_keep_url,
+    keep_note_cache_path,
     load_gsheet_shortcut,
     normalize_source_value,
     read_source_text,
@@ -36,8 +39,8 @@ SPORT_OPTIONS = (
 )
 RULE_SOURCE_LABELS = {
     "manual": "Manual rules",
-    "keep_file": "Google Keep local file",
-    "sheet_file": "Google Sheets local file",
+    "keep_file": "Google Keep note / local text",
+    "sheet_file": "Google Sheets file / URL",
 }
 PAYOUT_SOURCE_LABELS = {
     "manual": "Manual payout tiers",
@@ -256,8 +259,10 @@ class AssignmentRulesDialog(tk.Toplevel):
         actions.grid(row=4, column=0, sticky="ew", pady=(8, 0))
         actions.columnconfigure(0, weight=1)
         actions.columnconfigure(1, weight=1)
+        actions.columnconfigure(2, weight=1)
         ttk.Button(actions, text="Preview Source", command=self._preview_rule_source, style="AssignSoft.TButton").grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ttk.Button(actions, text="Connect Google", command=self._connect_google, style="AssignSoft.TButton").grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        ttk.Button(actions, text="Open Keep Note", command=self._open_keep_note, style="AssignSoft.TButton").grid(row=0, column=1, sticky="ew", padx=4)
+        ttk.Button(actions, text="Connect Google", command=self._connect_google, style="AssignSoft.TButton").grid(row=0, column=2, sticky="ew", padx=(4, 0))
         self.link_payouts_check = ttk.Checkbutton(
             frame,
             text="Link Payouts to Same File",
@@ -790,8 +795,25 @@ class AssignmentRulesDialog(tk.Toplevel):
     def _materialize_source_if_needed(self, path_text: str, is_payout: bool = False) -> str | dict[str, Any]:
         normalized = normalize_source_value(path_text)
         cached = self.payout_materialized_source if is_payout else self.rule_materialized_source
-        if isinstance(cached, dict) and normalize_source_value(cached.get("path")) == normalized:
+        if isinstance(cached, dict) and (
+            normalize_source_value(cached.get("path")) == normalized
+            or normalize_source_value(cached.get("url")) == normalized
+        ):
             return cached
+        if is_google_keep_url(normalized):
+            source_name = keep_note_display_name(normalized)
+            source = {
+                "kind": "google_keep",
+                "url": normalized,
+                "path": str(keep_note_cache_path(normalized, self.config_path.parent, source_name)),
+                "name": source_name,
+                "refresh_on_load": True,
+            }
+            if is_payout:
+                self.payout_materialized_source = source
+            else:
+                self.rule_materialized_source = source
+            return source
         path = Path(normalized).expanduser()
         if path.suffix.lower() != ".gsheet":
             return normalized
@@ -837,6 +859,16 @@ class AssignmentRulesDialog(tk.Toplevel):
             messagebox.showerror("Connect Google", str(error))
             return
         self.preview_status.set("Google Sheets connected. Preview the source to read the live sheet.")
+
+    def _open_keep_note(self) -> None:
+        path = self.rule_source_path.get().strip()
+        source = self.rule_materialized_source if isinstance(self.rule_materialized_source, dict) else None
+        url = str((source or {}).get("url") or path).strip()
+        if not is_google_keep_url(url):
+            messagebox.showinfo("Open Keep Note", "Paste or select a Google Keep note URL first.")
+            return
+        webbrowser.open(url)
+        self.preview_status.set("Opened Google Keep. Keep the note open; L.U.C.A.S will use the latest synced cache.")
 
     def _save_and_reload(self) -> None:
         if self._save_company():
@@ -894,6 +926,8 @@ def open_assignment_rules_dialog(parent: tk.Tk, pipeline_root: Path, on_saved: C
 
 def source_kind_for_path(value: Any) -> str:
     if isinstance(value, dict):
+        if value.get("kind") == "google_keep":
+            return "keep_file"
         if value.get("kind") == "google_sheet":
             return "sheet_file"
         value = value.get("path") or value.get("file") or value.get("url")
@@ -926,6 +960,8 @@ def is_same_file_payout_source(value: Any) -> bool:
 
 def display_source_path(value: Any) -> str:
     if isinstance(value, dict):
+        if value.get("kind") == "google_keep":
+            return str(value.get("url") or value.get("path") or value.get("file") or "")
         return str(value.get("path") or value.get("file") or value.get("url") or "")
     return str(value or "")
 
@@ -933,6 +969,11 @@ def display_source_path(value: Any) -> str:
 def safe_stem(value: str) -> str:
     stem = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return stem or "company"
+
+
+def keep_note_display_name(url: str) -> str:
+    match = re.search(r"/notes/([^/?#]+)", str(url or ""))
+    return f"Google Keep {match.group(1)}" if match else "Google Keep note"
 
 
 def title_case(value: str) -> str:
