@@ -1210,6 +1210,7 @@ class CardPipelineApp(tk.Tk):
         added = 0
         for record in records:
             normalized = self._normalize_inventory_record(record)
+            normalized = self._enrich_inventory_record_assignment(normalized)
             key = str(normalized.get("inventory_key") or "")
             if not key:
                 continue
@@ -1313,7 +1314,7 @@ class CardPipelineApp(tk.Tk):
 
     def reconcile_received_inventory(self) -> None:
         added, candidates = self._sync_received_inventory_to_ledger()
-        self.refresh_inventory_tab()
+        self.refresh_inventory_tab(enrich=True)
         self.status_var.set(f"Reconciled received inventory: added {added} active card(s) from {candidates} candidate row(s).")
         if added:
             messagebox.showinfo("Inventory reconciled", f"Added {added} received card(s) to active inventory.")

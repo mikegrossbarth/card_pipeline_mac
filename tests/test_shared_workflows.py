@@ -1142,6 +1142,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _enrich_inventory_record_assignment = lambda self, record: record
             refresh_inventory_tab = lambda self: None
 
         with TemporaryDirectory() as tmp:
@@ -1192,6 +1193,48 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         )
         self.assertEqual(record["best_company"], "Arena Club")
         self.assertEqual(record["estimated_payout"], 95)
+
+    def test_add_inventory_records_recalculates_stale_nobody_takes_assignment(self) -> None:
+        class FakeAssignment:
+            def recommend(self, row, person=""):
+                self.last_person = person
+                return types.SimpleNamespace(company="Arena Club", payout=95)
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
+            _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            refresh_inventory_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            dummy.assignment_engine = FakeAssignment()
+            try:
+                dummy.add_inventory_records([
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "cert_number": "123",
+                        "card_title": "Test Card",
+                        "source_sheet": "Hambone.xlsx",
+                        "purchase_price": 40,
+                        "inventory_value": 100,
+                        "best_company": app.NO_COMPANY_TAKES_LABEL,
+                    }
+                ])
+
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(ledger[0]["best_company"], "Arena Club")
+                self.assertEqual(ledger[0]["estimated_payout"], 95)
+                self.assertEqual(dummy.assignment_engine.last_person, "Kevin Hambone")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
 
     def test_received_inventory_reconcile_skips_company_sheet_rows(self) -> None:
         class ReconcileDummy:
@@ -1513,6 +1556,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _enrich_inventory_record_assignment = lambda self, record: record
             refresh_inventory_tab = lambda self: None
 
         with TemporaryDirectory() as tmp:
