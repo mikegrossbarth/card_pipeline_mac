@@ -437,6 +437,7 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_markers: dict[str, dict[str, object]] = self._load_sheet_markers()
         self.deleted_sheet_marker_keys: set[str] = set()
         self.home_selected_sheet_key = ""
+        self.home_person_var = tk.StringVar()
         self.payout_person_var = tk.StringVar()
         self.payout_status_var = tk.StringVar(value="No unpaid sheets loaded.")
         self.payout_summary_people: dict[str, str] = {}
@@ -860,6 +861,13 @@ class CardPipelineApp(tk.Tk):
         sheet_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
         sheet_panel.configure(width=360)
         sheet_panel.pack_propagate(False)
+        person_row = ttk.Frame(sheet_panel, style="Panel.TFrame")
+        person_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(person_row, text="Person", style="Muted.TLabel").pack(side=tk.LEFT)
+        self.home_person_combo = ttk.Combobox(person_row, textvariable=self.home_person_var, width=24)
+        self.home_person_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+        self._bind_person_autocomplete(self.home_person_combo, refresh_callback=self._on_home_person_filter_changed)
+        self.home_person_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_home_person_filter_changed(), add="+")
         toggle_row = tk.Frame(sheet_panel, bg=palette["panel"])
         toggle_row.pack(fill=tk.X, pady=(0, 8))
         self.home_tab_palette = palette
@@ -962,9 +970,8 @@ class CardPipelineApp(tk.Tk):
         self.payout_person_combo.grid(row=0, column=1, sticky="w", padx=(8, 10))
         self._bind_person_autocomplete(self.payout_person_combo, refresh_callback=self.refresh_payouts_tab)
         self.payout_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_payouts_tab(), add="+")
-        ttk.Button(controls, text="Delete Person", command=self.open_delete_person_dialog, style="Soft.TButton").grid(row=0, column=2, sticky="w")
-        controls.columnconfigure(3, weight=1)
-        ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        controls.columnconfigure(2, weight=1)
+        ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
         body = ttk.Frame(self.payouts_tab, style="App.TFrame")
         body.pack(fill=tk.BOTH, expand=True)
@@ -2373,6 +2380,35 @@ class CardPipelineApp(tk.Tk):
         self._update_home_sheet_tabs()
         self._refresh_home_sheet_list()
 
+    def _on_home_person_filter_changed(self) -> None:
+        person = self.home_person_var.get().strip()
+        for var in (self.payout_person_var, self.inventory_person_var, self.profit_person_var):
+            if var.get().strip() != person:
+                var.set(person)
+        self._refresh_home_sheet_list()
+        self._refresh_home_metrics()
+        self.refresh_payouts_tab()
+        self.refresh_inventory_tab()
+        self.refresh_profit_tab()
+
+    def _home_person_filter(self) -> str:
+        return self.home_person_var.get().strip().lower() if hasattr(self, "home_person_var") else ""
+
+    def _home_sheet_matches_person_filter(self, key: str) -> bool:
+        needle = self._home_person_filter()
+        if not needle:
+            return True
+        marker = self.home_sheet_markers.get(key, {})
+        person = str(marker.get("assigned_person") or "Unassigned").strip().lower()
+        return needle in person
+
+    def _filtered_home_sheet_names(self, kind: str) -> list[str]:
+        return [
+            name
+            for name in self.home_sheet_paths.get(kind, {})
+            if self._home_sheet_matches_person_filter(self._home_sheet_key(kind, name))
+        ]
+
     def _update_home_sheet_tabs(self) -> None:
         if not hasattr(self, "home_incoming_tab") or not hasattr(self, "home_working_tab"):
             return
@@ -2689,7 +2725,7 @@ class CardPipelineApp(tk.Tk):
             return
         kind = self.home_sheet_kind.get()
         self.home_sheet_list.delete(0, tk.END)
-        for name in self.home_sheet_paths.get(kind, {}):
+        for name in self._filtered_home_sheet_names(kind):
             self.home_sheet_list.insert(tk.END, name)
         if self.home_sheet_list.size():
             self.home_sheet_list.selection_set(0)
@@ -2702,7 +2738,7 @@ class CardPipelineApp(tk.Tk):
             return
         for tree in (self.incoming_volume_tree, self.partial_received_tree):
             tree.delete(*tree.get_children())
-        incoming_names = self.home_sheet_paths.get("Incoming", {})
+        incoming_names = self._filtered_home_sheet_names("Incoming")
         total_cards = 0
         total_received = 0
         total_volume = 0.0
@@ -2912,6 +2948,8 @@ class CardPipelineApp(tk.Tk):
             people = [person for person in people if needle in person.lower()]
         if hasattr(self, "payout_person_combo"):
             self.payout_person_combo["values"] = people
+        if hasattr(self, "home_person_combo"):
+            self.home_person_combo["values"] = people
         if hasattr(self, "profit_person_combo"):
             self.profit_person_combo["values"] = people
         if hasattr(self, "inventory_person_combo"):
@@ -3080,13 +3118,17 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(frame, text="Total Balance", style="Panel.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 18), pady=(0, 14))
         ttk.Label(frame, text=format_money(total_balance), style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=4, column=1, sticky="w", pady=(0, 14))
 
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=6, column=0, columnspan=2, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
         confirm_button = ttk.Button(
-            frame,
-            text="Mark Paid",
+            buttons,
+            text="Confirm Mark Paid",
             style="Primary.TButton",
             state=tk.DISABLED,
             command=lambda: self._apply_payout_person_paid(person, matching_items, total_balance, popup),
         )
+        confirm_button.pack(side=tk.LEFT)
 
         def toggle_confirm() -> None:
             confirm_button.configure(state=tk.NORMAL if confirmed_var.get() else tk.DISABLED)
@@ -3098,11 +3140,6 @@ class CardPipelineApp(tk.Tk):
             command=toggle_confirm,
             style="Panel.TCheckbutton",
         ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 14))
-
-        buttons = ttk.Frame(frame, style="Panel.TFrame")
-        buttons.grid(row=6, column=0, columnspan=2, sticky="e")
-        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
-        confirm_button.pack(side=tk.LEFT)
         frame.columnconfigure(1, weight=1)
         popup.update_idletasks()
         x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)

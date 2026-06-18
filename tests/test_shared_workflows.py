@@ -1701,6 +1701,37 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.PROFIT_LEDGER_PATH = old_profit
 
+    def test_home_person_filter_limits_sheet_names(self) -> None:
+        class Var:
+            def __init__(self, value: str) -> None:
+                self.value = value
+
+            def get(self) -> str:
+                return self.value
+
+        class HomeDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _home_person_filter = app.CardPipelineApp._home_person_filter
+            _home_sheet_matches_person_filter = app.CardPipelineApp._home_sheet_matches_person_filter
+            _filtered_home_sheet_names = app.CardPipelineApp._filtered_home_sheet_names
+
+        dummy = HomeDummy()
+        dummy.home_person_var = Var("Kevin")
+        dummy.home_sheet_paths = {
+            "Incoming": {
+                "kevin.xlsx": Path("kevin.xlsx"),
+                "james.xlsx": Path("james.xlsx"),
+                "blank.xlsx": Path("blank.xlsx"),
+            }
+        }
+        dummy.home_sheet_markers = {
+            "Incoming|kevin.xlsx": {"assigned_person": "Kevin Hambone"},
+            "Incoming|james.xlsx": {"assigned_person": "James Copeland"},
+            "Incoming|blank.xlsx": {},
+        }
+
+        self.assertEqual(dummy._filtered_home_sheet_names("Incoming"), ["kevin.xlsx"])
+
     def test_inventory_records_can_move_to_company_sheets(self) -> None:
         class FakeTree:
             def selection(self):
