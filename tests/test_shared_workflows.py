@@ -1236,6 +1236,44 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_retarget_inventory_rows_for_source_changes_owner_without_duplicates(self) -> None:
+        class FakeAssignment:
+            def recommend(self, row, person=""):
+                self.last_person = person
+                return types.SimpleNamespace(company=f"{person} Club", payout=88)
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
+            _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
+            _retarget_inventory_rows_for_source = app.CardPipelineApp._retarget_inventory_rows_for_source
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            dummy.assignment_engine = FakeAssignment()
+            try:
+                dummy._save_inventory_ledger([
+                    dummy._normalize_inventory_record({"assigned_person": "Lucas", "cert_number": "123", "source_sheet": "Lot A.xlsx", "card_title": "Test Card", "inventory_value": 100, "best_company": "Arena Club", "estimated_payout": 95}),
+                    dummy._normalize_inventory_record({"assigned_person": "Mikey", "cert_number": "123", "source_sheet": "Lot A.xlsx", "card_title": "Test Card", "inventory_value": 100, "best_company": "Arena Club", "estimated_payout": 90}),
+                ])
+
+                self.assertEqual(dummy._retarget_inventory_rows_for_source("Lot A.xlsx", "Mikey"), 1)
+
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger[0]["assigned_person"], "Mikey")
+                self.assertEqual(ledger[0]["inventory_key"], "123|lot a.xlsx|mikey")
+                self.assertEqual(ledger[0]["best_company"], "Mikey Club")
+                self.assertEqual(ledger[0]["estimated_payout"], 88)
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_received_inventory_reconcile_skips_company_sheet_rows(self) -> None:
         class ReconcileDummy:
             _money_value = app.CardPipelineApp._money_value

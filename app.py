@@ -1227,6 +1227,37 @@ class CardPipelineApp(tk.Tk):
             self.refresh_inventory_tab()
         return added
 
+    def _retarget_inventory_rows_for_source(self, source_sheet_name: str, assigned_person: str) -> int:
+        source_name = Path(str(source_sheet_name or "")).name.strip().lower()
+        if not source_name:
+            return 0
+        new_person = str(assigned_person or "").strip() or "Unassigned"
+        changed = 0
+        merged: dict[str, dict[str, object]] = {}
+        for record in [self._normalize_inventory_record(item) for item in self._load_inventory_ledger()]:
+            if Path(str(record.get("source_sheet") or "")).name.strip().lower() == source_name:
+                if str(record.get("assigned_person") or "").strip() != new_person:
+                    changed += 1
+                record["assigned_person"] = new_person
+                record["best_company"] = ""
+                record["estimated_payout"] = None
+                record.pop("inventory_key", None)
+                record = self._normalize_inventory_record(record)
+                record = self._enrich_inventory_record_assignment(record)
+            key = str(record.get("inventory_key") or "")
+            if not key:
+                continue
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = record
+                continue
+            status = "Active" if "active" in {str(existing.get("status") or "").lower(), str(record.get("status") or "").lower()} else str(record.get("status") or existing.get("status") or "")
+            existing.update(record)
+            existing["status"] = status or "Active"
+        if changed:
+            self._save_inventory_ledger(list(merged.values()))
+        return changed
+
     def _received_certs_in_workbook(self, path: Path) -> set[str]:
         certs: set[str] = set()
         if not path.exists():
@@ -3102,6 +3133,7 @@ class CardPipelineApp(tk.Tk):
             return
         existing_marker = dict(self.home_sheet_markers.get(self.home_selected_sheet_key, {}))
         incoming_proper = bool(marker.get("incoming_proper"))
+        old_assigned_person = str(existing_marker.get("assigned_person") or "").strip()
         marker = {
             "paid": bool(existing_marker.get("paid")),
             "tracking_number": str(marker.get("tracking_number") or "").strip(),
@@ -3140,6 +3172,10 @@ class CardPipelineApp(tk.Tk):
                     current_kind, _current_name = self._split_home_sheet_key(key)
                     marker = self._marker_for_stage(marker, current_kind)
                 self.home_sheet_markers[key] = marker
+                _current_kind, current_name = self._split_home_sheet_key(key)
+                inventory_rows_reassigned = 0
+                if old_assigned_person != str(marker.get("assigned_person") or "").strip():
+                    inventory_rows_reassigned = self._retarget_inventory_rows_for_source(current_name, str(marker.get("assigned_person") or ""))
                 self._save_sheet_markers()
         except Exception as error:
             messagebox.showerror("Save failed", str(error))
@@ -3148,9 +3184,12 @@ class CardPipelineApp(tk.Tk):
         self.refresh_received_sheets()
         self.refresh_incoming_index()
         self.refresh_home()
+        if hasattr(self, "inventory_tree"):
+            self.refresh_inventory_tab(enrich=True)
         if popup is not None:
             popup.destroy()
-        self.status_var.set("Sheet markers saved and moved." if moved else "Sheet markers saved.")
+        inventory_note = f" Reassigned {inventory_rows_reassigned} inventory row(s)." if inventory_rows_reassigned else ""
+        self.status_var.set(("Sheet markers saved and moved." if moved else "Sheet markers saved.") + inventory_note)
 
     def _home_sheet_key(self, kind: str, name: str) -> str:
         return f"{kind}|{name}"
