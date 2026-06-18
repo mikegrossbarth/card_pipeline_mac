@@ -1609,21 +1609,53 @@ class CardPipelineApp(tk.Tk):
         best_company = str(record.get("best_company") or "").strip()
         return bool(best_company) and best_company.upper() != NO_COMPANY_TAKES_LABEL
 
+    def _inventory_tree_cell_text(self, row_id: str, column_id: str) -> str:
+        if not row_id or not column_id:
+            return ""
+        values = self.inventory_tree.item(row_id, "values") or ()
+        try:
+            index = int(str(column_id).lstrip("#")) - 1
+        except ValueError:
+            return ""
+        if index < 0 or index >= len(values):
+            return ""
+        return str(values[index] or "")
+
+    def _inventory_tree_row_text(self, row_id: str) -> str:
+        if not row_id:
+            return ""
+        values = self.inventory_tree.item(row_id, "values") or ()
+        return "\t".join(str(value or "") for value in values)
+
+    def _copy_inventory_text(self, text: str, label: str = "inventory value") -> None:
+        self.clipboard_clear()
+        self.clipboard_append(str(text or ""))
+        if hasattr(self, "status_var"):
+            self.status_var.set(f"Copied {label}.")
+
+    def copy_inventory_cell_value(self, row_id: str, column_id: str) -> None:
+        self._copy_inventory_text(self._inventory_tree_cell_text(row_id, column_id), "inventory cell")
+
+    def copy_inventory_row_values(self, row_id: str) -> None:
+        self._copy_inventory_text(self._inventory_tree_row_text(row_id), "inventory row")
+
     def _show_inventory_context_menu(self, event) -> str:
         if not hasattr(self, "inventory_tree"):
             return "break"
         row_id = self.inventory_tree.identify_row(event.y)
         if not row_id:
             return "break"
+        column_id = self.inventory_tree.identify_column(event.x)
         if row_id not in self.inventory_tree.selection():
             self.inventory_tree.selection_set(row_id)
             self.inventory_tree.focus(row_id)
         records = [self.inventory_tree_records.get(iid) for iid in self.inventory_tree.selection()]
         active_records = [record for record in records if record and str(record.get("status") or "").lower() == "active"]
-        if not active_records:
-            return "break"
         menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        menu.add_command(label="Copy Cell", command=lambda row=row_id, column=column_id: self.copy_inventory_cell_value(row, column))
+        menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_inventory_row_values(row))
         if len(active_records) == 1 and len(records) == 1:
+            menu.add_separator()
             menu.add_command(label="Mark Sold", command=self.mark_selected_inventory_sold)
         if records and all(self._inventory_record_can_move_to_company_sheet(record) for record in records):
             if len(active_records) == 1 and len(records) == 1:

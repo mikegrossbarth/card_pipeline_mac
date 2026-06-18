@@ -1197,6 +1197,45 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.inventory_search_var = FieldVar("curry green")
         self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["222"])
 
+    def test_inventory_table_values_can_be_copied_without_editing(self) -> None:
+        class FakeTree:
+            def item(self, _row_id, _option):
+                return ("2026-06-18", "Kevin Hambone", "Basketball", "12345678", "PSA", "Test Card")
+
+        class FakeStatus:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class InventoryDummy:
+            _inventory_tree_cell_text = app.CardPipelineApp._inventory_tree_cell_text
+            _inventory_tree_row_text = app.CardPipelineApp._inventory_tree_row_text
+            _copy_inventory_text = app.CardPipelineApp._copy_inventory_text
+            copy_inventory_cell_value = app.CardPipelineApp.copy_inventory_cell_value
+            copy_inventory_row_values = app.CardPipelineApp.copy_inventory_row_values
+
+            def __init__(self):
+                self.inventory_tree = FakeTree()
+                self.status_var = FakeStatus()
+                self.clipboard = ""
+
+            def clipboard_clear(self):
+                self.clipboard = ""
+
+            def clipboard_append(self, text):
+                self.clipboard = text
+
+        dummy = InventoryDummy()
+        dummy.copy_inventory_cell_value("row-1", "#4")
+        self.assertEqual(dummy.clipboard, "12345678")
+        self.assertEqual(dummy.status_var.value, "Copied inventory cell.")
+
+        dummy.copy_inventory_row_values("row-1")
+        self.assertEqual(dummy.clipboard, "2026-06-18\tKevin Hambone\tBasketball\t12345678\tPSA\tTest Card")
+        self.assertEqual(dummy.status_var.value, "Copied inventory row.")
+
     def test_filtered_inventory_refresh_only_enriches_visible_rows(self) -> None:
         class FieldVar:
             def __init__(self, value=""):

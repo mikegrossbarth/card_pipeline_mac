@@ -40,6 +40,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - Changing a sheet's assigned person retargets existing inventory rows from that source sheet to the new person and rebuilds their inventory keys, so reconcile does not duplicate the same cert/source under multiple owners.
 - Inventory shows the filtered card count, purchase-price total, and inventory value total in the upper-right header, with vertical/horizontal scrollbars on the inventory table.
 - Inventory includes a `Search Cert/Card` filter above the table for quickly narrowing hundreds of rows by cert number or card title text.
+- Inventory rows support right-click `Copy Cell` and `Copy Row`; copy actions never edit ledger data.
 - Active inventory cards with a real Best Company can be moved to company sheets from the Inventory table right-click menu; `NOBODY TAKES` rows do not show the move option. The move runs assignment recommendations, writes company/profit rows, and marks those inventory records as `Company Sheet`.
 - Inventory cards can be sold from the right-click menu with `Mark Sold`; one app-styled modal captures sale price and optional company/buyer. Blank company/buyer records the sale under that person's `General Sold` sheet.
 - Profit rows can be refunded individually from the `Profit` tab. Refunds remove the sold-card profit/company-sheet row and return that card to active inventory.
