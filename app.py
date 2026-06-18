@@ -1172,6 +1172,9 @@ class CardPipelineApp(tk.Tk):
         normalized["grader"] = str(normalized.get("grader") or "").strip()
         normalized["card_title"] = str(normalized.get("card_title") or "").strip()
         normalized["purchase_price"] = self._money_value(normalized.get("purchase_price"))
+        normalized["card_ladder_value"] = self._money_value(normalized.get("card_ladder_value"))
+        normalized["card_ladder_comps_average"] = self._money_value(normalized.get("card_ladder_comps_average") or normalized.get("comps"))
+        normalized["cy_value"] = self._money_value(normalized.get("cy_value") or normalized.get("cy_estimate"))
         normalized["inventory_value"] = self._money_value(normalized.get("inventory_value") or normalized.get("value") or normalized.get("sale_price") or normalized.get("estimated_payout"))
         normalized["best_company"] = str(normalized.get("best_company") or normalized.get("company") or "").strip()
         normalized["estimated_payout"] = self._money_value(normalized.get("estimated_payout") or normalized.get("payout"))
@@ -1194,6 +1197,9 @@ class CardPipelineApp(tk.Tk):
                 "grader": row.grader,
                 "card_title": row.card_title,
                 "purchase_price": row.existing_value,
+                "card_ladder_value": row.card_ladder_value,
+                "card_ladder_comps_average": row.card_ladder_comps_average,
+                "cy_value": row.cy_value,
                 "inventory_value": row.card_ladder_comps_average or row.card_ladder_value or row.cy_value,
                 "best_company": row.best_company,
                 "estimated_payout": row.estimated_payout,
@@ -1333,6 +1339,9 @@ class CardPipelineApp(tk.Tk):
                                 "grader": row.get("grader") or "",
                                 "card_title": card_title,
                                 "purchase_price": row.get("purchase_price"),
+                                "card_ladder_value": row.get("card_ladder_value"),
+                                "card_ladder_comps_average": row.get("card_ladder_comps_average"),
+                                "cy_value": row.get("cy_value"),
                                 "inventory_value": row.get("card_ladder_comps_average") or row.get("card_ladder_value") or row.get("cy_value"),
                                 "best_company": row.get("best_company") or "",
                                 "estimated_payout": row.get("estimated_payout"),
@@ -1360,15 +1369,22 @@ class CardPipelineApp(tk.Tk):
         return added, len(records)
 
     def _inventory_workbook_row(self, record: dict[str, object], excel_row: int) -> WorkbookRow:
-        value = self._money_value(record.get("inventory_value"))
+        inventory_value = self._money_value(record.get("inventory_value"))
+        card_ladder_value = self._money_value(record.get("card_ladder_value"))
+        comps_average = self._money_value(record.get("card_ladder_comps_average"))
+        cy_value = self._money_value(record.get("cy_value"))
+        if card_ladder_value is None and comps_average is None and cy_value is None:
+            card_ladder_value = inventory_value
+            comps_average = inventory_value
         return WorkbookRow(
             excel_row=excel_row,
             cert_number=str(record.get("cert_number") or ""),
             grader=str(record.get("grader") or ""),
             card_title=str(record.get("card_title") or ""),
             existing_value=self._money_value(record.get("purchase_price")),
-            card_ladder_value=value,
-            card_ladder_comps_average=value,
+            card_ladder_value=card_ladder_value,
+            card_ladder_comps_average=comps_average,
+            cy_value=cy_value,
             best_company=str(record.get("best_company") or ""),
             estimated_payout=self._money_value(record.get("estimated_payout")),
             company_pile=True,
@@ -1376,8 +1392,44 @@ class CardPipelineApp(tk.Tk):
             notes=str(record.get("notes") or "Moved from inventory"),
         )
 
-    def _enrich_inventory_record_assignment(self, record: dict[str, object], force: bool = False) -> dict[str, object]:
+    def _inventory_source_sheet_path(self, source_sheet: str) -> Path | None:
+        name = Path(str(source_sheet or "")).name
+        if not name:
+            return None
+        for directory in (RECEIVED_SHEETS_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR):
+            path = directory / name
+            if path.exists():
+                return path
+        return None
+
+    def _hydrate_inventory_record_source_values(self, record: dict[str, object]) -> dict[str, object]:
         normalized = self._normalize_inventory_record(record)
+        if (
+            normalized.get("card_ladder_value") is not None
+            and normalized.get("card_ladder_comps_average") is not None
+            and normalized.get("cy_value") is not None
+        ):
+            return normalized
+        cert = scan_to_cert(normalized.get("cert_number"))
+        path = self._inventory_source_sheet_path(str(normalized.get("source_sheet") or ""))
+        if not cert or path is None:
+            return normalized
+        try:
+            rows = read_simple_spreadsheet(path)
+        except Exception:
+            return normalized
+        for row in rows:
+            if scan_to_cert(row.get("cert_number")) != cert:
+                continue
+            for source_field in ("card_ladder_value", "card_ladder_comps_average", "cy_value"):
+                if normalized.get(source_field) is None:
+                    normalized[source_field] = self._money_value(row.get(source_field))
+            return self._normalize_inventory_record(normalized)
+        return normalized
+
+    def _enrich_inventory_record_assignment(self, record: dict[str, object], force: bool = False) -> dict[str, object]:
+        hydrator = getattr(self, "_hydrate_inventory_record_source_values", None)
+        normalized = hydrator(record) if callable(hydrator) else self._normalize_inventory_record(record)
         if not force and normalized.get("best_company") and normalized.get("estimated_payout") is not None:
             return normalized
         try:
@@ -1388,9 +1440,11 @@ class CardPipelineApp(tk.Tk):
         if recommendation.payout is None:
             normalized["best_company"] = normalized.get("best_company") or NO_COMPANY_TAKES_LABEL
             normalized["estimated_payout"] = None
+            normalized["inventory_value"] = getattr(recommendation, "source_value", None) or assignment_engine.assignment_value(row)
             return normalized
         normalized["best_company"] = recommendation.company
         normalized["estimated_payout"] = recommendation.payout
+        normalized["inventory_value"] = getattr(recommendation, "source_value", None) or assignment_engine.assignment_value(row)
         return normalized
 
     def _mark_inventory_records_moved_to_company(self, moved_keys: set[str]) -> None:
@@ -2074,6 +2128,9 @@ class CardPipelineApp(tk.Tk):
                             "grader": normalized.get("grader") or "",
                             "card_title": normalized.get("card_title") or "",
                             "purchase_price": normalized.get("purchase_price"),
+                            "card_ladder_value": normalized.get("card_ladder_value"),
+                            "card_ladder_comps_average": normalized.get("card_ladder_comps_average") or normalized.get("comps"),
+                            "cy_value": normalized.get("cy_value") or normalized.get("cy_estimate"),
                             "inventory_value": normalized.get("sale_price") or normalized.get("card_ladder_value") or normalized.get("comps") or normalized.get("cy_estimate"),
                             "source_sheet": normalized.get("source_sheet") or "",
                             "source": normalized.get("source") or "",

@@ -36,6 +36,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - `Inventory` fast-loads the saved ledger on app open. `Reconcile Received` backfills active inventory from received-marked sheet rows that are not already present in company sheets. This is needed for sheets received before inventory capture existed.
 - Inventory reconcile skips orphan/deleted sheet files that no longer have an assigned-person Home marker, so deleted sheets are not re-backfilled as `Unassigned`.
 - `Inventory` displays and exports `Best Company` and `Payout`; table export uses only the current filtered rows, and the Inventory `Refresh` button enriches only rows visible under the current person/sport/search/price/status filters.
+- Inventory preserves separate `Comps`, `Card Ladder`, and `CY` values internally; the visible `Value` updates to the source value used by the winning best-company recommendation, so Card Ladder-only companies like Fanatics are not forced to use comps.
 - New or reconciled inventory rows recalculate stale `NOBODY TAKES` assignment fields for the assigned person before saving, so person-specific payout rules apply in Inventory.
 - Changing a sheet's assigned person retargets existing inventory rows from that source sheet to the new person and rebuilds their inventory keys, so reconcile does not duplicate the same cert/source under multiple owners.
 - Inventory shows the filtered card count, purchase-price total, and inventory value total in the upper-right header, with vertical/horizontal scrollbars on the inventory table.

@@ -1307,7 +1307,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_inventory_record_assignment_enrichment_adds_company_and_payout(self) -> None:
         class FakeAssignment:
             def recommend(self, row, person=""):
-                return types.SimpleNamespace(company="Arena Club", payout=95)
+                self.last_row = row
+                return types.SimpleNamespace(company="Arena Club", payout=95, source_value=150)
 
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -1326,10 +1327,85 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 "source_sheet": "Lot.xlsx",
                 "purchase_price": 40,
                 "inventory_value": 100,
+                "card_ladder_value": 150,
+                "card_ladder_comps_average": 100,
+                "cy_value": 90,
             }
         )
         self.assertEqual(record["best_company"], "Arena Club")
         self.assertEqual(record["estimated_payout"], 95)
+        self.assertEqual(record["inventory_value"], 150)
+        self.assertEqual(record["card_ladder_value"], 150)
+        self.assertEqual(record["card_ladder_comps_average"], 100)
+        self.assertEqual(dummy.assignment_engine.last_row.card_ladder_value, 150)
+        self.assertEqual(dummy.assignment_engine.last_row.card_ladder_comps_average, 100)
+
+    def test_inventory_refresh_hydrates_source_values_for_card_ladder_company(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
+            _inventory_source_sheet_path = app.CardPipelineApp._inventory_source_sheet_path
+            _hydrate_inventory_record_source_values = app.CardPipelineApp._hydrate_inventory_record_source_values
+            _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            received_dir.mkdir()
+            source = received_dir / "Lot.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder Value", "Comps"])
+            sheet.append(["87378266", "PSA", "2023 Panini Phoenix Playing With Fire Bryce Young PSA 10", 20, 44, 32])
+            workbook.save(source)
+
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            dummy = InventoryDummy()
+            dummy.assignment_engine = assignment_engine.AssignmentEngine([
+                assignment_engine.AssignmentCompany(
+                    "Arena Club",
+                    assignment_engine.CompanyRules(accept_all=True),
+                    [assignment_engine.PayoutTier(0, 500, 1.0)],
+                    value_source="comps",
+                ),
+                assignment_engine.AssignmentCompany(
+                    "Fanatics",
+                    assignment_engine.CompanyRules(accept_all=True),
+                    [assignment_engine.PayoutTier(0, 500, 0.95)],
+                    value_source="card_ladder",
+                ),
+            ])
+            try:
+                record = dummy._enrich_inventory_record_assignment(
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "cert_number": "87378266",
+                        "grader": "PSA",
+                        "card_title": "2023 Panini Phoenix Playing With Fire Bryce Young PSA 10",
+                        "purchase_price": 20,
+                        "inventory_value": 32,
+                        "source_sheet": "Lot.xlsx",
+                        "status": "Active",
+                    },
+                    force=True,
+                )
+
+                self.assertEqual(record["best_company"], "Fanatics")
+                self.assertEqual(record["estimated_payout"], 41.8)
+                self.assertEqual(record["inventory_value"], 44)
+                self.assertEqual(record["card_ladder_value"], 44)
+                self.assertEqual(record["card_ladder_comps_average"], 32)
+            finally:
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.WORKING_SHEETS_DIR = old_working
+                app.INCOMING_SHEETS_DIR = old_incoming
 
     def test_add_inventory_records_recalculates_stale_nobody_takes_assignment(self) -> None:
         class FakeAssignment:
