@@ -444,6 +444,7 @@ class CardPipelineApp(tk.Tk):
         self.inventory_metric_var = tk.StringVar(value="")
         self.inventory_person_var = tk.StringVar()
         self.inventory_sport_var = tk.StringVar()
+        self.inventory_search_var = tk.StringVar()
         self.inventory_min_var = tk.StringVar()
         self.inventory_max_var = tk.StringVar()
         self.inventory_active_only_var = tk.BooleanVar(value=True)
@@ -1013,13 +1014,15 @@ class CardPipelineApp(tk.Tk):
         ttk.Checkbutton(controls, text="Active only", variable=self.inventory_active_only_var, command=self.refresh_inventory_tab, style="Panel.TCheckbutton").grid(row=0, column=9, sticky="w", padx=(12, 0))
         controls.columnconfigure(10, weight=1)
         ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=10, sticky="e", padx=(18, 0))
+        ttk.Label(controls, text="Search Cert/Card", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
         action_row = ttk.Frame(controls, style="Panel.TFrame")
-        action_row.grid(row=1, column=0, columnspan=11, sticky="w", pady=(10, 0))
+        action_row.grid(row=2, column=0, columnspan=11, sticky="w", pady=(10, 0))
         ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True), style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Reconcile Received", command=self.reconcile_received_inventory, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=11, sticky="w", pady=(8, 0))
-        for var in (self.inventory_sport_var, self.inventory_min_var, self.inventory_max_var):
+        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
+        for var in (self.inventory_sport_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var):
             var.trace_add("write", lambda *_args: self.refresh_inventory_tab())
 
         self.inventory_tree = self._build_home_tree(
@@ -1685,6 +1688,7 @@ class CardPipelineApp(tk.Tk):
     def _filtered_inventory_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         person = self.inventory_person_var.get().strip().lower() if hasattr(self, "inventory_person_var") else ""
         sport = self.inventory_sport_var.get().strip().lower() if hasattr(self, "inventory_sport_var") else ""
+        search = self.inventory_search_var.get().strip().lower() if hasattr(self, "inventory_search_var") else ""
         min_value = self._money_value(self.inventory_min_var.get()) if hasattr(self, "inventory_min_var") else None
         max_value = self._money_value(self.inventory_max_var.get()) if hasattr(self, "inventory_max_var") else None
         active_only = bool(self.inventory_active_only_var.get()) if hasattr(self, "inventory_active_only_var") else True
@@ -1696,6 +1700,10 @@ class CardPipelineApp(tk.Tk):
                 continue
             if sport and sport not in str(record.get("sport") or "").lower():
                 continue
+            if search:
+                searchable = f"{record.get('cert_number') or ''} {record.get('card_title') or ''}".lower()
+                if any(part not in searchable for part in search.split()):
+                    continue
             value = self._money_value(record.get("inventory_value") or record.get("purchase_price")) or 0.0
             if min_value is not None and value < min_value:
                 continue

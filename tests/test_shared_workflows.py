@@ -1167,6 +1167,36 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_inventory_filter_searches_cert_and_card_title(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+
+        dummy = InventoryDummy()
+        dummy.inventory_person_var = FieldVar("")
+        dummy.inventory_sport_var = FieldVar("")
+        dummy.inventory_min_var = FieldVar("")
+        dummy.inventory_max_var = FieldVar("")
+        dummy.inventory_active_only_var = FieldVar(True)
+        rows = [
+            {"status": "Active", "cert_number": "151740304", "card_title": "2024 Prizm Victor Wembanyama Silver PSA 10", "inventory_value": 100},
+            {"status": "Active", "cert_number": "222", "card_title": "2019 Panini Mosaic Stephen Curry Green PSA 10", "inventory_value": 90},
+            {"status": "Sold", "cert_number": "333", "card_title": "Hidden Sold Card", "inventory_value": 80},
+        ]
+
+        dummy.inventory_search_var = FieldVar("174030")
+        self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["151740304"])
+
+        dummy.inventory_search_var = FieldVar("curry green")
+        self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["222"])
+
     def test_inventory_record_assignment_enrichment_adds_company_and_payout(self) -> None:
         class FakeAssignment:
             def recommend(self, row, person=""):
