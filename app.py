@@ -1017,7 +1017,6 @@ class CardPipelineApp(tk.Tk):
         action_row.grid(row=1, column=0, columnspan=11, sticky="w", pady=(10, 0))
         ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True), style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(action_row, text="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Reconcile Received", command=self.reconcile_received_inventory, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Mark Sold", command=self.mark_selected_inventory_sold, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=11, sticky="w", pady=(8, 0))
@@ -1046,6 +1045,8 @@ class CardPipelineApp(tk.Tk):
             scrollbars=True,
         )
         self.inventory_tree.configure(selectmode="extended")
+        self.inventory_tree.bind("<Button-3>", self._show_inventory_context_menu)
+        self.inventory_tree.bind("<Button-2>", self._show_inventory_context_menu)
         self.refresh_inventory_tab()
 
     def _build_profit_tab(self) -> None:
@@ -1523,6 +1524,23 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(f"Moved {added} inventory card(s) to company sheets.{suffix}")
         if errors:
             messagebox.showwarning("Inventory move completed with warnings", "\n".join([f"Moved rows: {added}", *errors[:8]]))
+
+    def _show_inventory_context_menu(self, event) -> str:
+        if not hasattr(self, "inventory_tree"):
+            return "break"
+        row_id = self.inventory_tree.identify_row(event.y)
+        if not row_id:
+            return "break"
+        if row_id not in self.inventory_tree.selection():
+            self.inventory_tree.selection_set(row_id)
+            self.inventory_tree.focus(row_id)
+        menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        menu.add_command(label="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
 
     def refresh_inventory_tab(self, reconcile: bool = False, enrich: bool = False) -> None:
         if reconcile and not getattr(self, "_inventory_reconcile_running", False):
