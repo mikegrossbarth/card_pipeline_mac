@@ -1470,13 +1470,13 @@ class CardPipelineApp(tk.Tk):
             return
         selected = list(self.inventory_tree.selection())
         records = [self.inventory_tree_records.get(iid) for iid in selected if self.inventory_tree_records.get(iid)]
-        active_records = [record for record in records if str(record.get("status") or "").lower() == "active"]
-        if not active_records:
-            messagebox.showinfo("Choose inventory", "Select one or more active inventory rows to move.")
+        movable_records = [record for record in records if self._inventory_record_can_move_to_company_sheet(record)]
+        if not movable_records:
+            messagebox.showinfo("Choose inventory", "Select one or more active inventory rows with an assignable best company.")
             return
         confirmed = messagebox.askyesno(
             "Move inventory card(s)?",
-            f"Move {len(active_records)} active inventory card(s) to company sheets?",
+            f"Move {len(movable_records)} active inventory card(s) to company sheets?",
         )
         if not confirmed:
             return
@@ -1486,7 +1486,7 @@ class CardPipelineApp(tk.Tk):
         people_by_cert: dict[str, str] = {}
         keys_by_cert: dict[str, str] = {}
         unassigned = 0
-        for index, record in enumerate(active_records, start=1):
+        for index, record in enumerate(movable_records, start=1):
             row = self._inventory_workbook_row(record, index)
             recommendation = self.assignment_engine.recommend(row, person=str(record.get("assigned_person") or ""))
             if recommendation.payout is None:
@@ -1526,6 +1526,12 @@ class CardPipelineApp(tk.Tk):
         if errors:
             messagebox.showwarning("Inventory move completed with warnings", "\n".join([f"Moved rows: {added}", *errors[:8]]))
 
+    def _inventory_record_can_move_to_company_sheet(self, record: dict[str, object] | None) -> bool:
+        if not record or str(record.get("status") or "").lower() != "active":
+            return False
+        best_company = str(record.get("best_company") or "").strip()
+        return bool(best_company) and best_company.upper() != NO_COMPANY_TAKES_LABEL
+
     def _show_inventory_context_menu(self, event) -> str:
         if not hasattr(self, "inventory_tree"):
             return "break"
@@ -1535,6 +1541,9 @@ class CardPipelineApp(tk.Tk):
         if row_id not in self.inventory_tree.selection():
             self.inventory_tree.selection_set(row_id)
             self.inventory_tree.focus(row_id)
+        records = [self.inventory_tree_records.get(iid) for iid in self.inventory_tree.selection()]
+        if not records or any(not self._inventory_record_can_move_to_company_sheet(record) for record in records):
+            return "break"
         menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
         menu.add_command(label="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets)
         try:

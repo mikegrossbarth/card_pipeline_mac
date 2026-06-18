@@ -1430,6 +1430,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
             _mark_inventory_records_moved_to_company = app.CardPipelineApp._mark_inventory_records_moved_to_company
+            _inventory_record_can_move_to_company_sheet = app.CardPipelineApp._inventory_record_can_move_to_company_sheet
             move_selected_inventory_to_company_sheets = app.CardPipelineApp.move_selected_inventory_to_company_sheets
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
@@ -1463,6 +1464,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                     "source_sheet": "Quick Load.xlsx",
                     "purchase_price": 40,
                     "inventory_value": 100,
+                    "best_company": "Arena Club",
+                    "estimated_payout": 90,
                     "status": "Active",
                 }
             )
@@ -1485,6 +1488,22 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.COMPANY_SHEETS_DIR = old_company
                 app.PROFIT_LEDGER_PATH = old_profit
                 app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_nobody_takes_inventory_record_cannot_move_to_company_sheet(self) -> None:
+        class InventoryDummy:
+            _inventory_record_can_move_to_company_sheet = app.CardPipelineApp._inventory_record_can_move_to_company_sheet
+
+        dummy = InventoryDummy()
+        self.assertFalse(
+            dummy._inventory_record_can_move_to_company_sheet(
+                {"status": "Active", "best_company": app.NO_COMPANY_TAKES_LABEL, "estimated_payout": None}
+            )
+        )
+        self.assertTrue(
+            dummy._inventory_record_can_move_to_company_sheet(
+                {"status": "Active", "best_company": "Arena Club", "estimated_payout": 95}
+            )
+        )
 
     def test_mark_inventory_record_sold_writes_profit_and_marks_sold(self) -> None:
         class SoldDummy:
