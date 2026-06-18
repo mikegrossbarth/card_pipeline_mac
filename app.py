@@ -15,7 +15,7 @@ import urllib.request
 import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from openpyxl import Workbook, load_workbook
 
@@ -1018,7 +1018,6 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True), style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Reconcile Received", command=self.reconcile_received_inventory, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(action_row, text="Mark Sold", command=self.mark_selected_inventory_sold, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=11, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_min_var, self.inventory_max_var):
             var.trace_add("write", lambda *_args: self.refresh_inventory_tab())
@@ -1426,21 +1425,30 @@ class CardPipelineApp(tk.Tk):
             self._save_inventory_ledger(ledger)
         return changed
 
+    def _general_sold_sheet_name(self, person: str) -> str:
+        return f"{str(person or '').strip() or 'Unassigned'} General Sold"
+
     def _inventory_sale_profit_record(self, record: dict[str, object], company: str, sale_price: float) -> dict[str, object]:
         normalized = self._normalize_inventory_record(record)
+        assigned_person = str(normalized.get("assigned_person") or "Unassigned").strip() or "Unassigned"
+        company_name = str(company or "").strip()
+        source_sheet = normalized.get("source_sheet") or "Inventory"
+        if not company_name:
+            company_name = "General Sold"
+            source_sheet = self._general_sold_sheet_name(assigned_person)
         return self._normalize_profit_record(
             {
                 "date_added": datetime.now().strftime("%Y-%m-%d"),
-                "company": company,
+                "company": company_name,
                 "weekly_sheet_name": "Inventory Sale",
-                "source_sheet": normalized.get("source_sheet") or "Inventory",
+                "source_sheet": source_sheet,
                 "source": normalized.get("source") or "Inventory",
                 "cert_number": normalized.get("cert_number") or "",
                 "grader": normalized.get("grader") or "",
                 "card_title": normalized.get("card_title") or "",
                 "purchase_price": normalized.get("purchase_price"),
                 "sale_price": sale_price,
-                "assigned_person": normalized.get("assigned_person") or "Unassigned",
+                "assigned_person": assigned_person,
                 "status": "Sold from inventory",
                 "notes": normalized.get("notes") or "",
             }
@@ -1450,11 +1458,65 @@ class CardPipelineApp(tk.Tk):
         normalized = self._normalize_inventory_record(record)
         if str(normalized.get("status") or "").lower() != "active":
             return False
-        company = str(company or "").strip() or str(normalized.get("best_company") or "").strip() or "Inventory Sale"
+        company = str(company or "").strip()
+        sold_company = company or "General Sold"
         profit_record = self._inventory_sale_profit_record(normalized, company, sale_price)
         added = self.record_profit_sales([profit_record])
-        changed = self._mark_inventory_record_sold(str(normalized.get("inventory_key") or ""), company, sale_price)
+        changed = self._mark_inventory_record_sold(str(normalized.get("inventory_key") or ""), sold_company, sale_price)
         return bool(added or changed)
+
+    def _inventory_sale_dialog(self, record: dict[str, object]) -> tuple[str, float] | None:
+        normalized = self._normalize_inventory_record(record)
+        default_sale = self._money_value(normalized.get("estimated_payout")) or self._money_value(normalized.get("inventory_value")) or 0.0
+        company_var = tk.StringVar(value="")
+        sale_var = tk.StringVar(value=f"{default_sale:.2f}" if default_sale else "")
+        result: dict[str, object] = {}
+
+        popup = tk.Toplevel(self)
+        popup.title("Mark Inventory Sold")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.grab_set()
+        popup.resizable(False, False)
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Mark Sold", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
+        ttk.Label(frame, text=str(normalized.get("card_title") or normalized.get("cert_number") or "Inventory card"), style="Muted.TLabel", wraplength=420).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        ttk.Label(frame, text="Company / buyer", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
+        ttk.Entry(frame, textvariable=company_var, width=34).grid(row=2, column=1, sticky="ew", pady=(0, 10))
+        ttk.Label(frame, text="Sale price", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=(0, 14))
+        sale_entry = ttk.Entry(frame, textvariable=sale_var, width=34)
+        sale_entry.grid(row=3, column=1, sticky="ew", pady=(0, 14))
+        status_var = tk.StringVar(value="Leave company / buyer blank for that person's General Sold sheet.")
+        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 14))
+
+        def submit() -> None:
+            sale_price = self._money_value(sale_var.get())
+            if sale_price is None or sale_price < 0:
+                status_var.set("Enter a valid sale price.")
+                sale_entry.focus_set()
+                return
+            result["company"] = company_var.get().strip()
+            result["sale_price"] = float(sale_price)
+            popup.destroy()
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=5, column=0, columnspan=2, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(buttons, text="Mark Sold", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
+        frame.columnconfigure(1, weight=1)
+        popup.bind("<Return>", lambda _event: submit())
+        popup.bind("<Escape>", lambda _event: popup.destroy())
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        sale_entry.focus_set()
+        self.wait_window(popup)
+        if "sale_price" not in result:
+            return None
+        return str(result.get("company") or ""), float(result["sale_price"])
 
     def mark_selected_inventory_sold(self) -> None:
         if not hasattr(self, "inventory_tree"):
@@ -1468,29 +1530,10 @@ class CardPipelineApp(tk.Tk):
         if str(record.get("status") or "").lower() != "active":
             messagebox.showinfo("Active card required", "Only active inventory cards can be marked sold.")
             return
-        default_company = str(record.get("best_company") or "").strip()
-        if default_company.upper() == NO_COMPANY_TAKES_LABEL:
-            default_company = ""
-        company = simpledialog.askstring(
-            "Sold Company",
-            "Company / buyer",
-            initialvalue=default_company or "Inventory Sale",
-            parent=self,
-        )
-        if company is None:
+        sale = self._inventory_sale_dialog(record)
+        if sale is None:
             return
-        default_sale = self._money_value(record.get("estimated_payout")) or self._money_value(record.get("inventory_value")) or 0.0
-        sale_price = simpledialog.askfloat(
-            "Sale Price",
-            "Sale price",
-            initialvalue=default_sale,
-            minvalue=0.0,
-            parent=self,
-        )
-        if sale_price is None:
-            return
-        if not messagebox.askyesno("Mark sold?", f"Mark this inventory card sold for {format_money(sale_price)}?", parent=self):
-            return
+        company, sale_price = sale
         if self.mark_inventory_record_sold(record, company, float(sale_price)):
             self.refresh_inventory_tab()
             self.refresh_profit_tab()
@@ -1573,10 +1616,18 @@ class CardPipelineApp(tk.Tk):
             self.inventory_tree.selection_set(row_id)
             self.inventory_tree.focus(row_id)
         records = [self.inventory_tree_records.get(iid) for iid in self.inventory_tree.selection()]
-        if not records or any(not self._inventory_record_can_move_to_company_sheet(record) for record in records):
+        active_records = [record for record in records if record and str(record.get("status") or "").lower() == "active"]
+        if not active_records:
             return "break"
         menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
-        menu.add_command(label="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets)
+        if len(active_records) == 1 and len(records) == 1:
+            menu.add_command(label="Mark Sold", command=self.mark_selected_inventory_sold)
+        if records and all(self._inventory_record_can_move_to_company_sheet(record) for record in records):
+            if len(active_records) == 1 and len(records) == 1:
+                menu.add_separator()
+            menu.add_command(label="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets)
+        if menu.index("end") is None:
+            return "break"
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:

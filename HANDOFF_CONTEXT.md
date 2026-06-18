@@ -40,7 +40,7 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 - Changing a sheet's assigned person retargets existing inventory rows from that source sheet to the new person and rebuilds their inventory keys, so reconcile does not duplicate the same cert/source under multiple owners.
 - Inventory shows the filtered card count, purchase-price total, and inventory value total in the upper-right header, with vertical/horizontal scrollbars on the inventory table.
 - Active inventory cards with a real Best Company can be moved to company sheets from the Inventory table right-click menu; `NOBODY TAKES` rows do not show the move option. The move runs assignment recommendations, writes company/profit rows, and marks those inventory records as `Company Sheet`.
-- Selected active inventory cards can be sold directly with `Mark Sold`; this prompts for company/buyer and sale price, writes the sold card to `profit_ledger.json`, and marks the inventory row `Sold`.
+- Inventory cards can be sold from the right-click menu with `Mark Sold`; one app-styled modal captures sale price and optional company/buyer. Blank company/buyer records the sale under that person's `General Sold` sheet.
 - Profit rows can be refunded individually from the `Profit` tab. Refunds remove the sold-card profit/company-sheet row and return that card to active inventory.
 - `Payouts/Tabs` has `Delete Person`; it removes a person's name from sheet markers, inventory ownership, and profit ownership while leaving cards/sheets/ledger rows intact.
 - Create now has `Manual Entry` mode. Use the `+ Add row` line in the Create table, then double-click cells to edit. The extra toolbar button was removed.

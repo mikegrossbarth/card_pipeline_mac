@@ -1556,6 +1556,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
+            _general_sold_sheet_name = app.CardPipelineApp._general_sold_sheet_name
             mark_inventory_record_sold = app.CardPipelineApp.mark_inventory_record_sold
             record_profit_sales = app.CardPipelineApp.record_profit_sales
             refresh_profit_tab = lambda self: None
@@ -1600,6 +1601,32 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_profit
                 app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_blank_inventory_sale_company_uses_person_general_sold_sheet(self) -> None:
+        class SoldDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _general_sold_sheet_name = app.CardPipelineApp._general_sold_sheet_name
+            _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
+
+        dummy = SoldDummy()
+        record = dummy._inventory_sale_profit_record(
+            {
+                "assigned_person": "Kevin Hambone",
+                "cert_number": "123",
+                "card_title": "Test Card",
+                "source_sheet": "Original.xlsx",
+                "purchase_price": 40,
+            },
+            "",
+            95,
+        )
+        self.assertEqual(record["company"], "General Sold")
+        self.assertEqual(record["source_sheet"], "Kevin Hambone General Sold")
+        self.assertEqual(record["assigned_person"], "Kevin Hambone")
 
     def test_refund_profit_record_returns_card_to_inventory_and_removes_company_row(self) -> None:
         class RefundDummy:
