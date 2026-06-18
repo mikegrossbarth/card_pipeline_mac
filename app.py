@@ -1018,7 +1018,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
         action_row = ttk.Frame(controls, style="Panel.TFrame")
         action_row.grid(row=2, column=0, columnspan=11, sticky="w", pady=(10, 0))
-        ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True), style="Soft.TButton").pack(side=tk.LEFT)
+        ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(enrich=True, filtered_only=True), style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Reconcile Received", command=self.reconcile_received_inventory, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
@@ -1376,9 +1376,9 @@ class CardPipelineApp(tk.Tk):
             notes=str(record.get("notes") or "Moved from inventory"),
         )
 
-    def _enrich_inventory_record_assignment(self, record: dict[str, object]) -> dict[str, object]:
+    def _enrich_inventory_record_assignment(self, record: dict[str, object], force: bool = False) -> dict[str, object]:
         normalized = self._normalize_inventory_record(record)
-        if normalized.get("best_company") and normalized.get("estimated_payout") is not None:
+        if not force and normalized.get("best_company") and normalized.get("estimated_payout") is not None:
             return normalized
         try:
             row = self._inventory_workbook_row(normalized, 1)
@@ -1637,7 +1637,7 @@ class CardPipelineApp(tk.Tk):
             menu.grab_release()
         return "break"
 
-    def refresh_inventory_tab(self, reconcile: bool = False, enrich: bool = False) -> None:
+    def refresh_inventory_tab(self, reconcile: bool = False, enrich: bool = False, filtered_only: bool = False) -> None:
         if reconcile and not getattr(self, "_inventory_reconcile_running", False):
             self._inventory_reconcile_running = True
             try:
@@ -1645,7 +1645,14 @@ class CardPipelineApp(tk.Tk):
             finally:
                 self._inventory_reconcile_running = False
         stored_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-        self.inventory_rows = [self._enrich_inventory_record_assignment(record) for record in stored_rows] if enrich else stored_rows
+        if enrich and filtered_only:
+            filtered_keys = {str(record.get("inventory_key") or "") for record in self._filtered_inventory_records(stored_rows)}
+            self.inventory_rows = [
+                self._enrich_inventory_record_assignment(record, force=True) if str(record.get("inventory_key") or "") in filtered_keys else record
+                for record in stored_rows
+            ]
+        else:
+            self.inventory_rows = [self._enrich_inventory_record_assignment(record) for record in stored_rows] if enrich else stored_rows
         if enrich and self.inventory_rows != stored_rows:
             self._save_inventory_ledger(self.inventory_rows)
         self.filtered_inventory_rows = self._filtered_inventory_records(self.inventory_rows)

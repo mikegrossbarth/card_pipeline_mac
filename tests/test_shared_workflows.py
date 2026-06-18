@@ -1197,6 +1197,74 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.inventory_search_var = FieldVar("curry green")
         self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["222"])
 
+    def test_filtered_inventory_refresh_only_enriches_visible_rows(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        class FakeTree:
+            def get_children(self):
+                return []
+
+            def delete(self, *_args):
+                return None
+
+            def insert(self, *_args, **_kwargs):
+                return "row"
+
+        class FakeAssignment:
+            def recommend(self, row, person=""):
+                return types.SimpleNamespace(company=f"{person} Club", payout=88)
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
+            _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+            refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
+            _refresh_person_combo_values = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            dummy.assignment_engine = FakeAssignment()
+            dummy.inventory_person_var = FieldVar("Kevin")
+            dummy.inventory_sport_var = FieldVar("")
+            dummy.inventory_search_var = FieldVar("")
+            dummy.inventory_min_var = FieldVar("")
+            dummy.inventory_max_var = FieldVar("")
+            dummy.inventory_active_only_var = FieldVar(True)
+            dummy.inventory_tree = FakeTree()
+            dummy.inventory_metric_var = FieldVar("")
+            dummy.inventory_status_var = FieldVar("")
+            try:
+                dummy._save_inventory_ledger([
+                    dummy._normalize_inventory_record({"assigned_person": "Kevin Hambone", "cert_number": "1", "source_sheet": "A.xlsx", "card_title": "Kevin Card", "best_company": "Old", "estimated_payout": 1}),
+                    dummy._normalize_inventory_record({"assigned_person": "Lucas", "cert_number": "2", "source_sheet": "B.xlsx", "card_title": "Lucas Card", "best_company": "Old", "estimated_payout": 1}),
+                ])
+
+                dummy.refresh_inventory_tab(enrich=True, filtered_only=True)
+
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                by_person = {record["assigned_person"]: record for record in ledger}
+                self.assertEqual(by_person["Kevin Hambone"]["best_company"], "Kevin Hambone Club")
+                self.assertEqual(by_person["Kevin Hambone"]["estimated_payout"], 88)
+                self.assertEqual(by_person["Lucas"]["best_company"], "Old")
+                self.assertEqual(by_person["Lucas"]["estimated_payout"], 1)
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_inventory_record_assignment_enrichment_adds_company_and_payout(self) -> None:
         class FakeAssignment:
             def recommend(self, row, person=""):
