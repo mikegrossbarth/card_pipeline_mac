@@ -17,7 +17,7 @@ For a click-by-click setup walkthrough for a brand-new Mac, start with [FIRST_RU
 5. Run:
 
 ```bash
-chmod +x install_dependencies.sh run_card_pipeline.sh "Run Card Pipeline.command" create_macos_app.sh
+chmod +x install_dependencies.sh run_card_pipeline.sh "Run Card Pipeline.command" create_macos_app.sh install_macos_shortcut.sh
 ./install_dependencies.sh
 ```
 
@@ -32,10 +32,10 @@ chmod +x install_dependencies.sh run_card_pipeline.sh "Run Card Pipeline.command
 You can also double-click `Run Card Pipeline.command` after the file has execute permission. To create a Finder-friendly launcher, run:
 
 ```bash
-./create_macos_app.sh
+./install_macos_shortcut.sh
 ```
 
-That creates `LUCAS.app` in the project folder. You can keep it there or copy it to your Desktop; it launches this project path and local `.venv`. If launch fails, check `~/Desktop/LUCAS-launch.log`.
+That creates `LUCAS.app` in the project folder and refreshes `~/Desktop/LUCAS.app`. It launches this project path and local `.venv`. If launch fails, check `~/Desktop/LUCAS-launch.log`.
 
 ## Local Configuration
 

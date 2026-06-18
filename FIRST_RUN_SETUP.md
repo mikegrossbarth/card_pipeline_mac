@@ -101,7 +101,7 @@ brew install python-tk
 Open Terminal in the project folder and run:
 
 ```bash
-chmod +x install_dependencies.sh run_card_pipeline.sh "Run Card Pipeline.command" create_macos_app.sh
+chmod +x install_dependencies.sh run_card_pipeline.sh "Run Card Pipeline.command" create_macos_app.sh install_macos_shortcut.sh
 ./install_dependencies.sh
 ```
 
@@ -162,10 +162,10 @@ Run Card Pipeline.command
 To create a Finder app launcher:
 
 ```bash
-./create_macos_app.sh
+./install_macos_shortcut.sh
 ```
 
-Then double-click `LUCAS.app`. You can keep it in the project folder or copy it to your Desktop; it launches this project path and local `.venv`. If launch fails, check `~/Desktop/LUCAS-launch.log`.
+Then double-click `~/Desktop/LUCAS.app`. It launches this project path and local `.venv`. If launch fails, check `~/Desktop/LUCAS-launch.log`.
 
 ## Step 7: Choose The Working Folder
 

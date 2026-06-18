@@ -8,10 +8,12 @@ APP_DIR="${APP_NAME}.app"
 MACOS_DIR="${APP_DIR}/Contents/MacOS"
 RESOURCES_DIR="${APP_DIR}/Contents/Resources"
 PROJECT_ROOT="$(pwd)"
+BUNDLE_SUFFIX="$(printf "%s" "$PROJECT_ROOT" | shasum | awk '{print substr($1, 1, 10)}')"
+BUNDLE_ID="com.cardpipeline.lucas.${BUNDLE_SUFFIX}"
 
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-cat > "${APP_DIR}/Contents/Info.plist" <<'PLIST'
+cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -19,7 +21,7 @@ cat > "${APP_DIR}/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key>
   <string>LUCAS</string>
   <key>CFBundleIdentifier</key>
-  <string>com.cardpipeline.lucas</string>
+  <string>${BUNDLE_ID}</string>
   <key>CFBundleName</key>
   <string>L.U.C.A.S</string>
   <key>CFBundleDisplayName</key>
@@ -63,4 +65,5 @@ LAUNCHER
 chmod +x "${MACOS_DIR}/LUCAS"
 
 echo "Created ${APP_DIR}."
+echo "Bundle ID: ${BUNDLE_ID}"
 echo "You can keep ${APP_DIR} here or copy it to your Desktop; it launches this project path and local .venv."
