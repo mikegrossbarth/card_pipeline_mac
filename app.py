@@ -2921,7 +2921,7 @@ class CardPipelineApp(tk.Tk):
     def _payout_sheet_items(self) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
         seller_names = self._seller_terms_seller_names()
-        realized_profit_totals = self._realized_profit_totals_by_person_sheet()
+        realized_profit_groups = self._realized_profit_groups_by_person_sheet()
         for stage in ("Incoming", "Received"):
             for name in self.home_sheet_paths.get(stage, {}):
                 key = self._home_sheet_key(stage, name)
@@ -2936,11 +2936,11 @@ class CardPipelineApp(tk.Tk):
                 person = str(marker.get("assigned_person") or "").strip()
                 person_key = person.lower()
                 is_seller_payout = bool(person_key and person_key in seller_names)
-                if is_seller_payout and stage != "Received":
+                if not is_seller_payout or stage != "Received":
                     continue
                 purchase_total = float(summary.get("purchase_total") or 0.0)
                 estimated_payout_total = float(summary.get("estimated_payout_total") or 0.0)
-                realized_profit_total = realized_profit_totals.get((person.lower(), Path(name).name.lower()), 0.0)
+                realized_profit_total = float(realized_profit_groups.get((person.lower(), Path(name).name.lower()), {}).get("profit") or 0.0)
                 payout_balance, payout_basis = self._active_payout_balance(
                     person,
                     purchase_total,
@@ -2966,18 +2966,88 @@ class CardPipelineApp(tk.Tk):
                         "status": status,
                     }
                 )
+        for (person_key, source_key), group in sorted(realized_profit_groups.items(), key=lambda pair: (pair[0][0], pair[0][1])):
+            if person_key in seller_names:
+                continue
+            realized_profit_total = float(group.get("profit") or 0.0)
+            if realized_profit_total <= 0:
+                continue
+            person = str(group.get("person") or "").strip() or "Unassigned"
+            source_sheet = str(group.get("source_sheet") or "").strip() or "Sold Cards"
+            key = self._sold_payout_key(person, source_sheet)
+            marker = self.home_sheet_markers.get(key, {})
+            paid = bool(marker.get("paid"))
+            payout_balance, payout_basis = self._active_payout_balance(
+                person,
+                float(group.get("purchase_total") or 0.0),
+                float(group.get("sale_total") or 0.0),
+                seller_names,
+                realized_profit_total=realized_profit_total,
+            )
+            items.append(
+                {
+                    "key": key,
+                    "stage": "Sold",
+                    "name": source_sheet,
+                    "person": person,
+                    "paid": paid,
+                    "row_count": int(group.get("row_count") or 0),
+                    "received_count": int(group.get("row_count") or 0),
+                    "purchase_total": float(group.get("purchase_total") or 0.0),
+                    "estimated_payout_total": float(group.get("sale_total") or 0.0),
+                    "estimated_profit": round(float(group.get("sale_total") or 0.0) - float(group.get("purchase_total") or 0.0), 2),
+                    "realized_profit_total": round(realized_profit_total, 2),
+                    "payout_balance": payout_balance,
+                    "payout_basis": payout_basis,
+                    "status": "Paid" if paid else "Sold",
+                }
+            )
         return items
 
     def _realized_profit_totals_by_person_sheet(self) -> dict[tuple[str, str], float]:
+        return {
+            key: float(group.get("profit") or 0.0)
+            for key, group in self._realized_profit_groups_by_person_sheet().items()
+        }
+
+    def _realized_profit_groups_by_person_sheet(self) -> dict[tuple[str, str], dict[str, object]]:
         totals: dict[tuple[str, str], float] = defaultdict(float)
+        groups: dict[tuple[str, str], dict[str, object]] = {}
         for record in self._enrich_profit_records_with_people(self._load_profit_ledger()):
-            person = str(record.get("assigned_person") or "").strip().lower()
-            source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+            person = str(record.get("assigned_person") or "").strip()
+            source_sheet = Path(str(record.get("source_sheet") or "")).name.strip()
             profit = self._money_value(record.get("profit"))
             if not person or not source_sheet or profit is None:
                 continue
-            totals[(person, source_sheet)] += profit
-        return dict(totals)
+            key = (person.lower(), source_sheet.lower())
+            group = groups.setdefault(
+                key,
+                {
+                    "person": person,
+                    "source_sheet": source_sheet,
+                    "row_count": 0,
+                    "purchase_total": 0.0,
+                    "sale_total": 0.0,
+                    "profit": 0.0,
+                },
+            )
+            purchase = self._money_value(record.get("purchase_price")) or 0.0
+            sale = self._money_value(record.get("sale_price")) or 0.0
+            group["row_count"] = int(group["row_count"]) + 1
+            group["purchase_total"] = float(group["purchase_total"]) + purchase
+            group["sale_total"] = float(group["sale_total"]) + sale
+            totals[key] += profit
+            group["profit"] = totals[key]
+        return groups
+
+    def _sold_payout_key(self, person: str, source_sheet: str) -> str:
+        return self._home_sheet_key("Sold", f"{str(person or '').strip()}|{Path(str(source_sheet or '')).name}")
+
+    def _split_sold_payout_name(self, name: str) -> tuple[str, str]:
+        if "|" not in name:
+            return "", name
+        person, source_sheet = name.split("|", 1)
+        return person, source_sheet
 
     def _seller_terms_seller_names(self) -> set[str]:
         return {
@@ -3449,8 +3519,15 @@ class CardPipelineApp(tk.Tk):
         kind, name = self._split_home_sheet_key(key)
         marker = self.home_sheet_markers.get(key, {})
         summary = self.home_sheet_summaries.get(key, {})
-        person = str(marker.get("assigned_person") or "").strip()
-        realized_profit_total = self._realized_profit_totals_by_person_sheet().get((person.lower(), Path(name).name.lower()), 0.0)
+        if kind == "Sold":
+            key_person, source_sheet = self._split_sold_payout_name(name)
+            person = str(marker.get("assigned_person") or key_person).strip()
+            display_name = source_sheet
+            realized_profit_total = self._realized_profit_totals_by_person_sheet().get((person.lower(), Path(source_sheet).name.lower()), 0.0)
+        else:
+            person = str(marker.get("assigned_person") or "").strip()
+            display_name = name
+            realized_profit_total = self._realized_profit_totals_by_person_sheet().get((person.lower(), Path(name).name.lower()), 0.0)
         balance, basis = self._active_payout_balance(
             person,
             float(summary.get("purchase_total") or 0.0),
@@ -3469,7 +3546,7 @@ class CardPipelineApp(tk.Tk):
 
         frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
         frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text=name, style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
+        ttk.Label(frame, text=display_name, style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
         ttk.Label(frame, text=f"{kind} | Balance: {format_money(balance)} | {basis}", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
         ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
