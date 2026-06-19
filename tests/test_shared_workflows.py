@@ -1034,6 +1034,70 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.SHEET_MARKERS_PATH = old_markers
 
+    def test_create_seller_assignment_follows_sheet_to_incoming_payouts(self) -> None:
+        class SellerSheetDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _load_sheet_markers = app.CardPipelineApp._load_sheet_markers
+            _save_sheet_markers = app.CardPipelineApp._save_sheet_markers
+            _delete_sheet_marker = app.CardPipelineApp._delete_sheet_marker
+            _marker_for_stage = app.CardPipelineApp._marker_for_stage
+            _sheet_path_for_stage = app.CardPipelineApp._sheet_path_for_stage
+            _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
+            _assign_sheet_to_seller = app.CardPipelineApp._assign_sheet_to_seller
+            _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
+            _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            incoming_dir = root / "INCOMING SHEETS"
+            working_dir = root / "WORKING SHEETS"
+            received_dir = root / "RECEIVED SHEETS"
+            working_dir.mkdir(parents=True)
+            incoming_dir.mkdir()
+            received_dir.mkdir()
+            (working_dir / "Lot A.xlsx").write_text("placeholder", encoding="utf-8")
+
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_markers = app.SHEET_MARKERS_PATH
+            app.CARD_PIPELINE_DIR = root
+            app.INCOMING_SHEETS_DIR = incoming_dir
+            app.WORKING_SHEETS_DIR = working_dir
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.SHEET_MARKERS_PATH = root / "sheet_markers.json"
+            dummy = SellerSheetDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.home_sheet_markers = {}
+            dummy.deleted_sheet_marker_keys = set()
+            dummy.home_sheet_paths = {"Incoming": {}, "Working": {"Lot A.xlsx": working_dir / "Lot A.xlsx"}, "Received": {}}
+            dummy.received_sheet_paths = {}
+            dummy.home_sheet_summaries = {}
+            try:
+                self.assertTrue(dummy._assign_sheet_to_seller("Working", "Lot A.xlsx", "John Seller"))
+                self.assertEqual(dummy.home_sheet_markers["Working|Lot A.xlsx"]["assigned_person"], "John Seller")
+
+                moved_key, cleanup = dummy._move_home_sheet_to_stage("Working|Lot A.xlsx", "Incoming")
+                self.assertEqual(moved_key, "Incoming|Lot A.xlsx")
+                self.assertEqual(cleanup, {})
+                self.assertEqual(dummy.home_sheet_markers[moved_key]["assigned_person"], "John Seller")
+                dummy.home_sheet_paths = {"Incoming": {"Lot A.xlsx": incoming_dir / "Lot A.xlsx"}, "Working": {}, "Received": {}}
+                dummy.home_sheet_summaries = {moved_key: {"row_count": 2, "received_count": 0, "purchase_total": 123.45}}
+
+                payout_items = dummy._payout_sheet_items()
+                self.assertEqual(len(payout_items), 1)
+                self.assertEqual(payout_items[0]["person"], "John Seller")
+                self.assertEqual(payout_items[0]["stage"], "Incoming")
+                self.assertEqual(payout_items[0]["purchase_total"], 123.45)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.SHEET_MARKERS_PATH = old_markers
+
     def test_moving_received_sheet_back_clears_received_profit_and_company_rows(self) -> None:
         class MoveDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key

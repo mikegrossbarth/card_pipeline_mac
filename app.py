@@ -3636,6 +3636,19 @@ class CardPipelineApp(tk.Tk):
         moved_key, _cleanup = self._move_home_sheet_to_stage(key, "Incoming")
         return moved_key
 
+    def _assign_sheet_to_seller(self, stage: str, sheet_name: str, seller: str) -> bool:
+        person = str(seller or "").strip()
+        if stage not in {"Working", "Incoming", "Received"} or not sheet_name or not person:
+            return False
+        key = self._home_sheet_key(stage, sheet_name)
+        marker = dict(self._load_sheet_markers().get(key, {}))
+        marker.update(dict(self.home_sheet_markers.get(key, {})))
+        marker["assigned_person"] = person
+        marker = self._marker_for_stage(marker, stage)
+        self.home_sheet_markers[key] = marker
+        self._save_sheet_markers()
+        return True
+
     def _move_home_sheet_to_stage(self, key: str, target_stage: str) -> tuple[str, dict[str, int]]:
         source_stage, name = self._split_home_sheet_key(key)
         if source_stage not in {"Incoming", "Working", "Received"} or target_stage not in {"Incoming", "Working", "Received"} or not name:
@@ -4847,14 +4860,18 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("Title required", "Enter a working sheet title first.")
             return
         self.apply_create_seller_terms(show_status=False)
+        seller = self.seller_terms_seller_var.get().strip() if hasattr(self, "seller_terms_seller_var") else ""
         try:
             with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
                 path = working_sheet_path(WORKING_SHEETS_DIR, title)
                 write_working_sheet(path, self.intake_rows, self.intake_sources)
+            if seller:
+                self._assign_sheet_to_seller("Working", path.name, seller)
         except Exception as error:
             messagebox.showerror("Save failed", str(error))
             return
-        self.status_var.set(f"Saved working sheet: {path}")
+        seller_note = f" Assigned to {seller} for payouts." if seller else ""
+        self.status_var.set(f"Saved working sheet: {path}.{seller_note}")
         self.intake_rows = []
         self.intake_sources = {}
         self.intake_sheet_sources = {}
