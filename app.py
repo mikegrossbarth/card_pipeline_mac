@@ -2934,6 +2934,10 @@ class CardPipelineApp(tk.Tk):
                     received_count = int(summary.get("received_count") or row_count)
                 status = "Paid" if paid else self._payout_sheet_status(stage, marker, summary)
                 person = str(marker.get("assigned_person") or "").strip()
+                person_key = person.lower()
+                is_seller_payout = bool(person_key and person_key in seller_names)
+                if is_seller_payout and stage != "Received":
+                    continue
                 purchase_total = float(summary.get("purchase_total") or 0.0)
                 estimated_payout_total = float(summary.get("estimated_payout_total") or 0.0)
                 realized_profit_total = realized_profit_totals.get((person.lower(), Path(name).name.lower()), 0.0)

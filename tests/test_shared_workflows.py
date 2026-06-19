@@ -1034,7 +1034,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.SHEET_MARKERS_PATH = old_markers
 
-    def test_create_seller_assignment_follows_sheet_to_incoming_payouts(self) -> None:
+    def test_create_seller_assignment_pays_only_after_receive(self) -> None:
         class SellerSheetDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
             _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
@@ -1097,9 +1097,19 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 dummy.home_sheet_summaries = {moved_key: {"row_count": 2, "received_count": 0, "purchase_total": 123.45, "estimated_payout_total": 200.0}}
 
                 payout_items = dummy._payout_sheet_items()
+                self.assertEqual(payout_items, [])
+
+                received_key, cleanup = dummy._move_home_sheet_to_stage(moved_key, "Received")
+                self.assertEqual(received_key, "Received|Lot A.xlsx")
+                self.assertEqual(cleanup, {})
+                self.assertEqual(dummy.home_sheet_markers[received_key]["assigned_person"], "John Seller")
+                dummy.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {"Lot A.xlsx": received_dir / "Lot A.xlsx"}}
+                dummy.home_sheet_summaries = {received_key: {"row_count": 2, "received_count": 2, "purchase_total": 123.45, "estimated_payout_total": 200.0}}
+
+                payout_items = dummy._payout_sheet_items()
                 self.assertEqual(len(payout_items), 1)
                 self.assertEqual(payout_items[0]["person"], "John Seller")
-                self.assertEqual(payout_items[0]["stage"], "Incoming")
+                self.assertEqual(payout_items[0]["stage"], "Received")
                 self.assertEqual(payout_items[0]["purchase_total"], 123.45)
                 self.assertEqual(payout_items[0]["payout_balance"], 123.45)
             finally:
