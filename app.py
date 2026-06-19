@@ -127,7 +127,6 @@ COMP_SOURCE_BOTH = "Card Ladder + CY"
 COMP_SOURCE_CARD_LADDER = "Card Ladder"
 COMP_SOURCE_CY = "CY"
 NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
-SELLER_VALUE_SOURCE_OPTIONS = ("", "Comps", "Card Ladder value", "CY Estimate", "Purchase")
 PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Month", "Year", "Total")
 PROFIT_GRAPH_OPTIONS = ("Daily Trend", "Overall Profit")
 ASSIGNMENT_CATEGORY_OPTIONS = (
@@ -396,7 +395,6 @@ class CardPipelineApp(tk.Tk):
         self.working_sheet_title = tk.StringVar()
         self.seller_terms_seller_var = tk.StringVar()
         self.seller_terms_sheet_type_var = tk.StringVar()
-        self.seller_terms_value_source_var = tk.StringVar()
         self.selected_working_sheet = tk.StringVar()
         self.summary_var = tk.StringVar(value="Choose a create mode to begin.")
         self.status_var = tk.StringVar(value="Card Ladder bridge starting...")
@@ -695,7 +693,7 @@ class CardPipelineApp(tk.Tk):
         mode.bind("<<ComboboxSelected>>", lambda _event: self._show_mode())
         ttk.Button(intake_controls, text="Delete Selected", command=self.delete_selected_intake_rows, style="Soft.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
         ttk.Button(intake_controls, text="Clear Rows", command=self.clear_rows, style="Soft.TButton").grid(row=0, column=3, sticky="w")
-        intake_controls.columnconfigure(6, weight=1)
+        intake_controls.columnconfigure(4, weight=1)
         ttk.Label(intake_controls, text="Seller", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.seller_terms_seller_combo = ttk.Combobox(intake_controls, textvariable=self.seller_terms_seller_var, width=24)
         self.seller_terms_seller_combo.grid(row=1, column=1, sticky="w", padx=(8, 16), pady=(10, 0))
@@ -706,17 +704,7 @@ class CardPipelineApp(tk.Tk):
         self.seller_terms_sheet_type_combo.grid(row=1, column=3, sticky="w", padx=(0, 16), pady=(10, 0))
         self.seller_terms_sheet_type_combo.configure(postcommand=self._refresh_seller_terms_dropdowns)
         self.seller_terms_sheet_type_combo.bind("<<ComboboxSelected>>", lambda _event: self.apply_create_seller_terms(), add="+")
-        ttk.Label(intake_controls, text="Value Source", style="Muted.TLabel").grid(row=1, column=4, sticky="e", padx=(0, 6), pady=(10, 0))
-        self.seller_terms_value_source_combo = ttk.Combobox(
-            intake_controls,
-            textvariable=self.seller_terms_value_source_var,
-            values=SELLER_VALUE_SOURCE_OPTIONS,
-            width=18,
-            state="readonly",
-        )
-        self.seller_terms_value_source_combo.grid(row=1, column=5, sticky="w", pady=(10, 0))
-        self.seller_terms_value_source_combo.bind("<<ComboboxSelected>>", lambda _event: self.apply_create_seller_terms(), add="+")
-        ttk.Label(intake_controls, textvariable=self.summary_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=7, sticky="w", pady=(10, 0))
+        ttk.Label(intake_controls, textvariable=self.summary_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=5, sticky="w", pady=(10, 0))
 
         self.mode_host = ttk.Frame(self.intake_tab, style="Panel.TFrame", padding=(16, 12))
         self.mode_host.pack(fill=tk.X, pady=(0, 10))
@@ -3030,28 +3018,22 @@ class CardPipelineApp(tk.Tk):
                 return term
         return None
 
-    def _seller_terms_row_value(self, row: WorkbookRow, value_source: str) -> float | None:
-        source = value_source.strip().lower()
-        if source in {"comps", "comp", "card ladder comps", "card ladder comps average"}:
-            return self._money_value(row.card_ladder_comps_average)
-        if source in {"card ladder", "card ladder value", "cl", "cl value"}:
-            return self._money_value(row.card_ladder_value)
-        if source in {"cy", "cy estimate", "cy value"}:
-            return self._money_value(row.cy_value)
-        if source in {"purchase", "purchase price", "original purchase"}:
-            return self._money_value(getattr(row, "_seller_terms_base_purchase", row.existing_value))
-        return None
-
-    def _seller_terms_company_price(self, row: WorkbookRow, company_name: str, deduction: float) -> float | None:
+    def _seller_terms_company_price(self, row: WorkbookRow, company_name: str, rate: float | None = None, deduction: float | None = None) -> float | None:
         company_key = company_name.strip().lower()
         if not company_key:
             return None
         for decision in self.assignment_engine.evaluate(row):
             if decision.company.strip().lower() != company_key:
                 continue
-            if decision.payout is None or decision.source_value is None:
+            if decision.source_value is None:
                 return None
-            return max(0.0, round(decision.payout - (decision.source_value * deduction), 2))
+            if deduction is not None:
+                if decision.payout is None:
+                    return None
+                return max(0.0, round(decision.payout - (decision.source_value * deduction), 2))
+            if rate is not None:
+                return round(decision.source_value * rate, 2)
+            return None
         return None
 
     def _restore_create_seller_term_prices(self) -> int:
@@ -3082,13 +3064,11 @@ class CardPipelineApp(tk.Tk):
             if show_status:
                 self.status_var.set(f"No seller terms found for {seller} / {sheet_type}.")
             return 0
-        value_source = self.seller_terms_value_source_var.get().strip() if hasattr(self, "seller_terms_value_source_var") else ""
-        value_source = value_source or str(term.get("value_source") or "")
         rate = self._money_value(term.get("rate"))
         deduction = self._money_value(term.get("deduction"))
-        if deduction is None and (not value_source or rate is None):
+        if deduction is None and rate is None:
             if show_status:
-                self.status_var.set(f"Seller terms for {seller} / {sheet_type} need either a Deduction or a Value Source and Seller Rate.")
+                self.status_var.set(f"Seller terms for {seller} / {sheet_type} need either a Deduction or Seller Rate.")
             return 0
         changed = 0
         skipped = 0
@@ -3096,16 +3076,12 @@ class CardPipelineApp(tk.Tk):
             if not hasattr(row, "_seller_terms_base_purchase"):
                 setattr(row, "_seller_terms_base_purchase", row.existing_value)
             if deduction is not None:
-                seller_price = self._seller_terms_company_price(row, sheet_type, deduction)
-                if seller_price is None:
-                    skipped += 1
-                    continue
+                seller_price = self._seller_terms_company_price(row, sheet_type, deduction=deduction)
             else:
-                value = self._seller_terms_row_value(row, value_source)
-                if value is None:
-                    skipped += 1
-                    continue
-                seller_price = round(value * rate, 2)
+                seller_price = self._seller_terms_company_price(row, sheet_type, rate=rate)
+            if seller_price is None:
+                skipped += 1
+                continue
             if row.existing_value != seller_price:
                 row.existing_value = seller_price
                 changed += 1
@@ -3116,8 +3092,8 @@ class CardPipelineApp(tk.Tk):
                 suffix = f" ({skipped} skipped: no matching {sheet_type} payout)" if skipped else ""
                 self.status_var.set(f"Applied seller terms: {seller} / {sheet_type} payout minus {deduction:.0%}.{suffix}")
             else:
-                suffix = f" ({skipped} skipped: missing {value_source})" if skipped else ""
-                self.status_var.set(f"Applied seller terms: {seller} / {sheet_type} at {rate:.0%} of {value_source}.{suffix}")
+                suffix = f" ({skipped} skipped: no matching {sheet_type} source value)" if skipped else ""
+                self.status_var.set(f"Applied seller terms: {seller} / {sheet_type} at {rate:.0%} of {sheet_type} rule value.{suffix}")
         return changed
 
     def _known_assigned_people(self) -> list[str]:
