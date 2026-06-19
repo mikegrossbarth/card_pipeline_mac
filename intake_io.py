@@ -223,22 +223,28 @@ def summarize_workbook(path: Path) -> dict[str, Any]:
         row_count = 0
         received_count = 0
         purchase_total = 0.0
+        estimated_payout_total = 0.0
         for sheet in workbook.worksheets:
             header_row = 1 if _looks_like_simple_header(sheet) else None
+            headers = _header_map_for_row(sheet, 1) if header_row else {}
             first_data_row = 2 if header_row else 1
             cert_col = _cert_column(sheet) or 1
             card_col = _card_column(sheet) or 2
             price_col = _price_column(sheet) or 3
+            payout_col = next((headers.get(header) for header in ESTIMATED_PAYOUT_HEADERS if headers.get(header)), None)
             received_col = _received_column(sheet)
             for row_index in range(first_data_row, _sheet_max_row(sheet) + 1):
                 cert = normalize_cert(sheet.cell(row_index, cert_col).value)
                 card = clean_part(sheet.cell(row_index, card_col).value)
                 purchase_price = parse_money(sheet.cell(row_index, price_col).value)
+                estimated_payout = parse_money(sheet.cell(row_index, payout_col).value) if payout_col else None
                 if not cert and not card and purchase_price is None:
                     continue
                 row_count += 1
                 if purchase_price is not None:
                     purchase_total += purchase_price
+                if estimated_payout is not None:
+                    estimated_payout_total += estimated_payout
                 if received_col and _is_received_value(sheet.cell(row_index, received_col).value):
                     received_count += 1
         return {
@@ -247,6 +253,7 @@ def summarize_workbook(path: Path) -> dict[str, Any]:
             "row_count": row_count,
             "received_count": received_count,
             "purchase_total": purchase_total,
+            "estimated_payout_total": estimated_payout_total,
             "all_received": bool(row_count and received_count == row_count),
             "partially_received": bool(received_count and received_count < row_count),
         }

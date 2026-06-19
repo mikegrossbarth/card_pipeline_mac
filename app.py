@@ -2863,7 +2863,7 @@ class CardPipelineApp(tk.Tk):
                 balance = balances.setdefault(person, {"sheets": 0, "cards": 0, "balance": 0.0})
                 balance["sheets"] = int(balance["sheets"]) + 1
                 balance["cards"] = int(balance["cards"]) + int(item["row_count"])
-                balance["balance"] = float(balance["balance"]) + float(item["purchase_total"])
+                balance["balance"] = float(balance["balance"]) + float(item["payout_balance"])
             iid = f"payout:{detail_count}"
             self.payout_detail_keys[iid] = str(item["key"])
             self.payout_detail_tree.insert(
@@ -2876,7 +2876,7 @@ class CardPipelineApp(tk.Tk):
                     item["person"],
                     item["row_count"],
                     f"{item['received_count']}/{item['row_count']}",
-                    format_money(float(item["purchase_total"])),
+                    format_money(float(item["payout_balance"])),
                     item["status"],
                 ),
             )
@@ -2919,6 +2919,7 @@ class CardPipelineApp(tk.Tk):
 
     def _payout_sheet_items(self) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
+        seller_names = self._seller_terms_seller_names()
         for stage in ("Incoming", "Received"):
             for name in self.home_sheet_paths.get(stage, {}):
                 key = self._home_sheet_key(stage, name)
@@ -2930,20 +2931,49 @@ class CardPipelineApp(tk.Tk):
                 if stage == "Received":
                     received_count = int(summary.get("received_count") or row_count)
                 status = "Paid" if paid else self._payout_sheet_status(stage, marker, summary)
+                person = str(marker.get("assigned_person") or "").strip()
+                purchase_total = float(summary.get("purchase_total") or 0.0)
+                estimated_payout_total = float(summary.get("estimated_payout_total") or 0.0)
+                payout_balance, payout_basis = self._active_payout_balance(person, purchase_total, estimated_payout_total, seller_names)
                 items.append(
                     {
                         "key": key,
                         "stage": stage,
                         "name": name,
-                        "person": str(marker.get("assigned_person") or "").strip(),
+                        "person": person,
                         "paid": paid,
                         "row_count": row_count,
                         "received_count": received_count,
-                        "purchase_total": float(summary.get("purchase_total") or 0.0),
+                        "purchase_total": purchase_total,
+                        "estimated_payout_total": estimated_payout_total,
+                        "estimated_profit": round(estimated_payout_total - purchase_total, 2),
+                        "payout_balance": payout_balance,
+                        "payout_basis": payout_basis,
                         "status": status,
                     }
                 )
         return items
+
+    def _seller_terms_seller_names(self) -> set[str]:
+        return {
+            str(term.get("seller") or "").strip().lower()
+            for term in self._load_seller_terms()
+            if str(term.get("seller") or "").strip()
+        }
+
+    def _active_payout_balance(
+        self,
+        person: str,
+        purchase_total: float,
+        estimated_payout_total: float,
+        seller_names: set[str] | None = None,
+    ) -> tuple[float, str]:
+        normalized_person = str(person or "").strip().lower()
+        seller_names = seller_names if seller_names is not None else self._seller_terms_seller_names()
+        if normalized_person and normalized_person in seller_names:
+            return round(float(purchase_total or 0.0), 2), "Seller purchase total"
+        estimated_profit = float(estimated_payout_total or 0.0) - float(purchase_total or 0.0)
+        return max(0.0, round(estimated_profit / 2.0, 2)), "Team half profit"
 
     def _payout_sheet_status(self, stage: str, marker: dict[str, object], summary: dict[str, object]) -> str:
         received_count = int(summary.get("received_count") or 0)
@@ -3271,7 +3301,7 @@ class CardPipelineApp(tk.Tk):
         if not matching_items:
             self.payout_status_var.set(f"No unpaid sheets found for {person}.")
             return
-        total_balance = sum(float(item["purchase_total"]) for item in matching_items)
+        total_balance = sum(float(item["payout_balance"]) for item in matching_items)
         total_cards = sum(int(item["row_count"]) for item in matching_items)
         self.open_mark_payout_person_paid_popup(person, matching_items, total_cards, total_balance)
 
@@ -3365,6 +3395,11 @@ class CardPipelineApp(tk.Tk):
         kind, name = self._split_home_sheet_key(key)
         marker = self.home_sheet_markers.get(key, {})
         summary = self.home_sheet_summaries.get(key, {})
+        balance, basis = self._active_payout_balance(
+            str(marker.get("assigned_person") or "").strip(),
+            float(summary.get("purchase_total") or 0.0),
+            float(summary.get("estimated_payout_total") or 0.0),
+        )
         paid_var = tk.BooleanVar(value=bool(marker.get("paid")))
         person_var = tk.StringVar(value=str(marker.get("assigned_person") or "").strip())
 
@@ -3378,7 +3413,7 @@ class CardPipelineApp(tk.Tk):
         frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text=name, style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
-        ttk.Label(frame, text=f"{kind} | Balance: {format_money(float(summary.get('purchase_total') or 0.0))}", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        ttk.Label(frame, text=f"{kind} | Balance: {format_money(balance)} | {basis}", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
         ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
         person_combo.grid(row=2, column=1, sticky="ew", pady=(0, 10))

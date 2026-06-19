@@ -1045,8 +1045,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _sheet_path_for_stage = app.CardPipelineApp._sheet_path_for_stage
             _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
             _assign_sheet_to_seller = app.CardPipelineApp._assign_sheet_to_seller
+            _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            def _seller_terms_seller_names(self):
+                return {"john seller"}
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1084,19 +1087,31 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(cleanup, {})
                 self.assertEqual(dummy.home_sheet_markers[moved_key]["assigned_person"], "John Seller")
                 dummy.home_sheet_paths = {"Incoming": {"Lot A.xlsx": incoming_dir / "Lot A.xlsx"}, "Working": {}, "Received": {}}
-                dummy.home_sheet_summaries = {moved_key: {"row_count": 2, "received_count": 0, "purchase_total": 123.45}}
+                dummy.home_sheet_summaries = {moved_key: {"row_count": 2, "received_count": 0, "purchase_total": 123.45, "estimated_payout_total": 200.0}}
 
                 payout_items = dummy._payout_sheet_items()
                 self.assertEqual(len(payout_items), 1)
                 self.assertEqual(payout_items[0]["person"], "John Seller")
                 self.assertEqual(payout_items[0]["stage"], "Incoming")
                 self.assertEqual(payout_items[0]["purchase_total"], 123.45)
+                self.assertEqual(payout_items[0]["payout_balance"], 123.45)
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INCOMING_SHEETS_DIR = old_incoming
                 app.WORKING_SHEETS_DIR = old_working
                 app.RECEIVED_SHEETS_DIR = old_received
                 app.SHEET_MARKERS_PATH = old_markers
+
+    def test_active_payout_balance_uses_seller_or_team_member_rule(self) -> None:
+        class PayoutDummy:
+            _active_payout_balance = app.CardPipelineApp._active_payout_balance
+
+        dummy = PayoutDummy()
+        sellers = {"john seller"}
+
+        self.assertEqual(dummy._active_payout_balance("John Seller", 80.0, 150.0, sellers), (80.0, "Seller purchase total"))
+        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers), (35.0, "Team half profit"))
+        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 100.0, 80.0, sellers), (0.0, "Team half profit"))
 
     def test_moving_received_sheet_back_clears_received_profit_and_company_rows(self) -> None:
         class MoveDummy:
