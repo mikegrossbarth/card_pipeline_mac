@@ -1457,35 +1457,18 @@ class CardPipelineApp(tk.Tk):
         if not moved_keys:
             return
         ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-        today = datetime.now().strftime("%Y-%m-%d")
-        for record in ledger:
-            key = str(record.get("inventory_key") or "")
-            if key not in moved_keys:
-                continue
-            record["status"] = "Company Sheet"
-            record["moved_to_company_at"] = today
-            notes = str(record.get("notes") or "").strip()
-            record["notes"] = f"{notes}; Moved to company sheet".strip("; ")
-        self._save_inventory_ledger(ledger)
+        kept = [record for record in ledger if str(record.get("inventory_key") or "") not in moved_keys]
+        if len(kept) != len(ledger):
+            self._save_inventory_ledger(kept)
 
     def _mark_inventory_record_sold(self, inventory_key: str, company: str, sale_price: float) -> int:
         if not inventory_key:
             return 0
         ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-        today = datetime.now().strftime("%Y-%m-%d")
-        changed = 0
-        for record in ledger:
-            if str(record.get("inventory_key") or "") != inventory_key:
-                continue
-            record["status"] = "Sold"
-            record["sold_at"] = today
-            record["sold_company"] = company
-            record["sale_price"] = sale_price
-            notes = str(record.get("notes") or "").strip()
-            record["notes"] = f"{notes}; Sold from inventory".strip("; ")
-            changed += 1
+        kept = [record for record in ledger if str(record.get("inventory_key") or "") != inventory_key]
+        changed = len(ledger) - len(kept)
         if changed:
-            self._save_inventory_ledger(ledger)
+            self._save_inventory_ledger(kept)
         return changed
 
     def _general_sold_sheet_name(self, person: str) -> str:
@@ -1740,6 +1723,10 @@ class CardPipelineApp(tk.Tk):
             finally:
                 self._inventory_reconcile_running = False
         stored_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        active_rows = [record for record in stored_rows if str(record.get("status") or "").lower() == "active"]
+        if len(active_rows) != len(stored_rows):
+            self._save_inventory_ledger(active_rows)
+            stored_rows = active_rows
         if enrich and filtered_only:
             filtered_keys = {str(record.get("inventory_key") or "") for record in self._filtered_inventory_records(stored_rows)}
             self.inventory_rows = [

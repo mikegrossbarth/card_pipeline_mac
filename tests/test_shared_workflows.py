@@ -1243,6 +1243,34 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.inventory_search_var = FieldVar("hidden sold")
         self.assertEqual(dummy._filtered_inventory_records(rows), [])
 
+    def test_inventory_refresh_purges_non_active_rows_from_ledger(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+            refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                dummy._save_inventory_ledger([
+                    dummy._normalize_inventory_record({"assigned_person": "Kevin Hambone", "cert_number": "111", "source_sheet": "A.xlsx", "status": "Active"}),
+                    dummy._normalize_inventory_record({"assigned_person": "Kevin Hambone", "cert_number": "222", "source_sheet": "B.xlsx", "status": "Sold"}),
+                    dummy._normalize_inventory_record({"assigned_person": "Kevin Hambone", "cert_number": "333", "source_sheet": "C.xlsx", "status": "Company Sheet"}),
+                ])
+
+                dummy.refresh_inventory_tab()
+
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual([row["cert_number"] for row in ledger], ["111"])
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_inventory_table_values_can_be_copied_without_editing(self) -> None:
         class FakeTree:
             def item(self, _row_id, _option):
@@ -1842,7 +1870,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(company_rows[0]["company"], "Arena Club")
                 self.assertEqual(len(profit_rows), 1)
                 self.assertEqual(profit_rows[0]["assigned_person"], "Lucas")
-                self.assertEqual(inventory[0]["status"], "Company Sheet")
+                self.assertEqual(inventory, [])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.COMPANY_SHEETS_DIR = old_company
@@ -1865,7 +1893,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             )
         )
 
-    def test_mark_inventory_record_sold_writes_profit_and_marks_sold(self) -> None:
+    def test_mark_inventory_record_sold_writes_profit_and_removes_inventory(self) -> None:
         class SoldDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -1911,9 +1939,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertTrue(dummy.mark_inventory_record_sold(record, "Arena Club", 95))
                 inventory = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
                 profit = json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8"))
-                self.assertEqual(inventory[0]["status"], "Sold")
-                self.assertEqual(inventory[0]["sold_company"], "Arena Club")
-                self.assertEqual(inventory[0]["sale_price"], 95)
+                self.assertEqual(inventory, [])
                 self.assertEqual(len(profit), 1)
                 self.assertEqual(profit[0]["company"], "Arena Club")
                 self.assertEqual(profit[0]["assigned_person"], "Hambone")
