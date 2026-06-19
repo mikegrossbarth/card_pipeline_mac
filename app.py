@@ -449,7 +449,6 @@ class CardPipelineApp(tk.Tk):
         self.inventory_search_var = tk.StringVar()
         self.inventory_min_var = tk.StringVar()
         self.inventory_max_var = tk.StringVar()
-        self.inventory_active_only_var = tk.BooleanVar(value=True)
         self.inventory_rows: list[dict[str, object]] = []
         self.filtered_inventory_rows: list[dict[str, object]] = []
         self.inventory_tree_records: dict[str, dict[str, object]] = {}
@@ -1019,9 +1018,8 @@ class CardPipelineApp(tk.Tk):
         ttk.Entry(controls, textvariable=self.inventory_min_var, width=9).grid(row=0, column=6, sticky="w")
         ttk.Label(controls, text="Max", style="Muted.TLabel").grid(row=0, column=7, sticky="e", padx=(10, 6))
         ttk.Entry(controls, textvariable=self.inventory_max_var, width=9).grid(row=0, column=8, sticky="w")
-        ttk.Checkbutton(controls, text="Active only", variable=self.inventory_active_only_var, command=self.refresh_inventory_tab, style="Panel.TCheckbutton").grid(row=0, column=9, sticky="w", padx=(12, 0))
-        controls.columnconfigure(10, weight=1)
-        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=10, sticky="e", padx=(18, 0))
+        controls.columnconfigure(9, weight=1)
+        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=9, sticky="e", padx=(18, 0))
         ttk.Label(controls, text="Search Cert/Card", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
         ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
         action_row = ttk.Frame(controls, style="Panel.TFrame")
@@ -1825,10 +1823,9 @@ class CardPipelineApp(tk.Tk):
         search = self.inventory_search_var.get().strip().lower() if hasattr(self, "inventory_search_var") else ""
         min_value = self._money_value(self.inventory_min_var.get()) if hasattr(self, "inventory_min_var") else None
         max_value = self._money_value(self.inventory_max_var.get()) if hasattr(self, "inventory_max_var") else None
-        active_only = bool(self.inventory_active_only_var.get()) if hasattr(self, "inventory_active_only_var") else True
         filtered: list[dict[str, object]] = []
         for record in rows:
-            if active_only and str(record.get("status") or "").lower() != "active":
+            if str(record.get("status") or "").lower() != "active":
                 continue
             if person and person not in str(record.get("assigned_person") or "Unassigned").lower():
                 continue
