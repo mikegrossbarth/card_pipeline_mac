@@ -14,6 +14,26 @@ L.U.C.A.S means Lot Upload, Comping & Assignment System.
 
 The old visible `Review` workflow was split into `Receive` and `Assignment`. Many internal names still use `review_*`; that is intentional legacy naming to avoid risky churn.
 
+## Future Ideas
+
+### iPhone Companion App / TestFlight Path
+
+User is interested in a future L.U.C.A.S phone companion, not a full desktop clone. Preferred scope is inventory-only:
+
+- Inventory lookup/search/filter.
+- Quick add to active inventory.
+- Mark inventory cards sold with sale price and optional company/buyer.
+- No Card Ladder, CourtYard, Chrome extension, or other automation on the phone.
+
+Recommended path:
+
+1. Start with a local/private mobile web companion served by desktop L.U.C.A.S or a small local backend.
+2. Keep the backend/API boundaries clean so the same inventory lookup/add/sold actions can later power a PWA or TestFlight app.
+3. Later wrap/rebuild the mobile UI with React Native, Expo, Capacitor, or native Swift for TestFlight if the workflow proves useful.
+4. If remote access is needed, move the API behind proper auth and concurrency-safe shared data handling.
+
+Important design note: the hard part is not the mobile UI; it is safely exposing shared inventory/profit ledger actions so two people cannot conflict while adding or marking cards sold. Desktop automation should stay desktop/server-side.
+
 ## Latest Completed Work
 
 - Mac repo was brought forward with the Windows parser/company-sheet/manual-create work while preserving Mac-only CourtYard automation.
