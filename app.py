@@ -2580,15 +2580,10 @@ class CardPipelineApp(tk.Tk):
         plot_w = max(width - pad_left - pad_right, 10)
         plot_h = max(height - pad_top - pad_bottom, 10)
         chart_rows = self.filtered_profit_rows if hasattr(self, "filtered_profit_rows") else self.profit_rows
-        dated = [
-            record
-            for record in chart_rows
-            if self._money_value(record.get("profit")) is not None and self._profit_month_key(record.get("date_added")) != "Unknown"
-        ]
-        if not dated:
+        days, chart_values = self._profit_chart_series(chart_rows)
+        if not days:
             canvas.create_text(width / 2, height / 2, text="No profit data yet", fill="#b3b3b3", font=("Segoe UI", 12, "bold"))
             return
-        days, chart_values = self._profit_chart_series(dated)
         graph_label = self._profit_graph_label()
         values = chart_values + [0.0]
         min_y = min(values)

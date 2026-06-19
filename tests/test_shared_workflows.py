@@ -2432,6 +2432,21 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(overall_days, days)
         self.assertEqual(overall_values, [20, 20.0, 20.0, 20.0, 50.0])
 
+        ytd_rows = [
+            {"assigned_person": "Lucas", "date_added": "2026-01-05", "profit": 40},
+            {"assigned_person": "Lucas", "date_added": "2026-06-17", "profit": 30},
+        ]
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "YTD")
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Daily Trend")
+        ytd_filtered = dummy._filtered_profit_records(ytd_rows)
+        ytd_days, ytd_values = dummy._profit_chart_series(ytd_filtered)
+
+        self.assertEqual(ytd_days[0], "2026-01-01")
+        self.assertEqual(ytd_days[-1], "2026-06-17")
+        self.assertEqual(len(ytd_days), 168)
+        self.assertEqual(ytd_values[ytd_days.index("2026-01-05")], 40)
+        self.assertEqual(ytd_values[ytd_days.index("2026-06-17")], 30)
+
     def test_profit_sheet_rows_group_by_person_and_source_sheet(self) -> None:
         class ProfitDummy:
             _money_value = app.CardPipelineApp._money_value

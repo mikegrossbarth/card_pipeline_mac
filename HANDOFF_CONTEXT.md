@@ -206,7 +206,7 @@ Assignment can recalculate best company and payout using the configured value so
 
 ### Profit
 
-Profit reads `profit_ledger.json`, current company workbook tabs, and legacy weekly company files. It includes person filters, daily profit chart, `Sold Cards`, and grouped `Sold Sheets`.
+Profit reads `profit_ledger.json`, current company workbook tabs, and legacy weekly company files. It includes person filters, daily profit chart, `Sold Cards`, and grouped `Sold Sheets`. Profit chart axes are based on the selected period, so sparse YTD/month/year activity still renders the full period instead of collapsing to the few sale dates.
 
 ## Assignment Rules
 
