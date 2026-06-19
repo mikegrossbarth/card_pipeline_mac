@@ -1348,6 +1348,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_graph_label = app.CardPipelineApp._profit_graph_label
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
+            _expense_related_label = app.CardPipelineApp._expense_related_label
             refresh_profit_tab = lambda self: None
 
         with TemporaryDirectory() as tmp:
@@ -1358,7 +1359,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy = ExpenseDummy()
             dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
             dummy.profit_person_var = types.SimpleNamespace(get=lambda: "Kevin")
-            dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Month")
+            dummy.profit_period_var = types.SimpleNamespace(get=lambda: "YTD")
             dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Daily Trend")
             try:
                 expense = {
@@ -1368,6 +1369,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                     "date_added": "2026-06-18",
                     "expense_type": "Travel Meal",
                     "expense_amount": 25,
+                    "related_type": "Card",
+                    "source_sheet": "Lot A.xlsx",
+                    "cert_number": "123",
                     "notes": "Airport dinner",
                 }
                 sale = {
@@ -1384,7 +1388,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 expense_row = next(record for record in ledger if record.get("record_type") == "expense")
                 self.assertEqual(expense_row["profit"], -25)
                 self.assertEqual(expense_row["company"], "Expense: Travel Meal")
-                self.assertEqual(expense_row["source_sheet"], "Expenses")
+                self.assertEqual(expense_row["source_sheet"], "Lot A.xlsx")
+                self.assertEqual(expense_row["cert_number"], "123")
+                self.assertEqual(dummy._expense_related_label(expense_row), "Lot A.xlsx | 123")
                 filtered = dummy._filtered_profit_records(ledger)
                 _days, values = dummy._profit_chart_series(filtered)
                 self.assertEqual(sum(values), 25)
