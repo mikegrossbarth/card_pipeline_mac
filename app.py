@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import html
 import queue
 import base64
@@ -108,6 +109,7 @@ PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
 INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
 UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
 PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
+SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
 APP_TITLE = "L.U.C.A.S"
@@ -125,6 +127,7 @@ COMP_SOURCE_BOTH = "Card Ladder + CY"
 COMP_SOURCE_CARD_LADDER = "Card Ladder"
 COMP_SOURCE_CY = "CY"
 NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
+SELLER_VALUE_SOURCE_OPTIONS = ("", "Comps", "Card Ladder value", "CY Estimate", "Purchase")
 PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Month", "Year", "Total")
 PROFIT_GRAPH_OPTIONS = ("Daily Trend", "Overall Profit")
 ASSIGNMENT_CATEGORY_OPTIONS = (
@@ -184,7 +187,7 @@ def app_debug_log(message: str) -> None:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -196,6 +199,7 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
     UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
     PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
+    SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
 
 
 def set_pipeline_from_working_dir(path: Path) -> None:
@@ -390,6 +394,9 @@ class CardPipelineApp(tk.Tk):
         self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
         self.comp_source_label = tk.StringVar(value=COMP_SOURCE_BOTH)
         self.working_sheet_title = tk.StringVar()
+        self.seller_terms_seller_var = tk.StringVar()
+        self.seller_terms_sheet_type_var = tk.StringVar()
+        self.seller_terms_value_source_var = tk.StringVar()
         self.selected_working_sheet = tk.StringVar()
         self.summary_var = tk.StringVar(value="Choose a create mode to begin.")
         self.status_var = tk.StringVar(value="Card Ladder bridge starting...")
@@ -688,8 +695,28 @@ class CardPipelineApp(tk.Tk):
         mode.bind("<<ComboboxSelected>>", lambda _event: self._show_mode())
         ttk.Button(intake_controls, text="Delete Selected", command=self.delete_selected_intake_rows, style="Soft.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
         ttk.Button(intake_controls, text="Clear Rows", command=self.clear_rows, style="Soft.TButton").grid(row=0, column=3, sticky="w")
-        intake_controls.columnconfigure(4, weight=1)
-        ttk.Label(intake_controls, textvariable=self.summary_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=5, sticky="w", pady=(10, 0))
+        intake_controls.columnconfigure(6, weight=1)
+        ttk.Label(intake_controls, text="Seller", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        self.seller_terms_seller_combo = ttk.Combobox(intake_controls, textvariable=self.seller_terms_seller_var, width=24)
+        self.seller_terms_seller_combo.grid(row=1, column=1, sticky="w", padx=(8, 16), pady=(10, 0))
+        self._bind_person_autocomplete(self.seller_terms_seller_combo, refresh_callback=self.apply_create_seller_terms)
+        self.seller_terms_seller_combo.bind("<<ComboboxSelected>>", lambda _event: self.apply_create_seller_terms(), add="+")
+        ttk.Label(intake_controls, text="Sheet Type", style="Muted.TLabel").grid(row=1, column=2, sticky="e", padx=(0, 6), pady=(10, 0))
+        self.seller_terms_sheet_type_combo = ttk.Combobox(intake_controls, textvariable=self.seller_terms_sheet_type_var, width=18)
+        self.seller_terms_sheet_type_combo.grid(row=1, column=3, sticky="w", padx=(0, 16), pady=(10, 0))
+        self.seller_terms_sheet_type_combo.configure(postcommand=self._refresh_seller_terms_dropdowns)
+        self.seller_terms_sheet_type_combo.bind("<<ComboboxSelected>>", lambda _event: self.apply_create_seller_terms(), add="+")
+        ttk.Label(intake_controls, text="Value Source", style="Muted.TLabel").grid(row=1, column=4, sticky="e", padx=(0, 6), pady=(10, 0))
+        self.seller_terms_value_source_combo = ttk.Combobox(
+            intake_controls,
+            textvariable=self.seller_terms_value_source_var,
+            values=SELLER_VALUE_SOURCE_OPTIONS,
+            width=18,
+            state="readonly",
+        )
+        self.seller_terms_value_source_combo.grid(row=1, column=5, sticky="w", pady=(10, 0))
+        self.seller_terms_value_source_combo.bind("<<ComboboxSelected>>", lambda _event: self.apply_create_seller_terms(), add="+")
+        ttk.Label(intake_controls, textvariable=self.summary_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=7, sticky="w", pady=(10, 0))
 
         self.mode_host = ttk.Frame(self.intake_tab, style="Panel.TFrame", padding=(16, 12))
         self.mode_host.pack(fill=tk.X, pady=(0, 10))
@@ -2926,6 +2953,119 @@ class CardPipelineApp(tk.Tk):
             return "Partially Received"
         return "Unreceived"
 
+    def _load_seller_terms(self) -> list[dict[str, object]]:
+        if not SELLER_TERMS_PATH.exists():
+            return []
+        try:
+            with SELLER_TERMS_PATH.open("r", encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+        except Exception:
+            return []
+        terms: list[dict[str, object]] = []
+        for row in rows:
+            normalized = {re.sub(r"[^a-z0-9]+", "", str(key or "").lower()): value for key, value in row.items()}
+            seller = str(normalized.get("seller") or normalized.get("person") or normalized.get("name") or "").strip()
+            sheet_type = str(normalized.get("sheettype") or normalized.get("type") or normalized.get("company") or "").strip()
+            value_source = str(normalized.get("valuesource") or normalized.get("source") or "").strip()
+            rate = self._seller_terms_rate(normalized.get("sellerrate") or normalized.get("rate") or normalized.get("payout") or normalized.get("percentage"))
+            if seller and sheet_type and rate is not None:
+                terms.append({"seller": seller, "sheet_type": sheet_type, "value_source": value_source, "rate": rate})
+        return terms
+
+    def _refresh_seller_terms_dropdowns(self) -> None:
+        if hasattr(self, "seller_terms_sheet_type_combo"):
+            sheet_types = sorted({str(term.get("sheet_type") or "") for term in self._load_seller_terms() if term.get("sheet_type")}, key=str.lower)
+            self.seller_terms_sheet_type_combo["values"] = sheet_types
+
+    def _seller_terms_rate(self, value: object) -> float | None:
+        raw = str(value or "").strip()
+        text = raw.replace("%", "").strip()
+        if not text:
+            return None
+        try:
+            numeric = float(text)
+        except ValueError:
+            return None
+        rate = numeric / 100 if "%" in raw or numeric > 1 else numeric
+        return rate if rate >= 0 else None
+
+    def _seller_terms_match(self, seller: str, sheet_type: str) -> dict[str, object] | None:
+        seller_key = seller.strip().lower()
+        type_key = sheet_type.strip().lower()
+        if not seller_key or not type_key:
+            return None
+        for term in self._load_seller_terms():
+            if str(term.get("seller") or "").strip().lower() == seller_key and str(term.get("sheet_type") or "").strip().lower() == type_key:
+                return term
+        return None
+
+    def _seller_terms_row_value(self, row: WorkbookRow, value_source: str) -> float | None:
+        source = value_source.strip().lower()
+        if source in {"comps", "comp", "card ladder comps", "card ladder comps average"}:
+            return self._money_value(row.card_ladder_comps_average)
+        if source in {"card ladder", "card ladder value", "cl", "cl value"}:
+            return self._money_value(row.card_ladder_value)
+        if source in {"cy", "cy estimate", "cy value"}:
+            return self._money_value(row.cy_value)
+        if source in {"purchase", "purchase price", "original purchase"}:
+            return self._money_value(getattr(row, "_seller_terms_base_purchase", row.existing_value))
+        return None
+
+    def _restore_create_seller_term_prices(self) -> int:
+        restored = 0
+        for row in self.intake_rows:
+            if hasattr(row, "_seller_terms_base_purchase"):
+                base_value = getattr(row, "_seller_terms_base_purchase")
+                if row.existing_value != base_value:
+                    row.existing_value = base_value
+                    restored += 1
+        return restored
+
+    def apply_create_seller_terms(self, show_status: bool = True) -> int:
+        seller = self.seller_terms_seller_var.get().strip() if hasattr(self, "seller_terms_seller_var") else ""
+        sheet_type = self.seller_terms_sheet_type_var.get().strip() if hasattr(self, "seller_terms_sheet_type_var") else ""
+        if not seller or not sheet_type:
+            restored = self._restore_create_seller_term_prices()
+            if restored:
+                self._refresh_table()
+            if show_status and (seller or sheet_type):
+                self.status_var.set("Seller terms need both Seller and Sheet Type.")
+            return 0
+        term = self._seller_terms_match(seller, sheet_type)
+        if not term:
+            restored = self._restore_create_seller_term_prices()
+            if restored:
+                self._refresh_table()
+            if show_status:
+                self.status_var.set(f"No seller terms found for {seller} / {sheet_type}.")
+            return 0
+        value_source = self.seller_terms_value_source_var.get().strip() if hasattr(self, "seller_terms_value_source_var") else ""
+        value_source = value_source or str(term.get("value_source") or "")
+        rate = self._money_value(term.get("rate"))
+        if not value_source or rate is None:
+            if show_status:
+                self.status_var.set(f"Seller terms for {seller} / {sheet_type} need a value source and rate.")
+            return 0
+        changed = 0
+        skipped = 0
+        for row in self.intake_rows:
+            if not hasattr(row, "_seller_terms_base_purchase"):
+                setattr(row, "_seller_terms_base_purchase", row.existing_value)
+            value = self._seller_terms_row_value(row, value_source)
+            if value is None:
+                skipped += 1
+                continue
+            seller_price = round(value * rate, 2)
+            if row.existing_value != seller_price:
+                row.existing_value = seller_price
+                changed += 1
+        if changed:
+            self._refresh_table()
+        if show_status:
+            suffix = f" ({skipped} skipped: missing {value_source})" if skipped else ""
+            self.status_var.set(f"Applied seller terms: {seller} / {sheet_type} at {rate:.0%} of {value_source}.{suffix}")
+        return changed
+
     def _known_assigned_people(self) -> list[str]:
         people = {
             str(marker.get("assigned_person") or "").strip()
@@ -2971,6 +3111,8 @@ class CardPipelineApp(tk.Tk):
             self.profit_person_combo["values"] = people
         if hasattr(self, "inventory_person_combo"):
             self.inventory_person_combo["values"] = people
+        if hasattr(self, "seller_terms_seller_combo"):
+            self.seller_terms_seller_combo["values"] = people
 
     def _bind_person_autocomplete(self, combo: ttk.Combobox, refresh_callback=None) -> None:
         combo["values"] = self._known_people()
@@ -4680,6 +4822,7 @@ class CardPipelineApp(tk.Tk):
         if not title:
             messagebox.showinfo("Title required", "Enter a working sheet title first.")
             return
+        self.apply_create_seller_terms(show_status=False)
         try:
             with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
                 path = working_sheet_path(WORKING_SHEETS_DIR, title)
@@ -4836,6 +4979,7 @@ class CardPipelineApp(tk.Tk):
             self.intake_sheet_sources[excel_row] = ""
             added_excel_rows.append(excel_row)
         self.intake_rows = existing
+        self.apply_create_seller_terms(show_status=False)
         self._refresh_table()
         return added_excel_rows
 
@@ -5751,6 +5895,11 @@ class CardPipelineApp(tk.Tk):
             elif column == "cy_confidence":
                 row.cy_confidence = clean_value
             row.status = "Ready" if row.cert_number and row.grader else "Needs setup"
+            if tree is self.intake_tree:
+                if column == "purchase_price":
+                    setattr(row, "_seller_terms_base_purchase", row.existing_value)
+                if column in {"purchase_price", "card_ladder_value", "card_ladder_comps_average", "cy_value"}:
+                    self.apply_create_seller_terms(show_status=False)
             if self._is_review_row_tree(tree) and column == "cert_number" and scan_to_cert(row.cert_number) != previous_cert:
                 match = self._incoming_match(row.cert_number)
                 target_sheet_sources[excel_row] = str(match.get("sheet") or "NO SHEET FOUND")

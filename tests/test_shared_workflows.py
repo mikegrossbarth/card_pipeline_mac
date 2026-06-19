@@ -1794,6 +1794,58 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(dummy._filtered_home_sheet_names("Incoming"), ["kevin.xlsx"])
 
+    def test_create_seller_terms_apply_and_restore_purchase_prices(self) -> None:
+        class Var:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        class SellerTermsDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _load_seller_terms = app.CardPipelineApp._load_seller_terms
+            _seller_terms_match = app.CardPipelineApp._seller_terms_match
+            _seller_terms_row_value = app.CardPipelineApp._seller_terms_row_value
+            _restore_create_seller_term_prices = app.CardPipelineApp._restore_create_seller_term_prices
+            apply_create_seller_terms = app.CardPipelineApp.apply_create_seller_terms
+
+            def __init__(self):
+                self.seller_terms_seller_var = Var("John")
+                self.seller_terms_sheet_type_var = Var("CY")
+                self.seller_terms_value_source_var = Var("")
+                self.status_var = Var("")
+                self.refreshed = 0
+                self.intake_rows = [
+                    WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Test", existing_value=10, cy_value=100),
+                    WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Missing CY", existing_value=20),
+                ]
+
+            def _refresh_table(self):
+                self.refreshed += 1
+
+        with TemporaryDirectory() as tmp:
+            old_terms = app.SELLER_TERMS_PATH
+            app.SELLER_TERMS_PATH = Path(tmp) / "seller_terms.csv"
+            app.SELLER_TERMS_PATH.write_text("Seller,Sheet Type,Value Source,Seller Rate\nJohn,CY,CY Estimate,88%\n", encoding="utf-8")
+            dummy = SellerTermsDummy()
+            try:
+                self.assertEqual(dummy.apply_create_seller_terms(), 1)
+                self.assertEqual(dummy.intake_rows[0].existing_value, 88)
+                self.assertEqual(dummy.intake_rows[1].existing_value, 20)
+                self.assertIn("missing CY Estimate", dummy.status_var.value)
+
+                dummy.seller_terms_sheet_type_var.set("")
+                self.assertEqual(dummy.apply_create_seller_terms(), 0)
+                self.assertEqual(dummy.intake_rows[0].existing_value, 10)
+                self.assertEqual(dummy.intake_rows[1].existing_value, 20)
+            finally:
+                app.SELLER_TERMS_PATH = old_terms
+
     def test_inventory_records_can_move_to_company_sheets(self) -> None:
         class FakeTree:
             def selection(self):
