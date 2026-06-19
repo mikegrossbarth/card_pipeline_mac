@@ -1811,6 +1811,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_seller_terms = app.CardPipelineApp._load_seller_terms
             _seller_terms_match = app.CardPipelineApp._seller_terms_match
             _seller_terms_row_value = app.CardPipelineApp._seller_terms_row_value
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
             _restore_create_seller_term_prices = app.CardPipelineApp._restore_create_seller_term_prices
             apply_create_seller_terms = app.CardPipelineApp.apply_create_seller_terms
 
@@ -1820,6 +1821,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.seller_terms_value_source_var = Var("")
                 self.status_var = Var("")
                 self.refreshed = 0
+                self.assignment_engine = types.SimpleNamespace(
+                    evaluate=lambda row: [
+                        types.SimpleNamespace(company="Arena Club", payout=95.0, source_value=100.0),
+                    ]
+                )
                 self.intake_rows = [
                     WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Test", existing_value=10, cy_value=100),
                     WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Missing CY", existing_value=20),
@@ -1831,13 +1837,24 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             old_terms = app.SELLER_TERMS_PATH
             app.SELLER_TERMS_PATH = Path(tmp) / "seller_terms.csv"
-            app.SELLER_TERMS_PATH.write_text("Seller,Sheet Type,Value Source,Seller Rate\nJohn,CY,CY Estimate,88%\n", encoding="utf-8")
+            app.SELLER_TERMS_PATH.write_text(
+                "Seller,Sheet Type,Value Source,Seller Rate,Deduction\n"
+                "John,CY,CY Estimate,88%,\n"
+                "John,Arena Club,,,5%\n",
+                encoding="utf-8",
+            )
             dummy = SellerTermsDummy()
             try:
                 self.assertEqual(dummy.apply_create_seller_terms(), 1)
                 self.assertEqual(dummy.intake_rows[0].existing_value, 88)
                 self.assertEqual(dummy.intake_rows[1].existing_value, 20)
                 self.assertIn("missing CY Estimate", dummy.status_var.value)
+
+                dummy.seller_terms_sheet_type_var.set("Arena Club")
+                self.assertEqual(dummy.apply_create_seller_terms(), 2)
+                self.assertEqual(dummy.intake_rows[0].existing_value, 90)
+                self.assertEqual(dummy.intake_rows[1].existing_value, 90)
+                self.assertIn("payout minus 5%", dummy.status_var.value)
 
                 dummy.seller_terms_sheet_type_var.set("")
                 self.assertEqual(dummy.apply_create_seller_terms(), 0)

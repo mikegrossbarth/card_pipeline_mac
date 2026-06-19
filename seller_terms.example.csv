@@ -1,4 +1,4 @@
-Seller,Sheet Type,Value Source,Seller Rate
-John,CY,CY Estimate,88%
-John,Arena Club,Comps,90%
-John,Fanatics,Card Ladder value,85%
+Seller,Sheet Type,Value Source,Seller Rate,Deduction
+John,CY,CY Estimate,88%,
+John,Arena Club,,,5%
+John,Fanatics,Card Ladder value,85%,

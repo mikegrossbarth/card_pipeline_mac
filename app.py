@@ -2968,8 +2968,9 @@ class CardPipelineApp(tk.Tk):
             sheet_type = str(normalized.get("sheettype") or normalized.get("type") or normalized.get("company") or "").strip()
             value_source = str(normalized.get("valuesource") or normalized.get("source") or "").strip()
             rate = self._seller_terms_rate(normalized.get("sellerrate") or normalized.get("rate") or normalized.get("payout") or normalized.get("percentage"))
-            if seller and sheet_type and rate is not None:
-                terms.append({"seller": seller, "sheet_type": sheet_type, "value_source": value_source, "rate": rate})
+            deduction = self._seller_terms_rate(normalized.get("deduction") or normalized.get("sellerdeduction") or normalized.get("deductionpercent") or normalized.get("deductionpercentage"))
+            if seller and sheet_type and (rate is not None or deduction is not None):
+                terms.append({"seller": seller, "sheet_type": sheet_type, "value_source": value_source, "rate": rate, "deduction": deduction})
         return terms
 
     def _refresh_seller_terms_dropdowns(self) -> None:
@@ -3011,6 +3012,18 @@ class CardPipelineApp(tk.Tk):
             return self._money_value(getattr(row, "_seller_terms_base_purchase", row.existing_value))
         return None
 
+    def _seller_terms_company_price(self, row: WorkbookRow, company_name: str, deduction: float) -> float | None:
+        company_key = company_name.strip().lower()
+        if not company_key:
+            return None
+        for decision in self.assignment_engine.evaluate(row):
+            if decision.company.strip().lower() != company_key:
+                continue
+            if decision.payout is None or decision.source_value is None:
+                return None
+            return max(0.0, round(decision.payout - (decision.source_value * deduction), 2))
+        return None
+
     def _restore_create_seller_term_prices(self) -> int:
         restored = 0
         for row in self.intake_rows:
@@ -3042,28 +3055,39 @@ class CardPipelineApp(tk.Tk):
         value_source = self.seller_terms_value_source_var.get().strip() if hasattr(self, "seller_terms_value_source_var") else ""
         value_source = value_source or str(term.get("value_source") or "")
         rate = self._money_value(term.get("rate"))
-        if not value_source or rate is None:
+        deduction = self._money_value(term.get("deduction"))
+        if deduction is None and (not value_source or rate is None):
             if show_status:
-                self.status_var.set(f"Seller terms for {seller} / {sheet_type} need a value source and rate.")
+                self.status_var.set(f"Seller terms for {seller} / {sheet_type} need either a Deduction or a Value Source and Seller Rate.")
             return 0
         changed = 0
         skipped = 0
         for row in self.intake_rows:
             if not hasattr(row, "_seller_terms_base_purchase"):
                 setattr(row, "_seller_terms_base_purchase", row.existing_value)
-            value = self._seller_terms_row_value(row, value_source)
-            if value is None:
-                skipped += 1
-                continue
-            seller_price = round(value * rate, 2)
+            if deduction is not None:
+                seller_price = self._seller_terms_company_price(row, sheet_type, deduction)
+                if seller_price is None:
+                    skipped += 1
+                    continue
+            else:
+                value = self._seller_terms_row_value(row, value_source)
+                if value is None:
+                    skipped += 1
+                    continue
+                seller_price = round(value * rate, 2)
             if row.existing_value != seller_price:
                 row.existing_value = seller_price
                 changed += 1
         if changed:
             self._refresh_table()
         if show_status:
-            suffix = f" ({skipped} skipped: missing {value_source})" if skipped else ""
-            self.status_var.set(f"Applied seller terms: {seller} / {sheet_type} at {rate:.0%} of {value_source}.{suffix}")
+            if deduction is not None:
+                suffix = f" ({skipped} skipped: no matching {sheet_type} payout)" if skipped else ""
+                self.status_var.set(f"Applied seller terms: {seller} / {sheet_type} payout minus {deduction:.0%}.{suffix}")
+            else:
+                suffix = f" ({skipped} skipped: missing {value_source})" if skipped else ""
+                self.status_var.set(f"Applied seller terms: {seller} / {sheet_type} at {rate:.0%} of {value_source}.{suffix}")
         return changed
 
     def _known_assigned_people(self) -> list[str]:
