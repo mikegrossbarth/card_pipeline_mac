@@ -632,9 +632,26 @@ class CardPipelineApp(tk.Tk):
             lightcolor="#16a34a",
             darkcolor="#15803d",
         )
-        style.configure("Treeview", rowheight=34, font=("Segoe UI", 10), background=palette["panel"], fieldbackground=palette["panel"], foreground=palette["subtle_text"], borderwidth=0)
-        style.configure("Treeview.Heading", font=("Segoe UI Semibold", 9), background=palette["panel_high"], foreground=palette["muted"], padding=(10, 8), borderwidth=0)
-        style.map("Treeview", background=[("selected", palette["selection"])], foreground=[("selected", "#000000")])
+        style.configure(
+            "Treeview",
+            rowheight=34,
+            font=("Segoe UI", 10),
+            background="#ffffff",
+            fieldbackground="#ffffff",
+            foreground="#111827",
+            borderwidth=1,
+            relief="solid",
+        )
+        style.configure(
+            "Treeview.Heading",
+            font=("Segoe UI Semibold", 9),
+            background="#f3f4f6",
+            foreground="#111827",
+            padding=(10, 8),
+            borderwidth=1,
+            relief="solid",
+        )
+        style.map("Treeview", background=[("selected", "#cfe8ff")], foreground=[("selected", "#000000")])
 
         header = ttk.Frame(self, style="Header.TFrame", padding=(18, 16))
         header.pack(fill=tk.X)
@@ -837,9 +854,9 @@ class CardPipelineApp(tk.Tk):
         x_scroll = ttk.Scrollbar(content, orient=tk.HORIZONTAL, command=tree.xview)
         x_scroll.grid(row=1, column=0, sticky="ew")
         tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
-        tree.tag_configure("duplicate_cert", background="#4a3d12", foreground="#fff3b0")
-        tree.tag_configure("no_sheet_found", background="#4a1717", foreground="#ffd1d1")
-        tree.tag_configure("add_review_row", background="#242424", foreground="#1ed760")
+        tree.tag_configure("duplicate_cert", background="#fff2cc", foreground="#7a4f00")
+        tree.tag_configure("no_sheet_found", background="#f8d7da", foreground="#842029")
+        tree.tag_configure("add_review_row", background="#e7f7ec", foreground="#126b3f")
         if editable:
             tree.bind("<Double-1>", self._begin_cell_edit)
             tree.bind("<Button-1>", self._handle_table_click, add="+")
@@ -1131,8 +1148,8 @@ class CardPipelineApp(tk.Tk):
             widths={"date": 95, "company": 150, "card": 440, "cert": 110, "purchase": 105, "sale": 105, "profit": 105, "sheet": 220},
             height=18,
         )
-        self.profit_tree.tag_configure("profit_positive", foreground="#d7fbe8")
-        self.profit_tree.tag_configure("profit_negative", foreground="#ffd1d1")
+        self.profit_tree.tag_configure("profit_positive", foreground="#137333")
+        self.profit_tree.tag_configure("profit_negative", foreground="#b3261e")
         self.profit_tree.tag_configure("total_row", background="#242424", foreground="#ffffff", font=("Segoe UI Semibold", 10))
 
     def _load_profit_ledger(self) -> list[dict[str, object]]:
