@@ -1649,6 +1649,39 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_inventory_rows_can_be_deleted_by_key(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _delete_inventory_records_by_keys = app.CardPipelineApp._delete_inventory_records_by_keys
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_pipeline = app.CARD_PIPELINE_DIR
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            dummy = InventoryDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            try:
+                first = dummy._normalize_inventory_record({"assigned_person": "Kevin Hambone", "cert_number": "111", "source_sheet": "A.xlsx"})
+                second = dummy._normalize_inventory_record({"assigned_person": "James Copeland", "cert_number": "222", "source_sheet": "B.xlsx"})
+                third = dummy._normalize_inventory_record({"assigned_person": "Kevin Hambone", "cert_number": "333", "source_sheet": "C.xlsx"})
+                dummy._save_inventory_ledger([first, second, third])
+
+                deleted = dummy._delete_inventory_records_by_keys({first["inventory_key"], third["inventory_key"]})
+
+                self.assertEqual(deleted, 2)
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger[0]["inventory_key"], second["inventory_key"])
+                self.assertEqual(ledger[0]["cert_number"], "222")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.CARD_PIPELINE_DIR = old_pipeline
+
     def test_delete_person_records_unassigns_markers_inventory_and_profit(self) -> None:
         class DeletePersonDummy:
             _money_value = app.CardPipelineApp._money_value

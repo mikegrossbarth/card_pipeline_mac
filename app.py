@@ -1723,6 +1723,9 @@ class CardPipelineApp(tk.Tk):
             if len(active_records) == 1 and len(records) == 1:
                 menu.add_separator()
             menu.add_command(label="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets)
+        if records:
+            menu.add_separator()
+            menu.add_command(label="Delete from Inventory", command=self.delete_selected_inventory_records)
         if menu.index("end") is None:
             return "break"
         try:
@@ -1785,6 +1788,36 @@ class CardPipelineApp(tk.Tk):
             self.inventory_tree_records[iid] = record
         self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Purchase Total: {format_money(total_purchase)}   Value: {format_money(total_value)}")
         self.inventory_status_var.set(f"Loaded {len(self.filtered_inventory_rows)}/{len(self.inventory_rows)} inventory card(s) from {INVENTORY_LEDGER_PATH.name}.")
+
+    def delete_selected_inventory_records(self) -> None:
+        if not hasattr(self, "inventory_tree"):
+            return
+        records = [self.inventory_tree_records.get(iid) for iid in self.inventory_tree.selection()]
+        keys = {str(record.get("inventory_key") or "") for record in records if record}
+        keys.discard("")
+        if not keys:
+            messagebox.showinfo("Choose inventory", "Select one or more inventory rows to delete.")
+            return
+        confirmed = messagebox.askyesno(
+            "Delete from inventory?",
+            f"Delete {len(keys)} selected inventory item(s)?\n\nThis only removes them from Inventory.",
+        )
+        if not confirmed:
+            return
+        deleted = self._delete_inventory_records_by_keys(keys)
+        self.refresh_inventory_tab()
+        self.status_var.set(f"Deleted {deleted} inventory item(s).")
+
+    def _delete_inventory_records_by_keys(self, keys: set[str]) -> int:
+        if not keys:
+            return 0
+        with shared_lock(CARD_PIPELINE_DIR, "inventory-delete", self.lucas_identity):
+            rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+            kept = [record for record in rows if str(record.get("inventory_key") or "") not in keys]
+            deleted = len(rows) - len(kept)
+            if deleted:
+                self._save_inventory_ledger(kept)
+        return deleted
 
     def _filtered_inventory_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         person = self.inventory_person_var.get().strip().lower() if hasattr(self, "inventory_person_var") else ""
