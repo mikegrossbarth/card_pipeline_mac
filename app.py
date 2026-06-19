@@ -14,6 +14,7 @@ import tkinter as tk
 import urllib.parse
 import urllib.request
 import webbrowser
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -2920,6 +2921,7 @@ class CardPipelineApp(tk.Tk):
     def _payout_sheet_items(self) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
         seller_names = self._seller_terms_seller_names()
+        realized_profit_totals = self._realized_profit_totals_by_person_sheet()
         for stage in ("Incoming", "Received"):
             for name in self.home_sheet_paths.get(stage, {}):
                 key = self._home_sheet_key(stage, name)
@@ -2934,7 +2936,14 @@ class CardPipelineApp(tk.Tk):
                 person = str(marker.get("assigned_person") or "").strip()
                 purchase_total = float(summary.get("purchase_total") or 0.0)
                 estimated_payout_total = float(summary.get("estimated_payout_total") or 0.0)
-                payout_balance, payout_basis = self._active_payout_balance(person, purchase_total, estimated_payout_total, seller_names)
+                realized_profit_total = realized_profit_totals.get((person.lower(), Path(name).name.lower()), 0.0)
+                payout_balance, payout_basis = self._active_payout_balance(
+                    person,
+                    purchase_total,
+                    estimated_payout_total,
+                    seller_names,
+                    realized_profit_total=realized_profit_total,
+                )
                 items.append(
                     {
                         "key": key,
@@ -2947,12 +2956,24 @@ class CardPipelineApp(tk.Tk):
                         "purchase_total": purchase_total,
                         "estimated_payout_total": estimated_payout_total,
                         "estimated_profit": round(estimated_payout_total - purchase_total, 2),
+                        "realized_profit_total": round(realized_profit_total, 2),
                         "payout_balance": payout_balance,
                         "payout_basis": payout_basis,
                         "status": status,
                     }
                 )
         return items
+
+    def _realized_profit_totals_by_person_sheet(self) -> dict[tuple[str, str], float]:
+        totals: dict[tuple[str, str], float] = defaultdict(float)
+        for record in self._enrich_profit_records_with_people(self._load_profit_ledger()):
+            person = str(record.get("assigned_person") or "").strip().lower()
+            source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+            profit = self._money_value(record.get("profit"))
+            if not person or not source_sheet or profit is None:
+                continue
+            totals[(person, source_sheet)] += profit
+        return dict(totals)
 
     def _seller_terms_seller_names(self) -> set[str]:
         return {
@@ -2967,13 +2988,14 @@ class CardPipelineApp(tk.Tk):
         purchase_total: float,
         estimated_payout_total: float,
         seller_names: set[str] | None = None,
+        realized_profit_total: float | None = None,
     ) -> tuple[float, str]:
         normalized_person = str(person or "").strip().lower()
         seller_names = seller_names if seller_names is not None else self._seller_terms_seller_names()
         if normalized_person and normalized_person in seller_names:
             return round(float(purchase_total or 0.0), 2), "Seller purchase total"
-        estimated_profit = float(estimated_payout_total or 0.0) - float(purchase_total or 0.0)
-        return max(0.0, round(estimated_profit / 2.0, 2)), "Team half profit"
+        realized_profit = float(realized_profit_total or 0.0)
+        return max(0.0, round(realized_profit / 2.0, 2)), "Team half sold profit"
 
     def _payout_sheet_status(self, stage: str, marker: dict[str, object], summary: dict[str, object]) -> str:
         received_count = int(summary.get("received_count") or 0)
@@ -3423,10 +3445,13 @@ class CardPipelineApp(tk.Tk):
         kind, name = self._split_home_sheet_key(key)
         marker = self.home_sheet_markers.get(key, {})
         summary = self.home_sheet_summaries.get(key, {})
+        person = str(marker.get("assigned_person") or "").strip()
+        realized_profit_total = self._realized_profit_totals_by_person_sheet().get((person.lower(), Path(name).name.lower()), 0.0)
         balance, basis = self._active_payout_balance(
-            str(marker.get("assigned_person") or "").strip(),
+            person,
             float(summary.get("purchase_total") or 0.0),
             float(summary.get("estimated_payout_total") or 0.0),
+            realized_profit_total=realized_profit_total,
         )
         paid_var = tk.BooleanVar(value=bool(marker.get("paid")))
         person_var = tk.StringVar(value=str(marker.get("assigned_person") or "").strip())

@@ -1048,8 +1048,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _realized_profit_totals_by_person_sheet = app.CardPipelineApp._realized_profit_totals_by_person_sheet
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _money_value = app.CardPipelineApp._money_value
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
             def _seller_terms_seller_names(self):
                 return {"john seller"}
+            def _load_profit_ledger(self):
+                return []
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1110,8 +1117,62 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         sellers = {"john seller"}
 
         self.assertEqual(dummy._active_payout_balance("John Seller", 80.0, 150.0, sellers), (80.0, "Seller purchase total"))
-        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers), (35.0, "Team half profit"))
-        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 100.0, 80.0, sellers), (0.0, "Team half profit"))
+        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers), (0.0, "Team half sold profit"))
+        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers, realized_profit_total=70.0), (35.0, "Team half sold profit"))
+        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 100.0, 80.0, sellers, realized_profit_total=-20.0), (0.0, "Team half sold profit"))
+
+    def test_team_payout_uses_sold_profit_not_unsold_estimated_profit(self) -> None:
+        class PayoutDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
+            _realized_profit_totals_by_person_sheet = app.CardPipelineApp._realized_profit_totals_by_person_sheet
+            _active_payout_balance = app.CardPipelineApp._active_payout_balance
+            _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
+            _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+
+            def __init__(self):
+                self.home_sheet_paths = {"Incoming": {"Lot A.xlsx": Path("Lot A.xlsx")}, "Received": {}}
+                self.home_sheet_markers = {"Incoming|Lot A.xlsx": {"assigned_person": "Kevin Hambone"}}
+                self.home_sheet_summaries = {
+                    "Incoming|Lot A.xlsx": {
+                        "row_count": 2,
+                        "received_count": 0,
+                        "purchase_total": 80.0,
+                        "estimated_payout_total": 150.0,
+                    }
+                }
+                self.ledger = []
+
+            def _seller_terms_seller_names(self):
+                return set()
+
+            def _load_profit_ledger(self):
+                return self.ledger
+
+        dummy = PayoutDummy()
+        payout_items = dummy._payout_sheet_items()
+        self.assertEqual(payout_items[0]["payout_balance"], 0.0)
+        self.assertEqual(payout_items[0]["payout_basis"], "Team half sold profit")
+
+        dummy.ledger = [
+            {
+                "assigned_person": "Kevin Hambone",
+                "source_sheet": "Lot A.xlsx",
+                "purchase_price": 80.0,
+                "sale_price": 150.0,
+                "company": "Arena Club",
+                "cert_number": "123",
+                "date_added": "2026-06-19",
+            }
+        ]
+        payout_items = dummy._payout_sheet_items()
+        self.assertEqual(payout_items[0]["realized_profit_total"], 70.0)
+        self.assertEqual(payout_items[0]["payout_balance"], 35.0)
 
     def test_moving_received_sheet_back_clears_received_profit_and_company_rows(self) -> None:
         class MoveDummy:
