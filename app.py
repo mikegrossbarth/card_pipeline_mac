@@ -1146,6 +1146,7 @@ class CardPipelineApp(tk.Tk):
         self.profit_expenses_button = ttk.Button(view_row, text="Expenses", command=lambda: self._set_profit_view_mode("Expenses"), style="Soft.TButton")
         self.profit_expenses_button.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(view_row, text="Refund Selected", command=self.refund_selected_profit_to_inventory, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(view_row, text="Delete Expense", command=self.delete_selected_profit_expenses, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         self.profit_table_title_var = tk.StringVar(value="Sold Cards")
         ttk.Label(ledger_panel, textvariable=self.profit_table_title_var, style="Panel.TLabel").pack(anchor=tk.W)
         self.profit_tree = self._build_home_tree(
@@ -2316,6 +2317,53 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(f"Added {expense_type} expense for {person}: {format_money(amount)}.")
         else:
             messagebox.showinfo("Expense not added", "That expense already exists in the profit ledger.")
+
+    def _delete_profit_expense_records(self, records: list[dict[str, object]]) -> int:
+        expense_keys: set[str] = set()
+        for record in records:
+            normalized = self._normalize_profit_record(record)
+            if str(normalized.get("record_type") or "").strip().lower() != "expense":
+                continue
+            key = str(normalized.get("ledger_key") or self._profit_record_key(normalized) or "")
+            if key:
+                expense_keys.add(key)
+        if not expense_keys:
+            return 0
+        with shared_lock(CARD_PIPELINE_DIR, "profit-expense-delete", self.lucas_identity):
+            ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+            kept: list[dict[str, object]] = []
+            deleted = 0
+            for record in ledger:
+                key = str(record.get("ledger_key") or self._profit_record_key(record) or "")
+                is_expense = str(record.get("record_type") or "").strip().lower() == "expense"
+                if is_expense and key in expense_keys:
+                    deleted += 1
+                    continue
+                kept.append(record)
+            if deleted:
+                self._save_profit_ledger(kept)
+            return deleted
+
+    def delete_selected_profit_expenses(self) -> None:
+        if not hasattr(self, "profit_tree"):
+            return
+        selected = list(self.profit_tree.selection())
+        records = [self.profit_tree_records.get(iid) for iid in selected if self.profit_tree_records.get(iid)]
+        if not records:
+            messagebox.showinfo("Choose expense", "Select one or more expense rows to delete.")
+            return
+        if any(str(record.get("record_type") or "").strip().lower() != "expense" for record in records):
+            messagebox.showinfo("Delete expenses only", "Only expense rows can be deleted here. Sold cards should be refunded instead.")
+            return
+        confirmed = messagebox.askyesno(
+            "Delete expense(s)?",
+            f"Delete {len(records)} expense row(s) from the profit ledger?",
+        )
+        if not confirmed:
+            return
+        deleted = self._delete_profit_expense_records(records)
+        self.refresh_profit_tab()
+        self.status_var.set(f"Deleted {deleted} expense row(s) from the profit ledger.")
 
     def refund_selected_profit_to_inventory(self) -> None:
         if not hasattr(self, "profit_tree"):

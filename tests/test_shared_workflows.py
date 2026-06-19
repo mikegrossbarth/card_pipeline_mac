@@ -1349,6 +1349,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
             _expense_related_label = app.CardPipelineApp._expense_related_label
+            _delete_profit_expense_records = app.CardPipelineApp._delete_profit_expense_records
             refresh_profit_tab = lambda self: None
 
         with TemporaryDirectory() as tmp:
@@ -1394,6 +1395,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 filtered = dummy._filtered_profit_records(ledger)
                 _days, values = dummy._profit_chart_series(filtered)
                 self.assertEqual(sum(values), 25)
+                self.assertEqual(dummy._delete_profit_expense_records([expense_row]), 1)
+                ledger_after_delete = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                self.assertEqual(len(ledger_after_delete), 1)
+                self.assertNotEqual(ledger_after_delete[0].get("record_type"), "expense")
+                self.assertEqual(ledger_after_delete[0]["profit"], 50)
+                self.assertEqual(dummy._delete_profit_expense_records([ledger_after_delete[0]]), 0)
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
