@@ -130,6 +130,7 @@ COMP_SOURCE_CY = "CY"
 NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
 PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Month", "Year", "Total")
 PROFIT_GRAPH_OPTIONS = ("Daily Trend", "Overall Profit")
+EXPENSE_CATEGORY_OPTIONS = ("Travel", "Supplies", "Travel Meal", "Fees")
 ASSIGNMENT_CATEGORY_OPTIONS = (
     "basketball",
     "football",
@@ -1115,9 +1116,10 @@ class CardPipelineApp(tk.Tk):
         self.profit_graph_combo.grid(row=0, column=6, sticky="w")
         self.profit_graph_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
         ttk.Button(controls, text="Refresh", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(10, 0))
-        controls.columnconfigure(8, weight=1)
-        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=0, column=8, sticky="e")
-        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=9, sticky="w", pady=(8, 0))
+        ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=8, sticky="w", padx=(8, 0))
+        controls.columnconfigure(9, weight=1)
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=0, column=9, sticky="e")
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=10, sticky="w", pady=(8, 0))
 
         chart_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
         chart_panel.pack(fill=tk.X, pady=(0, 10))
@@ -1901,6 +1903,12 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(f"Exported inventory: {path}")
 
     def _profit_record_key(self, record: dict[str, object]) -> str:
+        record_type = str(record.get("record_type") or "").strip().lower()
+        if record_type == "expense":
+            return "|".join(
+                str(record.get(field) or "").strip().lower()
+                for field in ("record_type", "expense_id", "assigned_person", "date_added", "expense_type", "expense_amount", "notes")
+            )
         return "|".join(
             str(record.get(field) or "").strip().lower()
             for field in ("cert_number", "company", "date_added", "weekly_sheet_name", "source_sheet")
@@ -1919,6 +1927,30 @@ class CardPipelineApp(tk.Tk):
 
     def _normalize_profit_record(self, record: dict[str, object]) -> dict[str, object]:
         normalized = dict(record)
+        record_type = str(normalized.get("record_type") or "").strip().lower()
+        if record_type == "expense":
+            amount = self._money_value(normalized.get("expense_amount") or normalized.get("amount") or normalized.get("purchase_price")) or 0.0
+            expense_type = str(normalized.get("expense_type") or normalized.get("category") or "Fees").strip() or "Fees"
+            if expense_type not in EXPENSE_CATEGORY_OPTIONS:
+                expense_type = "Fees"
+            notes = str(normalized.get("notes") or "").strip()
+            normalized["record_type"] = "expense"
+            normalized["expense_id"] = str(normalized.get("expense_id") or "").strip()
+            normalized["expense_type"] = expense_type
+            normalized["expense_amount"] = round(abs(amount), 2)
+            normalized["purchase_price"] = None
+            normalized["sale_price"] = None
+            normalized["profit"] = -round(abs(amount), 2)
+            normalized["date_added"] = str(normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"))[:10]
+            normalized["company"] = f"Expense: {expense_type}"
+            normalized["card_title"] = notes or expense_type
+            normalized["cert_number"] = ""
+            normalized["weekly_sheet_name"] = ""
+            normalized["source_sheet"] = "Expenses"
+            normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
+            normalized["notes"] = notes
+            normalized["ledger_key"] = self._profit_record_key(normalized)
+            return normalized
         purchase = self._money_value(normalized.get("purchase_price"))
         sale = self._money_value(normalized.get("sale_price"))
         normalized["purchase_price"] = purchase
@@ -2142,6 +2174,90 @@ class CardPipelineApp(tk.Tk):
         self.refresh_profit_tab()
         return added
 
+    def open_add_expense_popup(self) -> None:
+        person_var = tk.StringVar(value=self.profit_person_var.get().strip() if hasattr(self, "profit_person_var") else "")
+        date_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
+        type_var = tk.StringVar(value=EXPENSE_CATEGORY_OPTIONS[0])
+        amount_var = tk.StringVar()
+        notes_var = tk.StringVar()
+
+        popup = tk.Toplevel(self)
+        popup.title("Add Expense")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.grab_set()
+        popup.resizable(False, False)
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Add Expense", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ttk.Label(frame, text="Person", style="Panel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
+        person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
+        person_combo.grid(row=1, column=1, sticky="ew", pady=(0, 10))
+        self._bind_person_autocomplete(person_combo)
+        ttk.Label(frame, text="Date", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
+        ttk.Entry(frame, textvariable=date_var, width=18).grid(row=2, column=1, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="Type", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
+        ttk.Combobox(frame, textvariable=type_var, values=EXPENSE_CATEGORY_OPTIONS, width=18, state="readonly").grid(row=3, column=1, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="Amount", style="Panel.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
+        ttk.Entry(frame, textvariable=amount_var, width=18).grid(row=4, column=1, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="Notes", style="Panel.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=(0, 14))
+        ttk.Entry(frame, textvariable=notes_var, width=36).grid(row=5, column=1, sticky="ew", pady=(0, 14))
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=6, column=0, columnspan=2, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            buttons,
+            text="Save",
+            command=lambda: self._save_expense_from_popup(person_var, date_var, type_var, amount_var, notes_var, popup),
+            style="Primary.TButton",
+        ).pack(side=tk.LEFT)
+        frame.columnconfigure(1, weight=1)
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+
+    def _save_expense_from_popup(
+        self,
+        person_var: tk.StringVar,
+        date_var: tk.StringVar,
+        type_var: tk.StringVar,
+        amount_var: tk.StringVar,
+        notes_var: tk.StringVar,
+        popup: tk.Toplevel,
+    ) -> None:
+        person = person_var.get().strip()
+        if not person:
+            messagebox.showinfo("Person required", "Choose the person this expense belongs to.")
+            return
+        expense_date = date_var.get().strip()
+        if self._profit_record_date(expense_date) is None:
+            messagebox.showinfo("Date required", "Enter the expense date as YYYY-MM-DD.")
+            return
+        amount = self._money_value(amount_var.get())
+        if amount is None or amount <= 0:
+            messagebox.showinfo("Amount required", "Enter an expense amount greater than zero.")
+            return
+        expense_type = type_var.get().strip()
+        if expense_type not in EXPENSE_CATEGORY_OPTIONS:
+            expense_type = "Fees"
+        record = {
+            "record_type": "expense",
+            "expense_id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            "date_added": expense_date[:10],
+            "assigned_person": person,
+            "expense_type": expense_type,
+            "expense_amount": amount,
+            "notes": notes_var.get().strip(),
+        }
+        added = self.record_profit_sales([record])
+        if added:
+            popup.destroy()
+            self.status_var.set(f"Added {expense_type} expense for {person}: {format_money(amount)}.")
+        else:
+            messagebox.showinfo("Expense not added", "That expense already exists in the profit ledger.")
+
     def refund_selected_profit_to_inventory(self) -> None:
         if not hasattr(self, "profit_tree"):
             return
@@ -2149,6 +2265,9 @@ class CardPipelineApp(tk.Tk):
         records = [self.profit_tree_records.get(iid) for iid in selected if self.profit_tree_records.get(iid)]
         if not records:
             messagebox.showinfo("Choose sold cards", "Select one or more sold card rows to refund.")
+            return
+        if any(str(record.get("record_type") or "").strip().lower() == "expense" for record in records):
+            messagebox.showinfo("Cannot refund expenses", "Expense rows adjust profit only and cannot be returned to inventory.")
             return
         confirmed = messagebox.askyesno(
             "Refund selected card(s)?",
@@ -2259,7 +2378,7 @@ class CardPipelineApp(tk.Tk):
                         format_money(purchase),
                         format_money(sale),
                         format_money(profit),
-                        record.get("weekly_sheet_name") or "",
+                        record.get("weekly_sheet_name") or record.get("source_sheet") or "",
                     ),
                     tags=(tag,),
                 )

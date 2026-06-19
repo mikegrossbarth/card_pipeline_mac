@@ -1333,6 +1333,65 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
 
+    def test_expense_records_deduct_from_person_profit(self) -> None:
+        class ExpenseDummy:
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _money_value = app.CardPipelineApp._money_value
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            record_profit_sales = app.CardPipelineApp.record_profit_sales
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_today = lambda self: datetime(2026, 6, 19).date()
+            _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
+            _profit_period_label = app.CardPipelineApp._profit_period_label
+            _profit_graph_label = app.CardPipelineApp._profit_graph_label
+            _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
+            _profit_chart_series = app.CardPipelineApp._profit_chart_series
+            refresh_profit_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_ledger = app.PROFIT_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            dummy = ExpenseDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.profit_person_var = types.SimpleNamespace(get=lambda: "Kevin")
+            dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Month")
+            dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Daily Trend")
+            try:
+                expense = {
+                    "record_type": "expense",
+                    "expense_id": "expense-1",
+                    "assigned_person": "Kevin Hambone",
+                    "date_added": "2026-06-18",
+                    "expense_type": "Travel Meal",
+                    "expense_amount": 25,
+                    "notes": "Airport dinner",
+                }
+                sale = {
+                    "assigned_person": "Kevin Hambone",
+                    "cert_number": "123",
+                    "source_sheet": "Lot A.xlsx",
+                    "company": "Arena",
+                    "purchase_price": 50,
+                    "sale_price": 100,
+                    "date_added": "2026-06-18",
+                }
+                self.assertEqual(dummy.record_profit_sales([expense, sale]), 2)
+                ledger = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                expense_row = next(record for record in ledger if record.get("record_type") == "expense")
+                self.assertEqual(expense_row["profit"], -25)
+                self.assertEqual(expense_row["company"], "Expense: Travel Meal")
+                self.assertEqual(expense_row["source_sheet"], "Expenses")
+                filtered = dummy._filtered_profit_records(ledger)
+                _days, values = dummy._profit_chart_series(filtered)
+                self.assertEqual(sum(values), 25)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.PROFIT_LEDGER_PATH = old_ledger
+
     def test_inventory_records_are_deduped_and_reactivated(self) -> None:
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
