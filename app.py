@@ -385,6 +385,7 @@ class CardPipelineApp(tk.Tk):
             else f"Card Ladder bridge failed to start: {self.bridge.error}"
         )
         self.lucas_identity = local_identity(SETTINGS_PATH)
+        self.app_settings = load_app_settings()
 
         self.input_mode = tk.StringVar(value="Barcode Scanner")
         self.review_mode = tk.StringVar(value="Automatic Receive")
@@ -393,6 +394,7 @@ class CardPipelineApp(tk.Tk):
         self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
         self.comp_source_label = tk.StringVar(value=COMP_SOURCE_BOTH)
         self.working_sheet_title = tk.StringVar()
+        self.create_network_mode_var = tk.BooleanVar(value=bool(self.app_settings.get("network_mode")))
         self.seller_terms_seller_var = tk.StringVar()
         self.seller_terms_sheet_type_var = tk.StringVar()
         self.selected_working_sheet = tk.StringVar()
@@ -693,18 +695,28 @@ class CardPipelineApp(tk.Tk):
         mode.bind("<<ComboboxSelected>>", lambda _event: self._show_mode())
         ttk.Button(intake_controls, text="Delete Selected", command=self.delete_selected_intake_rows, style="Soft.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
         ttk.Button(intake_controls, text="Clear Rows", command=self.clear_rows, style="Soft.TButton").grid(row=0, column=3, sticky="w")
+        ttk.Checkbutton(
+            intake_controls,
+            text="Network Mode",
+            variable=self.create_network_mode_var,
+            command=self._toggle_create_network_mode,
+            style="Panel.TCheckbutton",
+        ).grid(row=0, column=4, sticky="e", padx=(16, 0))
         intake_controls.columnconfigure(4, weight=1)
-        ttk.Label(intake_controls, text="Seller", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        self.network_seller_label = ttk.Label(intake_controls, text="Seller", style="Muted.TLabel")
+        self.network_seller_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.seller_terms_seller_combo = ttk.Combobox(intake_controls, textvariable=self.seller_terms_seller_var, width=24)
         self.seller_terms_seller_combo.grid(row=1, column=1, sticky="w", padx=(8, 16), pady=(10, 0))
         self._bind_person_autocomplete(self.seller_terms_seller_combo, refresh_callback=self.apply_create_seller_terms)
         self.seller_terms_seller_combo.bind("<<ComboboxSelected>>", lambda _event: self.apply_create_seller_terms(), add="+")
-        ttk.Label(intake_controls, text="Sheet Type", style="Muted.TLabel").grid(row=1, column=2, sticky="e", padx=(0, 6), pady=(10, 0))
+        self.network_sheet_type_label = ttk.Label(intake_controls, text="Sheet Type", style="Muted.TLabel")
+        self.network_sheet_type_label.grid(row=1, column=2, sticky="e", padx=(0, 6), pady=(10, 0))
         self.seller_terms_sheet_type_combo = ttk.Combobox(intake_controls, textvariable=self.seller_terms_sheet_type_var, width=18)
         self.seller_terms_sheet_type_combo.grid(row=1, column=3, sticky="w", padx=(0, 16), pady=(10, 0))
         self.seller_terms_sheet_type_combo.configure(postcommand=self._refresh_seller_terms_dropdowns)
         self.seller_terms_sheet_type_combo.bind("<<ComboboxSelected>>", lambda _event: self.apply_create_seller_terms(), add="+")
         ttk.Label(intake_controls, textvariable=self.summary_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=5, sticky="w", pady=(10, 0))
+        self._set_create_network_controls_visible(self._network_mode_enabled())
 
         self.mode_host = ttk.Frame(self.intake_tab, style="Panel.TFrame", padding=(16, 12))
         self.mode_host.pack(fill=tk.X, pady=(0, 10))
@@ -2971,6 +2983,41 @@ class CardPipelineApp(tk.Tk):
             return "Partially Received"
         return "Unreceived"
 
+    def _network_mode_enabled(self) -> bool:
+        var = getattr(self, "create_network_mode_var", None)
+        return bool(var.get()) if var is not None else False
+
+    def _set_create_network_controls_visible(self, visible: bool) -> None:
+        widgets = (
+            getattr(self, "network_seller_label", None),
+            getattr(self, "seller_terms_seller_combo", None),
+            getattr(self, "network_sheet_type_label", None),
+            getattr(self, "seller_terms_sheet_type_combo", None),
+        )
+        for widget in widgets:
+            if widget is None:
+                continue
+            if visible:
+                widget.grid()
+            else:
+                widget.grid_remove()
+
+    def _toggle_create_network_mode(self) -> None:
+        enabled = self._network_mode_enabled()
+        settings = load_app_settings()
+        settings["network_mode"] = enabled
+        save_app_settings(settings)
+        self.app_settings = settings
+        self._set_create_network_controls_visible(enabled)
+        if not enabled:
+            restored = self._restore_create_seller_term_prices()
+            if restored:
+                self._refresh_table()
+            self.status_var.set("Network Mode off. Seller terms hidden.")
+        else:
+            self.status_var.set("Network Mode on. Seller and Sheet Type are available in Create.")
+            self.apply_create_seller_terms(show_status=False)
+
     def _load_seller_terms(self) -> list[dict[str, object]]:
         if not SELLER_TERMS_PATH.exists():
             return []
@@ -3047,6 +3094,11 @@ class CardPipelineApp(tk.Tk):
         return restored
 
     def apply_create_seller_terms(self, show_status: bool = True) -> int:
+        if not self._network_mode_enabled():
+            restored = self._restore_create_seller_term_prices()
+            if restored:
+                self._refresh_table()
+            return 0
         seller = self.seller_terms_seller_var.get().strip() if hasattr(self, "seller_terms_seller_var") else ""
         sheet_type = self.seller_terms_sheet_type_var.get().strip() if hasattr(self, "seller_terms_sheet_type_var") else ""
         if not seller or not sheet_type:
@@ -4871,7 +4923,7 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("Title required", "Enter a working sheet title first.")
             return
         self.apply_create_seller_terms(show_status=False)
-        seller = self.seller_terms_seller_var.get().strip() if hasattr(self, "seller_terms_seller_var") else ""
+        seller = self.seller_terms_seller_var.get().strip() if self._network_mode_enabled() and hasattr(self, "seller_terms_seller_var") else ""
         try:
             with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
                 path = working_sheet_path(WORKING_SHEETS_DIR, title)

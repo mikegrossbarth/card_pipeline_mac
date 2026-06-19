@@ -1891,9 +1891,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _seller_terms_match = app.CardPipelineApp._seller_terms_match
             _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
             _restore_create_seller_term_prices = app.CardPipelineApp._restore_create_seller_term_prices
+            _network_mode_enabled = app.CardPipelineApp._network_mode_enabled
             apply_create_seller_terms = app.CardPipelineApp.apply_create_seller_terms
 
             def __init__(self):
+                self.create_network_mode_var = Var(True)
                 self.seller_terms_seller_var = Var("John")
                 self.seller_terms_sheet_type_var = Var("Arena Club")
                 self.status_var = Var("")
@@ -1937,6 +1939,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertIn("payout minus 5%", dummy.status_var.value)
 
                 dummy.seller_terms_sheet_type_var.set("")
+                self.assertEqual(dummy.apply_create_seller_terms(), 0)
+                self.assertEqual(dummy.intake_rows[0].existing_value, 10)
+                self.assertEqual(dummy.intake_rows[1].existing_value, 20)
+
+                dummy.seller_terms_sheet_type_var.set("Arena Club")
+                dummy.create_network_mode_var.set(False)
                 self.assertEqual(dummy.apply_create_seller_terms(), 0)
                 self.assertEqual(dummy.intake_rows[0].existing_value, 10)
                 self.assertEqual(dummy.intake_rows[1].existing_value, 20)
