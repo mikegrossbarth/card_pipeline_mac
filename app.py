@@ -1342,6 +1342,59 @@ class CardPipelineApp(tk.Tk):
                 keys.add((source_sheet, cert))
         return keys
 
+    def _received_inventory_candidate_records_for_sheet(
+        self,
+        stage: str,
+        path: Path,
+        person: str,
+        company_keys: set[tuple[str, str]] | None = None,
+    ) -> list[dict[str, object]]:
+        assigned_person = str(person or "").strip()
+        if not assigned_person or not path.exists():
+            return []
+        received_certs = None if stage == "Received" else self._received_certs_in_workbook(path)
+        if received_certs == set():
+            return []
+        try:
+            rows = read_simple_spreadsheet(path)
+        except Exception:
+            return []
+        company_keys = company_keys if company_keys is not None else self._company_sheet_source_cert_keys()
+        candidates: list[dict[str, object]] = []
+        for row in rows:
+            cert = scan_to_cert(row.get("cert_number"))
+            if not cert:
+                continue
+            if received_certs is not None and cert not in received_certs:
+                continue
+            if (path.name.lower(), cert) in company_keys:
+                continue
+            card_title = str(row.get("card_title") or "")
+            candidates.append(
+                self._normalize_inventory_record(
+                    {
+                        "date_added": datetime.now().strftime("%Y-%m-%d"),
+                        "assigned_person": assigned_person,
+                        "sport": assignment_engine.parse_card_for_matching(card_title).get("sport") if card_title else "",
+                        "cert_number": cert,
+                        "grader": row.get("grader") or "",
+                        "card_title": card_title,
+                        "purchase_price": row.get("purchase_price"),
+                        "card_ladder_value": row.get("card_ladder_value"),
+                        "card_ladder_comps_average": row.get("card_ladder_comps_average"),
+                        "cy_value": row.get("cy_value"),
+                        "inventory_value": row.get("card_ladder_comps_average") or row.get("card_ladder_value") or row.get("cy_value"),
+                        "best_company": row.get("best_company") or "",
+                        "estimated_payout": row.get("estimated_payout"),
+                        "source_sheet": path.name,
+                        "source": row.get("source") or "",
+                        "status": "Active",
+                        "notes": "Backfilled from received sheets",
+                    }
+                )
+            )
+        return candidates
+
     def _received_inventory_candidate_records(self) -> list[dict[str, object]]:
         company_keys = self._company_sheet_source_cert_keys()
         candidates: list[dict[str, object]] = []
@@ -1353,45 +1406,7 @@ class CardPipelineApp(tk.Tk):
                 person = str(marker.get("assigned_person") or "").strip()
                 if not person:
                     continue
-                received_certs = None if stage == "Received" else self._received_certs_in_workbook(path)
-                if received_certs == set():
-                    continue
-                try:
-                    rows = read_simple_spreadsheet(path)
-                except Exception:
-                    continue
-                for row in rows:
-                    cert = scan_to_cert(row.get("cert_number"))
-                    if not cert:
-                        continue
-                    if received_certs is not None and cert not in received_certs:
-                        continue
-                    if (path.name.lower(), cert) in company_keys:
-                        continue
-                    card_title = str(row.get("card_title") or "")
-                    candidates.append(
-                        self._normalize_inventory_record(
-                            {
-                                "date_added": datetime.now().strftime("%Y-%m-%d"),
-                                "assigned_person": person,
-                                "sport": assignment_engine.parse_card_for_matching(card_title).get("sport") if card_title else "",
-                                "cert_number": cert,
-                                "grader": row.get("grader") or "",
-                                "card_title": card_title,
-                                "purchase_price": row.get("purchase_price"),
-                                "card_ladder_value": row.get("card_ladder_value"),
-                                "card_ladder_comps_average": row.get("card_ladder_comps_average"),
-                                "cy_value": row.get("cy_value"),
-                                "inventory_value": row.get("card_ladder_comps_average") or row.get("card_ladder_value") or row.get("cy_value"),
-                                "best_company": row.get("best_company") or "",
-                                "estimated_payout": row.get("estimated_payout"),
-                                "source_sheet": path.name,
-                                "source": row.get("source") or "",
-                                "status": "Active",
-                                "notes": "Backfilled from received sheets",
-                            }
-                        )
-                    )
+                candidates.extend(self._received_inventory_candidate_records_for_sheet(stage, path, person, company_keys))
         return candidates
 
     def reconcile_received_inventory(self) -> None:
@@ -1405,6 +1420,11 @@ class CardPipelineApp(tk.Tk):
 
     def _sync_received_inventory_to_ledger(self) -> tuple[int, int]:
         records = self._received_inventory_candidate_records()
+        added = self.add_inventory_records(records, refresh=False)
+        return added, len(records)
+
+    def _sync_received_sheet_inventory_to_ledger(self, stage: str, path: Path, person: str) -> tuple[int, int]:
+        records = self._received_inventory_candidate_records_for_sheet(stage, path, person)
         added = self.add_inventory_records(records, refresh=False)
         return added, len(records)
 
@@ -3985,6 +4005,8 @@ class CardPipelineApp(tk.Tk):
         }
         key = self.home_selected_sheet_key
         moved = False
+        inventory_rows_added = 0
+        inventory_candidate_rows = 0
         try:
             with shared_lock(CARD_PIPELINE_DIR, "receive-company-sheets", self.lucas_identity):
                 selected_kind, _selected_name = self._split_home_sheet_key(key)
@@ -4019,6 +4041,12 @@ class CardPipelineApp(tk.Tk):
                 inventory_rows_reassigned = 0
                 if old_assigned_person != str(marker.get("assigned_person") or "").strip():
                     inventory_rows_reassigned = self._retarget_inventory_rows_for_source(current_name, str(marker.get("assigned_person") or ""))
+                if _current_kind == "Received" and marker["all_received"] and str(marker.get("assigned_person") or "").strip():
+                    inventory_rows_added, inventory_candidate_rows = self._sync_received_sheet_inventory_to_ledger(
+                        _current_kind,
+                        self._sheet_path_for_stage(_current_kind, current_name),
+                        str(marker.get("assigned_person") or ""),
+                    )
                 self._save_sheet_markers()
         except Exception as error:
             messagebox.showerror("Save failed", str(error))
@@ -4032,6 +4060,10 @@ class CardPipelineApp(tk.Tk):
         if popup is not None:
             popup.destroy()
         inventory_note = f" Reassigned {inventory_rows_reassigned} inventory row(s)." if inventory_rows_reassigned else ""
+        if inventory_rows_added:
+            inventory_note += f" Added {inventory_rows_added} inventory row(s)."
+        elif inventory_candidate_rows:
+            inventory_note += " Inventory was already up to date."
         self.status_var.set(("Sheet markers saved and moved." if moved else "Sheet markers saved.") + inventory_note)
 
     def _home_sheet_key(self, kind: str, name: str) -> str:

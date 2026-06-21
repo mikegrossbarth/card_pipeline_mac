@@ -1794,6 +1794,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _company_sheet_source_cert_keys = app.CardPipelineApp._company_sheet_source_cert_keys
             _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
             _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
 
@@ -1847,6 +1848,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _company_sheet_source_cert_keys = app.CardPipelineApp._company_sheet_source_cert_keys
             _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
             _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
 
@@ -1877,6 +1879,105 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INCOMING_SHEETS_DIR = old_incoming
                 app.WORKING_SHEETS_DIR = old_working
                 app.COMPANY_SHEETS_DIR = old_company
+
+    def test_home_all_received_marker_adds_received_sheet_inventory(self) -> None:
+        class Status:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class MarkerDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _company_sheet_source_cert_keys = lambda self: set()
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _sync_received_sheet_inventory_to_ledger = app.CardPipelineApp._sync_received_sheet_inventory_to_ledger
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_path_for_stage = app.CardPipelineApp._sheet_path_for_stage
+            _delete_sheet_marker = app.CardPipelineApp._delete_sheet_marker
+            _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
+            _move_sheet_to_received = app.CardPipelineApp._move_sheet_to_received
+            _move_received_sheet_to_incoming = app.CardPipelineApp._move_received_sheet_to_incoming
+            _move_working_sheet_to_incoming = app.CardPipelineApp._move_working_sheet_to_incoming
+            _marker_for_stage = app.CardPipelineApp._marker_for_stage
+            _retarget_inventory_rows_for_source = lambda self, source, person: 0
+            _enrich_inventory_record_assignment = lambda self, record, force=False: record
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            save_home_sheet_markers = app.CardPipelineApp.save_home_sheet_markers
+            _load_sheet_markers = app.CardPipelineApp._load_sheet_markers
+            _save_sheet_markers = app.CardPipelineApp._save_sheet_markers
+            refresh_working_sheets = lambda self: None
+            refresh_received_sheets = lambda self: None
+            refresh_incoming_index = lambda self: None
+            refresh_home = lambda self: None
+            refresh_inventory_tab = lambda self, enrich=False: None
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            incoming_dir = root / "INCOMING SHEETS"
+            received_dir = root / "RECEIVED SHEETS"
+            incoming_dir.mkdir()
+            received_dir.mkdir()
+            source_path = incoming_dir / "Hambone Lot.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Comps"])
+            sheet.append(["111", "PSA", "Hambone Inventory Card", 40, 100])
+            workbook.save(source_path)
+
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_company = app.COMPANY_SHEETS_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_markers = app.SHEET_MARKERS_PATH
+            app.CARD_PIPELINE_DIR = root
+            app.INCOMING_SHEETS_DIR = incoming_dir
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.COMPANY_SHEETS_DIR = root / "COMPANY SHEETS"
+            app.INVENTORY_LEDGER_PATH = root / "inventory_ledger.json"
+            app.SHEET_MARKERS_PATH = root / "sheet_markers.json"
+            dummy = MarkerDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.home_selected_sheet_key = "Incoming|Hambone Lot.xlsx"
+            dummy.home_sheet_markers = {"Incoming|Hambone Lot.xlsx": {"assigned_person": "Kevin Hambone"}}
+            dummy.home_sheet_paths = {"Incoming": {"Hambone Lot.xlsx": source_path}, "Working": {}, "Received": {}}
+            dummy.received_sheet_paths = {}
+            dummy.deleted_sheet_marker_keys = set()
+            dummy.status_var = Status()
+            try:
+                dummy.save_home_sheet_markers(
+                    {
+                        "incoming_proper": False,
+                        "tracking_number": "",
+                        "all_received": True,
+                        "assigned_person": "Kevin Hambone",
+                    }
+                )
+
+                inventory = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertTrue((received_dir / "Hambone Lot.xlsx").exists())
+                self.assertEqual(len(inventory), 1)
+                self.assertEqual(inventory[0]["cert_number"], "111")
+                self.assertEqual(inventory[0]["assigned_person"], "Kevin Hambone")
+                self.assertIn("Added 1 inventory row", dummy.status_var.value)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.WORKING_SHEETS_DIR = old_working
+                app.COMPANY_SHEETS_DIR = old_company
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.SHEET_MARKERS_PATH = old_markers
 
     def test_inventory_rows_can_be_removed_for_deleted_source_sheet(self) -> None:
         class InventoryDummy:
