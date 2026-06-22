@@ -2682,6 +2682,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _mark_inventory_records_moved_to_company = app.CardPipelineApp._mark_inventory_records_moved_to_company
             _inventory_record_can_move_to_company_sheet = app.CardPipelineApp._inventory_record_can_move_to_company_sheet
             move_selected_inventory_to_company_sheets = app.CardPipelineApp.move_selected_inventory_to_company_sheets
+            _move_inventory_records_to_company_sheets = app.CardPipelineApp._move_inventory_records_to_company_sheets
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger

@@ -1141,7 +1141,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
         action_row = ttk.Frame(controls, style="Panel.TFrame")
         action_row.grid(row=2, column=0, columnspan=11, sticky="w", pady=(10, 0))
-        ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True), style="Primary.TButton").pack(side=tk.LEFT)
+        ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT)
         ttk.Button(action_row, text="Update Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
@@ -1993,8 +1993,10 @@ class CardPipelineApp(tk.Tk):
         else:
             messagebox.showinfo("Inventory reconciled", "No missing received inventory cards were found.")
 
-    def _sync_received_inventory_to_ledger(self) -> tuple[int, int]:
+    def _sync_received_inventory_to_ledger(self, filtered_only: bool = False) -> tuple[int, int]:
         records = self._received_inventory_candidate_records()
+        if filtered_only:
+            records = self._filtered_inventory_records([self._normalize_inventory_record(record) for record in records])
         added = self.add_inventory_records(records, refresh=False)
         return added, len(records)
 
@@ -2473,6 +2475,84 @@ class CardPipelineApp(tk.Tk):
         )
         if not confirmed:
             return
+        self._move_inventory_records_to_company_sheets(movable_records)
+
+    def move_selected_inventory_to_specific_company_sheet(self) -> None:
+        if not hasattr(self, "inventory_tree"):
+            return
+        selected = list(self.inventory_tree.selection())
+        records = [self.inventory_tree_records.get(iid) for iid in selected if self.inventory_tree_records.get(iid)]
+        movable_records = [record for record in records if self._inventory_record_can_move_to_company_sheet(record)]
+        if not movable_records:
+            messagebox.showinfo("Choose inventory", "Select one or more active inventory rows with an assignable best company.")
+            return
+        default_company = str(movable_records[0].get("best_company") or "")
+        company = self._choose_inventory_company(default_company)
+        if not company:
+            return
+        confirmed = messagebox.askyesno(
+            "Move inventory card(s)?",
+            f"Move {len(movable_records)} active inventory card(s) to {company}?",
+        )
+        if not confirmed:
+            return
+        self._move_inventory_records_to_company_sheets(movable_records, company_override=company)
+
+    def _choose_inventory_company(self, default_company: str = "") -> str:
+        companies = [
+            company.name
+            for company in self.assignment_engine.companies
+            if str(company.name or "").strip() and str(company.name or "").strip().upper() != NO_COMPANY_TAKES_LABEL
+        ]
+        if not companies:
+            messagebox.showinfo("No companies", "No active assignment companies are loaded.")
+            return ""
+        popup = tk.Toplevel(self)
+        popup.title("Move to Company Sheet")
+        popup.transient(self)
+        popup.grab_set()
+        popup.configure(bg="#121212")
+        result = tk.StringVar(value="")
+        company_var = tk.StringVar(value=default_company if default_company in companies else companies[0])
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Move to Company Sheet", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ttk.Label(frame, text="Company", style="Panel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(0, 12))
+        company_combo = ttk.Combobox(frame, textvariable=company_var, values=companies, width=34)
+        company_combo.grid(row=1, column=1, sticky="ew", pady=(0, 12))
+
+        def submit() -> None:
+            company = company_var.get().strip()
+            if not company:
+                return
+            result.set(company)
+            popup.destroy()
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=2, column=0, columnspan=2, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(buttons, text="Move", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
+        frame.columnconfigure(1, weight=1)
+        popup.bind("<Return>", lambda _event: submit())
+        popup.bind("<Escape>", lambda _event: popup.destroy())
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        company_combo.focus_set()
+        self.wait_window(popup)
+        return result.get().strip()
+
+    def _specific_company_decision(self, row: WorkbookRow, person: str, company_name: str) -> assignment_engine.AssignmentDecision | None:
+        target = clean_part(company_name).casefold()
+        if not target:
+            return None
+        for decision in self.assignment_engine.evaluate(row, person=person):
+            if clean_part(decision.company).casefold() == target:
+                return decision
+        return None
+
+    def _move_inventory_records_to_company_sheets(self, movable_records: list[dict[str, object]], company_override: str = "") -> None:
         rows: list[WorkbookRow] = []
         source_lookup: dict[int, str] = {}
         sheet_source_lookup: dict[int, str] = {}
@@ -2481,12 +2561,24 @@ class CardPipelineApp(tk.Tk):
         unassigned = 0
         for index, record in enumerate(movable_records, start=1):
             row = self._inventory_workbook_row(record, index)
-            recommendation = self.assignment_engine.recommend(row, person=str(record.get("assigned_person") or ""))
-            if recommendation.payout is None:
+            person = str(record.get("assigned_person") or "")
+            if company_override:
+                decision = self._specific_company_decision(row, person, company_override)
+                if not decision or not decision.accepted or decision.payout is None:
+                    unassigned += 1
+                    continue
+                row.best_company = decision.company
+                row.estimated_payout = round(decision.payout, 2)
+            else:
+                recommendation = self.assignment_engine.recommend(row, person=person)
+                if recommendation.payout is None:
+                    unassigned += 1
+                    continue
+                row.best_company = recommendation.company
+                row.estimated_payout = recommendation.payout
+            if not row.best_company or row.best_company.upper() == NO_COMPANY_TAKES_LABEL:
                 unassigned += 1
                 continue
-            row.best_company = recommendation.company
-            row.estimated_payout = recommendation.payout
             rows.append(row)
             source_lookup[index] = str(record.get("source") or "Inventory")
             sheet_source_lookup[index] = str(record.get("source_sheet") or "Inventory")
@@ -2514,7 +2606,10 @@ class CardPipelineApp(tk.Tk):
         self.refresh_profit_tab()
         added = int(company_result.get("rows_added") or 0)
         errors = company_result.get("errors") or []
-        suffix = f" {unassigned} card(s) had no assignable company." if unassigned else ""
+        if company_override:
+            suffix = f" {unassigned} card(s) were not accepted by {company_override}." if unassigned else ""
+        else:
+            suffix = f" {unassigned} card(s) had no assignable company." if unassigned else ""
         self.status_var.set(f"Moved {added} inventory card(s) to company sheets.{suffix}")
         if errors:
             messagebox.showwarning("Inventory move completed with warnings", "\n".join([f"Moved rows: {added}", *errors[:8]]))
@@ -2579,6 +2674,7 @@ class CardPipelineApp(tk.Tk):
             if len(active_records) == 1 and len(records) == 1:
                 menu.add_separator()
             menu.add_command(label="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets)
+            menu.add_command(label="Move to Specific Company Sheet...", command=self.move_selected_inventory_to_specific_company_sheet)
         if records:
             menu.add_separator()
             menu.add_command(label="Delete from Inventory", command=self.delete_selected_inventory_records)
@@ -2594,7 +2690,7 @@ class CardPipelineApp(tk.Tk):
         if reconcile and not getattr(self, "_inventory_reconcile_running", False):
             self._inventory_reconcile_running = True
             try:
-                self._sync_received_inventory_to_ledger()
+                self._sync_received_inventory_to_ledger(filtered_only=filtered_only)
             finally:
                 self._inventory_reconcile_running = False
         stored_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
