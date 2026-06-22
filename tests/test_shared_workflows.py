@@ -2524,6 +2524,77 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_edit_inventory_row_updates_visible_fields_and_rebuilds_key(self) -> None:
+        class FakeTree:
+            def selection(self):
+                return ["row-1"]
+
+        class FakeStatus:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class InventoryEditDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _update_inventory_record_by_key = app.CardPipelineApp._update_inventory_record_by_key
+            edit_selected_inventory_row = app.CardPipelineApp.edit_selected_inventory_row
+            refresh_inventory_tab = lambda self: None
+
+            def _inventory_edit_row_dialog(self, _record):
+                return {
+                    "date_added": "2026-06-20",
+                    "assigned_person": "James Copeland",
+                    "sport": "football",
+                    "cert_number": "83861755",
+                    "grader": "PSA",
+                    "card_title": "2010 Donruss Rated Rookies 95 Tim Tebow PSA 10",
+                    "purchase_price": 100,
+                    "card_ladder_value": 116,
+                    "card_ladder_comps_average": 99.97,
+                    "cy_value": None,
+                    "cy_confidence": "",
+                    "best_company": "FANATICS",
+                    "estimated_payout": 107.88,
+                    "source_sheet": "JAMES_NASHVILLE_PICKUPS.xlsx",
+                }
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryEditDummy()
+            dummy.inventory_tree = FakeTree()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.status_var = FakeStatus()
+            record = dummy._normalize_inventory_record({"assigned_person": "Lucas", "cert_number": "1", "source_sheet": "Old.xlsx", "status": "Active"})
+            dummy._save_inventory_ledger([record])
+            dummy.inventory_tree_records = {"row-1": record}
+            try:
+                dummy.edit_selected_inventory_row()
+
+                rows = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(len(rows), 1)
+                edited = rows[0]
+                self.assertEqual(edited["assigned_person"], "James Copeland")
+                self.assertEqual(edited["cert_number"], "83861755")
+                self.assertEqual(edited["source_sheet"], "JAMES_NASHVILLE_PICKUPS.xlsx")
+                self.assertEqual(edited["card_ladder_value"], 116)
+                self.assertEqual(edited["card_ladder_comps_average"], 99.97)
+                self.assertEqual(edited["best_company"], "FANATICS")
+                self.assertEqual(edited["estimated_payout"], 107.88)
+                self.assertEqual(edited["inventory_key"], "83861755|james_nashville_pickups.xlsx|james copeland")
+                self.assertEqual(dummy.status_var.value, "Edited 1 inventory row(s).")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_inventory_records_can_move_to_company_sheets(self) -> None:
         class FakeTree:
             def selection(self):
