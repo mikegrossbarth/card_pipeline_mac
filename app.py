@@ -2072,6 +2072,11 @@ class CardPipelineApp(tk.Tk):
             return normalized
         try:
             row = self._inventory_workbook_row(normalized, 1)
+            if not str(normalized.get("sport") or "").strip():
+                parsed = assignment_engine.parse_card_for_matching(str(normalized.get("card_title") or ""))
+                if parsed.get("sport"):
+                    normalized["sport"] = parsed.get("sport")
+                    row.category = str(parsed.get("sport") or "")
             recommendation = self.assignment_engine.recommend(row, person=str(normalized.get("assigned_person") or ""))
         except Exception:
             return normalized

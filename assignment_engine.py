@@ -37,6 +37,10 @@ CATEGORY_ALIASES = {
     "star wars": ["star wars", "starwars"],
     "ufc": ["ufc", "mma"],
 }
+BASEBALL_PRODUCT_PATTERNS = (
+    re.compile(r"\bbowman\b(?!\s+u\b).*\b(chrome|prospects?|draft|autographs?|refractors?)\b"),
+    re.compile(r"\b(chrome|prospects?|draft|autographs?|refractors?)\b.*\bbowman\b(?!\s+u\b)"),
+)
 SINGLE_TOKEN_CONTEXT_REQUIRED_CATEGORIES = {
     "pokemon",
     "one piece",
@@ -1797,6 +1801,8 @@ def parse_card_for_matching(text: str) -> dict[str, Any]:
 
 def infer_sport(raw: str, player_name: str = "") -> str:
     haystack = clean_rule_text(raw)
+    if any(pattern.search(haystack) for pattern in BASEBALL_PRODUCT_PATTERNS):
+        return "baseball"
     for sport, aliases in CATEGORY_ALIASES.items():
         if any(text_contains_clean_term(haystack, alias) for alias in aliases):
             return sport
