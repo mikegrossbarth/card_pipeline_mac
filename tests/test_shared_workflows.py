@@ -2637,6 +2637,22 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.SELLER_TERMS_PATH = old_terms
 
+    def test_inventory_recomp_empty_scope_only_queues_missing_selected_fields(self) -> None:
+        class RecompScopeDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_recomp_record_matches_scope = app.CardPipelineApp._inventory_recomp_record_matches_scope
+
+        dummy = RecompScopeDummy()
+        full_record = {"card_ladder_value": 50, "card_ladder_comps_average": 40, "cy_value": 30}
+        missing_comps = {"card_ladder_value": 50, "card_ladder_comps_average": None, "cy_value": 30}
+        missing_cy = {"card_ladder_value": 50, "card_ladder_comps_average": 40, "cy_value": None}
+
+        self.assertTrue(dummy._inventory_recomp_record_matches_scope(full_record, {"scope": app.COMP_SCOPE_ALL, "card_ladder_comps": True}))
+        self.assertFalse(dummy._inventory_recomp_record_matches_scope(full_record, {"scope": app.COMP_SCOPE_EMPTY, "card_ladder_value": True, "card_ladder_comps": True}))
+        self.assertTrue(dummy._inventory_recomp_record_matches_scope(missing_comps, {"scope": app.COMP_SCOPE_EMPTY, "card_ladder_comps": True}))
+        self.assertFalse(dummy._inventory_recomp_record_matches_scope(missing_cy, {"scope": app.COMP_SCOPE_EMPTY, "card_ladder_comps": True}))
+        self.assertTrue(dummy._inventory_recomp_record_matches_scope(missing_cy, {"scope": app.COMP_SCOPE_EMPTY, "cy": True}))
+
     def test_selected_inventory_purchase_price_updates_active_rows(self) -> None:
         class FakeTree:
             def selection(self):

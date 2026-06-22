@@ -2863,6 +2863,7 @@ class CardPipelineApp(tk.Tk):
         cl_comps_var = tk.BooleanVar(value=True)
         cy_var = tk.BooleanVar(value=True)
         strategy_var = tk.StringVar(value=self.comp_strategy_label.get() or "Average last 5")
+        scope_var = tk.StringVar(value=COMP_SCOPE_EMPTY)
 
         popup = tk.Toplevel(self)
         popup.title("Inventory Recomp")
@@ -2878,8 +2879,10 @@ class CardPipelineApp(tk.Tk):
         ttk.Checkbutton(frame, text="Card Ladder value", variable=cl_value_var, style="Panel.TCheckbutton").grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 8))
         ttk.Checkbutton(frame, text="Card Ladder comps", variable=cl_comps_var, style="Panel.TCheckbutton").grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 8))
         ttk.Checkbutton(frame, text="CY estimate", variable=cy_var, style="Panel.TCheckbutton").grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
-        ttk.Label(frame, text="Comp Method", style="Muted.TLabel").grid(row=5, column=0, sticky="w", pady=(0, 6))
-        ttk.Combobox(frame, textvariable=strategy_var, values=list(COMP_STRATEGY_DISPLAY.keys()), width=24, state="readonly").grid(row=5, column=1, sticky="w", pady=(0, 6))
+        ttk.Label(frame, text="Scope", style="Muted.TLabel").grid(row=5, column=0, sticky="w", pady=(0, 6))
+        ttk.Combobox(frame, textvariable=scope_var, values=(COMP_SCOPE_EMPTY, COMP_SCOPE_ALL), width=24, state="readonly").grid(row=5, column=1, sticky="w", pady=(0, 6))
+        ttk.Label(frame, text="Comp Method", style="Muted.TLabel").grid(row=6, column=0, sticky="w", pady=(0, 6))
+        ttk.Combobox(frame, textvariable=strategy_var, values=list(COMP_STRATEGY_DISPLAY.keys()), width=24, state="readonly").grid(row=6, column=1, sticky="w", pady=(0, 6))
 
         def submit() -> None:
             features = {
@@ -2887,6 +2890,7 @@ class CardPipelineApp(tk.Tk):
                 "card_ladder_comps": bool(cl_comps_var.get()),
                 "cy": bool(cy_var.get()),
                 "strategy_label": strategy_var.get(),
+                "scope": scope_var.get(),
             }
             if not any(features.get(key) for key in ("card_ladder_value", "card_ladder_comps", "cy")):
                 messagebox.showinfo("Choose recomp features", "Choose at least one field to refresh.", parent=popup)
@@ -2895,7 +2899,7 @@ class CardPipelineApp(tk.Tk):
             self.recomp_inventory_visible_rows(features)
 
         buttons = ttk.Frame(frame, style="Panel.TFrame")
-        buttons.grid(row=6, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        buttons.grid(row=7, column=0, columnspan=2, sticky="e", pady=(12, 0))
         ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(buttons, text="Start Recomp", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
         popup.bind("<Return>", lambda _event: submit())
@@ -2906,7 +2910,7 @@ class CardPipelineApp(tk.Tk):
         popup.geometry(f"+{x}+{y}")
 
     def recomp_inventory_visible_rows(self, features: dict[str, object] | None = None) -> None:
-        features = dict(features or {"card_ladder_value": True, "card_ladder_comps": True, "cy": True, "strategy_label": self.comp_strategy_label.get()})
+        features = dict(features or {"card_ladder_value": True, "card_ladder_comps": True, "cy": True, "strategy_label": self.comp_strategy_label.get(), "scope": COMP_SCOPE_EMPTY})
         if self.inventory_recomp_context:
             messagebox.showinfo("Inventory recomp running", "Wait for the current Inventory recomp run to finish.")
             return
@@ -2941,13 +2945,17 @@ class CardPipelineApp(tk.Tk):
             key = str(record.get("inventory_key") or "")
             if not key:
                 continue
+            if not self._inventory_recomp_record_matches_scope(record, features):
+                continue
             row = self._inventory_workbook_row(record, index)
             row.status = "Queued"
             temp_rows.append(row)
             keys_by_excel_row[row.excel_row] = key
         if not temp_rows:
-            messagebox.showinfo("No eligible inventory rows", "No visible inventory rows have both a cert number and grader.")
-            self.inventory_status_var.set("No visible inventory rows are eligible for recomp.")
+            scope = str(features.get("scope") or COMP_SCOPE_EMPTY)
+            detail = "empty selected fields" if scope == COMP_SCOPE_EMPTY else "both a cert number and grader"
+            messagebox.showinfo("No eligible inventory rows", f"No visible inventory rows have {detail}.")
+            self.inventory_status_var.set(f"No visible inventory rows are eligible for recomp ({scope}).")
             return
         current_sheet = self.selected_working_sheet.get() if hasattr(self, "selected_working_sheet") else ""
         self.inventory_recomp_context = {
@@ -2985,8 +2993,20 @@ class CardPipelineApp(tk.Tk):
                 pieces.append("Card Ladder comps")
         if run_cy:
             pieces.append("CY")
-        self.inventory_status_var.set(f"Queued {' and '.join(pieces)} refresh for {len(temp_rows)} visible inventory card(s).")
+        scope = str(features.get("scope") or COMP_SCOPE_EMPTY)
+        self.inventory_status_var.set(f"Queued {' and '.join(pieces)} refresh for {len(temp_rows)} visible inventory card(s) ({scope}).")
         self.status_var.set(f"Inventory recomp queued as command #{command_id}.")
+
+    def _inventory_recomp_record_matches_scope(self, record: dict[str, object], features: dict[str, object]) -> bool:
+        if str(features.get("scope") or COMP_SCOPE_EMPTY) == COMP_SCOPE_ALL:
+            return True
+        if features.get("card_ladder_value") and self._money_value(record.get("card_ladder_value")) is None:
+            return True
+        if features.get("card_ladder_comps") and self._money_value(record.get("card_ladder_comps_average")) is None:
+            return True
+        if features.get("cy") and self._money_value(record.get("cy_value")) is None:
+            return True
+        return False
 
     def _sync_inventory_recomp_results(self) -> int:
         context = self.inventory_recomp_context
