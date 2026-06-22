@@ -7,7 +7,7 @@ import threading
 import time
 import types
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -969,24 +969,39 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertEqual(recommendation.payout, 81.33)
 
     def test_date_weighted_uses_newest_comp_when_two_newest_are_more_than_seven_days_apart(self) -> None:
+        newest = datetime.now() - timedelta(days=2)
+        older = newest - timedelta(days=11)
         comps = [
-            {"date_sold": "May 1, 2026", "price": "$8.00", "title": "Test Card PSA 10"},
-            {"date_sold": "Jun 12, 2026", "price": "$25.00", "title": "Test Card PSA 10"},
-            {"date_sold": "Jun 1, 2026", "price": "$10.00", "title": "Test Card PSA 10"},
-            {"date_sold": "Apr 15, 2026", "price": "$2.00", "title": "Test Card PSA 10"},
+            {"date_sold": (older - timedelta(days=30)).strftime("%b %d, %Y"), "price": "$8.00", "title": "Test Card PSA 10"},
+            {"date_sold": newest.strftime("%b %d, %Y"), "price": "$25.00", "title": "Test Card PSA 10"},
+            {"date_sold": older.strftime("%b %d, %Y"), "price": "$10.00", "title": "Test Card PSA 10"},
+            {"date_sold": (older - timedelta(days=45)).strftime("%b %d, %Y"), "price": "$2.00", "title": "Test Card PSA 10"},
         ]
 
         self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 25.0)
 
     def test_date_weighted_averages_when_two_newest_are_within_seven_days(self) -> None:
+        newest = datetime.now() - timedelta(days=2)
+        second = newest - timedelta(days=4)
         comps = [
-            {"date_sold": "May 1, 2026", "price": "$8.00", "title": "Test Card PSA 10"},
-            {"date_sold": "Jun 12, 2026", "price": "$25.00", "title": "Test Card PSA 10"},
-            {"date_sold": "Jun 8, 2026", "price": "$10.00", "title": "Test Card PSA 10"},
-            {"date_sold": "Apr 15, 2026", "price": "$2.00", "title": "Test Card PSA 10"},
+            {"date_sold": (second - timedelta(days=30)).strftime("%b %d, %Y"), "price": "$8.00", "title": "Test Card PSA 10"},
+            {"date_sold": newest.strftime("%b %d, %Y"), "price": "$25.00", "title": "Test Card PSA 10"},
+            {"date_sold": second.strftime("%b %d, %Y"), "price": "$10.00", "title": "Test Card PSA 10"},
+            {"date_sold": (second - timedelta(days=45)).strftime("%b %d, %Y"), "price": "$2.00", "title": "Test Card PSA 10"},
         ]
 
         self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 11.25)
+
+    def test_date_weighted_uses_newest_comp_when_newest_sale_is_stale(self) -> None:
+        newest = datetime.now() - timedelta(days=8)
+        second = newest - timedelta(days=4)
+        comps = [
+            {"date_sold": newest.strftime("%b %d, %Y"), "price": "$25.00", "title": "Test Card PSA 10"},
+            {"date_sold": second.strftime("%b %d, %Y"), "price": "$10.00", "title": "Test Card PSA 10"},
+            {"date_sold": (second - timedelta(days=30)).strftime("%b %d, %Y"), "price": "$8.00", "title": "Test Card PSA 10"},
+        ]
+
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 25.0)
 
     def test_date_weighted_dedupes_same_sale_before_comparing_newest_dates(self) -> None:
         comps = [

@@ -820,6 +820,8 @@ def stale_newest_else_average(comps: list[dict], values: list[float]) -> float |
         if sold_date:
             dated_values.append((sold_date, value))
     dated_values.sort(key=lambda item: item[0], reverse=True)
+    if dated_values and (datetime.now() - dated_values[0][0]).days > 7:
+        return dated_values[0][1]
     if len(dated_values) >= 2 and (dated_values[0][0] - dated_values[1][0]).days > 7:
         return dated_values[0][1]
     return round(sum(values) / len(values), 2)
