@@ -469,6 +469,8 @@ class BridgeState:
                 "cardladderRunning": self.cardladder_running,
                 "cancelRequested": self.cancel_requested,
                 "compStrategy": self.comp_strategy,
+                "keepNoteSources": list(self.keep_note_sources),
+                "lastKeepSync": dict(self.last_keep_sync),
                 "rows": [asdict(row) for row in self.rows],
             }
 
@@ -497,6 +499,9 @@ def keep_url_key(value: str) -> str:
     parsed = urlparse(raw)
     haystack = f"{parsed.path}#{parsed.fragment}"
     match = re.search(r"/notes/([^/?#]+)", haystack)
+    if match:
+        return unquote(match.group(1)).strip().lower()
+    match = re.search(r"#NOTE/([^/?#]+)", haystack, flags=re.I)
     if match:
         return unquote(match.group(1)).strip().lower()
     match = re.search(r"(?:note|id|text)%3D([^&#]+)", haystack, flags=re.I)

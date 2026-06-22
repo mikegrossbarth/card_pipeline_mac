@@ -454,6 +454,14 @@ class GoogleSheetCacheTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(cache_path.read_text(encoding="utf-8").strip(), "Football $20-$200 95%")
 
+    def test_google_keep_hash_note_url_matches_notes_url(self) -> None:
+        self.assertTrue(
+            bridge_server.keep_urls_match(
+                "https://keep.google.com/u/0/#NOTE/abc123",
+                "https://keep.google.com/u/0/notes/abc123",
+            )
+        )
+
 
 class AssignmentEngineTests(unittest.TestCase):
     def test_kemba_walker_title_infers_basketball_without_short_name_false_matches(self) -> None:

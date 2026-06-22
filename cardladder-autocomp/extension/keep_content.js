@@ -2,7 +2,8 @@
   "use strict";
 
   const BRIDGE_PORTS = [8765, 8766, 8767, 8768, 8769, 8770, 8771, 8772];
-  let lastText = "";
+  let lastSyncedText = "";
+  let pendingText = "";
   let lastActiveNoteRoot = null;
 
   trackActiveKeepNote();
@@ -16,13 +17,17 @@
     const root = activeKeepNoteRoot({ ignoreRemembered: true, requireEditor: true }) || activeKeepNoteRoot();
     if (!root) return;
     const text = extractKeepText(root);
-    if (!text || text === lastText) return;
-    lastText = text;
+    if (!text || text === lastSyncedText || text === pendingText) return;
+    pendingText = text;
     postToBridge({
       text,
       title: extractKeepTitle(text, root),
       url: keepNoteUrl(root),
       synced_at: new Date().toISOString(),
+    }).then((payload) => {
+      if (payload && payload.ok) lastSyncedText = text;
+    }).finally(() => {
+      if (pendingText === text) pendingText = "";
     });
   }
 
