@@ -87,6 +87,16 @@ The app starts the local Card Ladder bridge automatically when L.U.C.A.S opens. 
 
 The bridge currently expects helper version `2026-06-17-no-blind-grader-option-v22`. If Chrome shows a debugger warning during non-PSA grader selection, that is Chrome's browser-level warning for the trusted-click fallback; the attach is scoped to the Card Ladder tab and detached after the grader click.
 
+## Mobile Inventory PWA
+
+When L.U.C.A.S is open, it also serves a phone-friendly inventory app from the local bridge. The bridge status line in the desktop app shows the URL and mobile PIN, usually like:
+
+```text
+http://192.168.1.x:8765/mobile
+```
+
+Open that URL from a phone on the same Wi-Fi network, enter the PIN, then use `Search` to check current inventory or `Add` to scan/type a cert and add active inventory with purchase price, person, seller/source, value, and notes. On iPhone, use Safari's share menu and choose `Add to Home Screen` for app-style access.
+
 ## Input Modes
 
 Use the `Create` tab for all card entry.

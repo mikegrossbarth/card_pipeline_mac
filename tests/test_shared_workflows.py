@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import sys
 import threading
 import time
@@ -2708,6 +2709,71 @@ class PhotoOcrSpeedTests(unittest.TestCase):
         self.assertEqual(row["source"], "Photo: dense.jpg")
         self.assertIn("right", row["notes"])
         self.assertIn("OCR review needed", row["notes"])
+
+    def test_mobile_inventory_search_and_duplicate_add_flow(self) -> None:
+        class MobileDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
+            _inventory_source_sheet_path = app.CardPipelineApp._inventory_source_sheet_path
+            _hydrate_inventory_record_source_values = app.CardPipelineApp._hydrate_inventory_record_source_values
+            _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
+            _mobile_inventory_payload_record = app.CardPipelineApp._mobile_inventory_payload_record
+            _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            mobile_inventory_search = app.CardPipelineApp.mobile_inventory_search
+            mobile_inventory_add = app.CardPipelineApp.mobile_inventory_add
+
+            def __init__(self, root: Path) -> None:
+                self.events = queue.Queue()
+                self.lucas_identity = {"display_name": "test", "machine": "test"}
+
+        old_root = app.CARD_PIPELINE_DIR
+        old_inventory = app.INVENTORY_LEDGER_PATH
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            try:
+                app.CARD_PIPELINE_DIR = root
+                app.INVENTORY_LEDGER_PATH = root / "inventory_ledger.json"
+                dummy = MobileDummy(root)
+                dummy._save_inventory_ledger([
+                    dummy._normalize_inventory_record(
+                        {
+                            "assigned_person": "Kevin Hambone",
+                            "cert_number": "123456",
+                            "grader": "PSA",
+                            "card_title": "2024 Test Player Silver PSA 10",
+                            "purchase_price": 42,
+                            "inventory_value": 88,
+                            "source_sheet": "Existing.xlsx",
+                            "source": "Barcode",
+                        }
+                    )
+                ])
+
+                search = dummy.mobile_inventory_search({"query": "123456"})
+                self.assertTrue(search["ok"])
+                self.assertEqual(search["count"], 1)
+                self.assertEqual(search["items"][0]["purchase_price_display"], "$42.00")
+
+                duplicate = dummy.mobile_inventory_add({"cert_number": "123456", "purchase_price": "50"})
+                self.assertFalse(duplicate["ok"])
+                self.assertTrue(duplicate["duplicate"])
+
+                update = dummy.mobile_inventory_add({"cert_number": "123456", "purchase_price": "50", "update_existing": True})
+                self.assertTrue(update["ok"])
+                self.assertEqual(update["action"], "updated")
+                self.assertEqual(update["record"]["purchase_price"], 50.0)
+
+                added = dummy.mobile_inventory_add({"cert_number": "777888", "grader": "SGC", "card_title": "Mobile Added Card", "purchase_price": "12.50", "source": "Show"})
+                self.assertTrue(added["ok"])
+                self.assertEqual(added["action"], "added")
+                self.assertEqual(added["record"]["source"], "Show")
+            finally:
+                app.CARD_PIPELINE_DIR = old_root
+                app.INVENTORY_LEDGER_PATH = old_inventory
 
 
 if __name__ == "__main__":

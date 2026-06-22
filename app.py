@@ -7,7 +7,9 @@ import base64
 import json
 import os
 import re
+import secrets
 import shutil
+import socket
 import sys
 import threading
 import tkinter as tk
@@ -176,6 +178,16 @@ def load_app_settings() -> dict[str, object]:
 
 def save_app_settings(settings: dict[str, object]) -> None:
     atomic_write_json(SETTINGS_PATH, settings)
+
+
+def ensure_mobile_pin(settings: dict[str, object]) -> str:
+    pin = re.sub(r"\D", "", str(settings.get("mobile_pin") or ""))
+    if len(pin) >= 4:
+        return pin
+    pin = f"{secrets.randbelow(1_000_000):06d}"
+    settings["mobile_pin"] = pin
+    save_app_settings(settings)
+    return pin
 
 
 def app_debug_log(message: str) -> None:
@@ -376,19 +388,24 @@ class CardPipelineApp(tk.Tk):
         self.review_sheet_sources: dict[int, str] = {}
         self.incoming_cert_index: dict[str, dict[str, object]] = {}
         self.comp_output_saved = True
+        self.lucas_identity = local_identity(SETTINGS_PATH)
+        self.app_settings = load_app_settings()
+        self.mobile_pin = ensure_mobile_pin(self.app_settings)
         self.state = BridgeState()
         self.state.on_update = lambda: self.events.put("comp_refresh")
+        self.state.mobile_pin_provider = lambda: self.mobile_pin
+        self.state.mobile_inventory_search = self.mobile_inventory_search
+        self.state.mobile_inventory_add = self.mobile_inventory_add
         self.bridge = BridgeServer(self.state)
         self.bridge.start()
         self._refresh_keep_source_registry()
         app_debug_log(f"bridge_started started={self.bridge.started} port={self.bridge.port} error={self.bridge.error}")
+        mobile_url = self._mobile_app_url()
         self.bridge_status_text = (
-            f"Card Ladder bridge running at http://127.0.0.1:{self.bridge.port}"
+            f"Card Ladder bridge running at http://127.0.0.1:{self.bridge.port} | Mobile: {mobile_url} PIN {self.mobile_pin}"
             if self.bridge.started
             else f"Card Ladder bridge failed to start: {self.bridge.error}"
         )
-        self.lucas_identity = local_identity(SETTINGS_PATH)
-        self.app_settings = load_app_settings()
 
         self.input_mode = tk.StringVar(value="Barcode Scanner")
         self.review_mode = tk.StringVar(value="Automatic Receive")
@@ -1274,6 +1291,130 @@ class CardPipelineApp(tk.Tk):
         if refresh:
             self.refresh_inventory_tab()
         return added
+
+    def _mobile_app_url(self) -> str:
+        host = "127.0.0.1"
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as handle:
+                handle.connect(("8.8.8.8", 80))
+                host = handle.getsockname()[0]
+        except OSError:
+            try:
+                host = socket.gethostbyname(socket.gethostname())
+            except OSError:
+                host = "127.0.0.1"
+        return f"http://{host}:{self.bridge.port}/mobile"
+
+    def _mobile_inventory_payload_record(self, payload: dict) -> dict[str, object]:
+        cert = scan_to_cert(payload.get("cert_number") or payload.get("cert") or payload.get("barcode") or "")
+        card_title = str(payload.get("card_title") or payload.get("card") or "").strip()
+        source = str(payload.get("source") or payload.get("seller") or "Mobile").strip() or "Mobile"
+        person = str(payload.get("assigned_person") or payload.get("person") or "").strip() or "Unassigned"
+        sport = str(payload.get("sport") or "").strip()
+        if not sport and card_title:
+            sport = str(assignment_engine.parse_card_for_matching(card_title).get("sport") or "")
+        return self._normalize_inventory_record(
+            {
+                "date_added": datetime.now().strftime("%Y-%m-%d"),
+                "assigned_person": person,
+                "sport": sport,
+                "cert_number": cert,
+                "grader": normalize_grader(payload.get("grader") or ""),
+                "card_title": card_title,
+                "purchase_price": payload.get("purchase_price") or payload.get("purchase") or payload.get("price_paid"),
+                "inventory_value": payload.get("inventory_value") or payload.get("value"),
+                "source_sheet": str(payload.get("source_sheet") or "Mobile Inventory").strip() or "Mobile Inventory",
+                "source": source,
+                "status": "Active",
+                "notes": str(payload.get("notes") or "").strip(),
+            }
+        )
+
+    def _mobile_inventory_json_record(self, record: dict[str, object]) -> dict[str, object]:
+        normalized = self._normalize_inventory_record(record)
+        return {
+            "inventory_key": normalized.get("inventory_key"),
+            "date_added": normalized.get("date_added"),
+            "assigned_person": normalized.get("assigned_person"),
+            "sport": normalized.get("sport"),
+            "cert_number": normalized.get("cert_number"),
+            "grader": normalized.get("grader"),
+            "card_title": normalized.get("card_title"),
+            "purchase_price": normalized.get("purchase_price"),
+            "purchase_price_display": format_money(self._money_value(normalized.get("purchase_price"))),
+            "inventory_value": normalized.get("inventory_value"),
+            "inventory_value_display": format_money(self._money_value(normalized.get("inventory_value"))),
+            "best_company": normalized.get("best_company"),
+            "estimated_payout": normalized.get("estimated_payout"),
+            "estimated_payout_display": format_money(self._money_value(normalized.get("estimated_payout"))),
+            "source_sheet": normalized.get("source_sheet"),
+            "source": normalized.get("source"),
+            "status": normalized.get("status"),
+            "notes": normalized.get("notes"),
+        }
+
+    def mobile_inventory_search(self, payload: dict) -> dict:
+        query = str(payload.get("query") or payload.get("q") or "").strip().lower()
+        include_sold = bool(payload.get("include_sold"))
+        rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        results: list[dict[str, object]] = []
+        for record in rows:
+            status = str(record.get("status") or "").lower()
+            if status != "active" and not include_sold:
+                continue
+            haystack = " ".join(
+                str(record.get(field) or "")
+                for field in ("cert_number", "card_title", "grader", "assigned_person", "sport", "source", "best_company", "notes")
+            ).lower()
+            if query and any(part not in haystack for part in query.split()):
+                continue
+            results.append(self._mobile_inventory_json_record(record))
+            if len(results) >= 75:
+                break
+        return {"ok": True, "count": len(results), "items": results}
+
+    def mobile_inventory_add(self, payload: dict) -> dict:
+        record = self._mobile_inventory_payload_record(payload)
+        if not record.get("cert_number") and not record.get("card_title"):
+            return {"ok": False, "error": "Enter or scan a cert number, or enter a card title."}
+        cert = scan_to_cert(record.get("cert_number"))
+        update_existing = bool(payload.get("update_existing"))
+        with shared_lock(CARD_PIPELINE_DIR, "mobile-inventory", self.lucas_identity):
+            ledger = [self._normalize_inventory_record(item) for item in self._load_inventory_ledger()]
+            existing_index = next(
+                (
+                    index
+                    for index, item in enumerate(ledger)
+                    if cert and scan_to_cert(item.get("cert_number")) == cert and str(item.get("status") or "").lower() == "active"
+                ),
+                None,
+            )
+            if existing_index is not None and not update_existing:
+                return {
+                    "ok": False,
+                    "duplicate": True,
+                    "error": "That cert is already active in inventory.",
+                    "record": self._mobile_inventory_json_record(ledger[existing_index]),
+                }
+            if existing_index is not None:
+                existing = ledger[existing_index]
+                for key, value in record.items():
+                    if key in {"inventory_key", "date_added"}:
+                        continue
+                    if value not in ("", None):
+                        existing[key] = value
+                existing["status"] = "Active"
+                ledger[existing_index] = self._enrich_inventory_record_assignment(self._normalize_inventory_record(existing), force=True)
+                self._save_inventory_ledger(ledger)
+                saved = ledger[existing_index]
+                action = "updated"
+            else:
+                saved = self._enrich_inventory_record_assignment(record)
+                ledger.append(saved)
+                self._save_inventory_ledger(ledger)
+                action = "added"
+        self.events.put(("inventory_refresh", f"Mobile inventory {action}: {saved.get('cert_number') or saved.get('card_title') or 'card'}"))
+        return {"ok": True, "action": action, "record": self._mobile_inventory_json_record(saved)}
 
     def _retarget_inventory_rows_for_source(self, source_sheet_name: str, assigned_person: str) -> int:
         source_name = Path(str(source_sheet_name or "")).name.strip().lower()
@@ -6463,6 +6604,9 @@ class CardPipelineApp(tk.Tk):
                         self._apply_assignment_recommendation_results(payload)
                     elif kind == "assignment_recommendations_error":
                         self._handle_assignment_recommendation_error(payload)
+                    elif kind == "inventory_refresh":
+                        self.refresh_inventory_tab(enrich=True)
+                        self.status_var.set(str(payload))
         except queue.Empty:
             pass
         self.after(200, self._poll_events)

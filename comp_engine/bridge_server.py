@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import re
 import socket
@@ -24,6 +25,7 @@ EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-no-blind-grader-option-v22"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 DEBUG_LOG = DEBUG_DIR / "bridge.log"
+MOBILE_APP_DIR = Path(__file__).resolve().parent.parent / "mobile_app"
 COMP_STRATEGY_AVERAGE = "average_last_5"
 COMP_STRATEGY_HIGH = "highest_last_5"
 COMP_STRATEGY_LOW = "lowest_last_5"
@@ -55,6 +57,9 @@ class BridgeState:
         self.cancel_requested = False
         self.comp_strategy = COMP_STRATEGY_AVERAGE
         self.on_update: Callable[[], None] | None = None
+        self.mobile_pin_provider: Callable[[], str] | None = None
+        self.mobile_inventory_search: Callable[[dict], dict] | None = None
+        self.mobile_inventory_add: Callable[[dict], dict] | None = None
         self.keep_note_sources: list[dict[str, str]] = []
         self.last_keep_sync: dict[str, str] = {}
         self.cy_lookup_inflight: set[int] = set()
@@ -102,6 +107,40 @@ class BridgeState:
         with self.lock:
             self.last_keep_sync = {"url": url, "title": title, "syncedAt": synced_at, "saved": str(len(saved_paths))}
         return {"ok": bool(saved_paths), "saved": len(saved_paths), "paths": saved_paths}
+
+    def mobile_auth_ok(self, payload: dict | None = None, query: dict[str, list[str]] | None = None) -> bool:
+        provider = self.mobile_pin_provider
+        expected = provider() if provider else ""
+        if not expected:
+            return False
+        candidate = ""
+        if payload:
+            candidate = str(payload.get("pin") or payload.get("token") or "").strip()
+        if not candidate and query:
+            candidate = str(query.get("pin", [""])[0] or query.get("token", [""])[0]).strip()
+        return bool(candidate and candidate == expected)
+
+    def mobile_config(self) -> dict:
+        return {
+            "ok": True,
+            "service": "lucas-mobile",
+            "requiresPin": bool(self.mobile_pin_provider),
+            "barcodeScanning": True,
+        }
+
+    def search_mobile_inventory(self, payload: dict) -> dict:
+        if not self.mobile_auth_ok(payload):
+            return {"ok": False, "error": "Invalid mobile PIN."}
+        if not self.mobile_inventory_search:
+            return {"ok": False, "error": "Inventory search is not available."}
+        return self.mobile_inventory_search(payload)
+
+    def add_mobile_inventory(self, payload: dict) -> dict:
+        if not self.mobile_auth_ok(payload):
+            return {"ok": False, "error": "Invalid mobile PIN."}
+        if not self.mobile_inventory_add:
+            return {"ok": False, "error": "Inventory add is not available."}
+        return self.mobile_inventory_add(payload)
 
     def start_all_comps(self, requery_all: bool = False) -> int:
         with self.lock:
@@ -771,7 +810,7 @@ def parse_formatted_comps(text: str) -> list[dict]:
 
 
 class BridgeServer:
-    def __init__(self, state: BridgeState, host: str = "127.0.0.1", port: int = 8765) -> None:
+    def __init__(self, state: BridgeState, host: str = "0.0.0.0", port: int = 8765) -> None:
         self.state = state
         self.host = host
         self.port = port
@@ -788,8 +827,21 @@ class BridgeServer:
                 self._send_json({})
 
             def do_GET(self):
+                parsed = urlparse(self.path)
+                if parsed.path in {"/mobile", "/mobile/"}:
+                    self._send_static(MOBILE_APP_DIR / "index.html")
+                    return
+                if parsed.path.startswith("/mobile/"):
+                    relative = parsed.path.removeprefix("/mobile/") or "index.html"
+                    if relative.startswith("api/"):
+                        if relative == "api/config":
+                            self._send_json(state.mobile_config())
+                            return
+                        self._send_json({"ok": False, "error": "unknown endpoint"}, status=404)
+                        return
+                    self._send_static(MOBILE_APP_DIR / relative)
+                    return
                 if self.path.startswith("/command"):
-                    parsed = urlparse(self.path)
                     query = parse_qs(parsed.query)
                     metadata = {
                         "extensionVersion": query.get("extensionVersion", [""])[0],
@@ -806,6 +858,12 @@ class BridgeServer:
 
             def do_POST(self):
                 payload = self._read_json()
+                if self.path.startswith("/mobile/api/inventory/search"):
+                    self._send_json(state.search_mobile_inventory(payload))
+                    return
+                if self.path.startswith("/mobile/api/inventory/add"):
+                    self._send_json(state.add_mobile_inventory(payload))
+                    return
                 if self.path.startswith("/ack"):
                     state.acknowledge_command(int(payload.get("id") or 0))
                     self._send_json({"ok": True})
@@ -845,6 +903,25 @@ class BridgeServer:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _send_static(self, path: Path) -> None:
+                try:
+                    root = MOBILE_APP_DIR.resolve()
+                    resolved = path.resolve()
+                    if root not in (resolved, *resolved.parents) or not resolved.is_file():
+                        self._send_json({"ok": False, "error": "not found"}, status=404)
+                        return
+                    body = resolved.read_bytes()
+                except OSError:
+                    self._send_json({"ok": False, "error": "not found"}, status=404)
+                    return
+                content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
+                self.send_response(200)
+                self.send_header("content-type", content_type)
+                self.send_header("cache-control", "no-cache")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             def log_message(self, format, *args):
                 return
 
@@ -873,8 +950,9 @@ class BridgeServer:
         self.started = True
 
     def _port_has_listener(self, port: int) -> bool:
+        host = "127.0.0.1" if self.host in {"0.0.0.0", "::"} else self.host
         try:
-            with socket.create_connection((self.host, port), timeout=0.2):
+            with socket.create_connection((host, port), timeout=0.2):
                 return True
         except OSError:
             return False
