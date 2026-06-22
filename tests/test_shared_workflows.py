@@ -594,6 +594,12 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertEqual(parsed["playerName"], "")
         self.assertNotEqual(parsed["sport"], "disney")
 
+    def test_tim_tebow_title_infers_football(self) -> None:
+        parsed = assignment_engine.parse_card_for_matching("2010 Donruss Rated Rookies 95 Tim Tebow PSA 10")
+
+        self.assertEqual(parsed["sport"], "football")
+        self.assertEqual(parsed["playerName"], "Tim Tebow")
+
     def test_player_sport_overrides_teach_unknown_players(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "overrides.json"
