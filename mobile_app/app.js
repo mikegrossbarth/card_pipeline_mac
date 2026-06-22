@@ -138,10 +138,14 @@ async function identifyPhoto(file) {
     const query = result.query || card.cert_number || card.card_title || "";
     status.textContent = `Found ${card.cert_number || card.card_title || "card"}.`;
     if (target === "certNumber") {
-      $("certNumber").value = card.cert_number || query;
+      $("certNumber").value = card.cert_number || "";
       if (card.grader) $("grader").value = card.grader;
       if (card.card_title) $("cardTitle").value = card.card_title;
       if (card.notes && !$("notes").value) $("notes").value = card.notes;
+      if (!$("source").value) $("source").value = "Mobile Photo";
+      status.textContent = card.cert_number
+        ? `Found cert ${card.cert_number}. Add purchase price, then tap Add Inventory.`
+        : "Found card details. Review fields, add purchase price, then tap Add Inventory.";
     } else {
       $("searchInput").value = query;
       await searchInventory();
