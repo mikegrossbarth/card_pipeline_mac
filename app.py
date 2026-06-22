@@ -569,6 +569,7 @@ class CardPipelineApp(tk.Tk):
         self.filtered_inventory_rows: list[dict[str, object]] = []
         self.inventory_tree_records: dict[str, dict[str, object]] = {}
         self.inventory_recomp_context: dict[str, object] | None = None
+        self.inventory_filter_after_id: str | None = None
         self.profit_status_var = tk.StringVar(value="No profit ledger loaded.")
         self.profit_metric_var = tk.StringVar(value="")
         self.profit_person_var = tk.StringVar()
@@ -1169,7 +1170,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var):
-            var.trace_add("write", lambda *_args: self.refresh_inventory_tab())
+            var.trace_add("write", lambda *_args: self._schedule_inventory_filter_refresh())
 
         self.inventory_tree = self._build_home_tree(
             self.inventory_tab,
@@ -2063,6 +2064,27 @@ class CardPipelineApp(tk.Tk):
                 return path
         return None
 
+    def _inventory_source_rows_by_cert(self, path: Path) -> dict[str, dict[str, object]]:
+        cache = getattr(self, "_inventory_source_rows_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._inventory_source_rows_cache = cache
+        cache_key = str(path.resolve()) if path.exists() else str(path)
+        if cache_key in cache:
+            return cache[cache_key]
+        try:
+            rows = read_simple_spreadsheet(path)
+        except Exception:
+            cache[cache_key] = {}
+            return cache[cache_key]
+        by_cert: dict[str, dict[str, object]] = {}
+        for row in rows:
+            cert = scan_to_cert(row.get("cert_number"))
+            if cert and cert not in by_cert:
+                by_cert[cert] = row
+        cache[cache_key] = by_cert
+        return by_cert
+
     def _hydrate_inventory_record_source_values(self, record: dict[str, object]) -> dict[str, object]:
         normalized = self._normalize_inventory_record(record)
         if (
@@ -2075,18 +2097,20 @@ class CardPipelineApp(tk.Tk):
         path = self._inventory_source_sheet_path(str(normalized.get("source_sheet") or ""))
         if not cert or path is None:
             return normalized
-        try:
-            rows = read_simple_spreadsheet(path)
-        except Exception:
+        source_reader = getattr(self, "_inventory_source_rows_by_cert", None)
+        if callable(source_reader):
+            row = source_reader(path).get(cert)
+        else:
+            try:
+                row = next((candidate for candidate in read_simple_spreadsheet(path) if scan_to_cert(candidate.get("cert_number")) == cert), None)
+            except Exception:
+                row = None
+        if not row:
             return normalized
-        for row in rows:
-            if scan_to_cert(row.get("cert_number")) != cert:
-                continue
-            for source_field in ("card_ladder_value", "card_ladder_comps_average", "cy_value"):
-                if normalized.get(source_field) is None:
-                    normalized[source_field] = self._money_value(row.get(source_field))
-            return self._normalize_inventory_record(normalized)
-        return normalized
+        for source_field in ("card_ladder_value", "card_ladder_comps_average", "cy_value"):
+            if normalized.get(source_field) is None:
+                normalized[source_field] = self._money_value(row.get(source_field))
+        return self._normalize_inventory_record(normalized)
 
     def _enrich_inventory_record_assignment(self, record: dict[str, object], force: bool = False) -> dict[str, object]:
         hydrator = getattr(self, "_hydrate_inventory_record_source_values", None)
@@ -2717,6 +2741,13 @@ class CardPipelineApp(tk.Tk):
     def refresh_inventory_tab(self, reconcile: bool = False, enrich: bool = False, filtered_only: bool = False) -> None:
         self._last_inventory_enrich_visible_count = 0
         self._last_inventory_enrich_changed_count = 0
+        if getattr(self, "inventory_filter_after_id", None):
+            try:
+                self.after_cancel(self.inventory_filter_after_id)
+            except tk.TclError:
+                pass
+            self.inventory_filter_after_id = None
+        self._inventory_source_rows_cache = {}
         if reconcile and not getattr(self, "_inventory_reconcile_running", False):
             self._inventory_reconcile_running = True
             try:
@@ -2798,6 +2829,16 @@ class CardPipelineApp(tk.Tk):
             self.inventory_tree_records[iid] = record
         self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Purchase Total: {format_money(total_purchase)}   Source Value: {format_money(total_value)}")
         self.inventory_status_var.set(f"Loaded {len(self.filtered_inventory_rows)}/{len(self.inventory_rows)} inventory card(s) from {INVENTORY_LEDGER_PATH.name}.")
+
+    def _schedule_inventory_filter_refresh(self) -> None:
+        if not hasattr(self, "inventory_tree"):
+            return
+        if getattr(self, "inventory_filter_after_id", None):
+            try:
+                self.after_cancel(self.inventory_filter_after_id)
+            except tk.TclError:
+                pass
+        self.inventory_filter_after_id = self.after(150, self.refresh_inventory_tab)
 
     def update_inventory_payouts(self) -> None:
         try:
