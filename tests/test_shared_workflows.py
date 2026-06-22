@@ -2471,9 +2471,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _set_inventory_purchase_price_by_keys = app.CardPipelineApp._set_inventory_purchase_price_by_keys
+            _set_inventory_numeric_field_by_keys = app.CardPipelineApp._set_inventory_numeric_field_by_keys
+            _set_selected_inventory_numeric_value = app.CardPipelineApp._set_selected_inventory_numeric_value
             set_selected_inventory_purchase_price = app.CardPipelineApp.set_selected_inventory_purchase_price
+            set_selected_inventory_card_ladder_value = app.CardPipelineApp.set_selected_inventory_card_ladder_value
+            set_selected_inventory_comps_value = app.CardPipelineApp.set_selected_inventory_comps_value
             refresh_inventory_tab = lambda self: None
-            _inventory_purchase_price_dialog = lambda self, _records: 57.25
+
+            def _inventory_numeric_value_dialog(self, _records, title, _field, note="This updates Inventory only."):
+                return {"Set Purchase Price": 57.25, "Set Card Ladder Value": 116, "Set Comps": 99.97}[title]
 
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR
@@ -2498,6 +2504,22 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(by_cert["222"]["purchase_price"], 57.25)
                 self.assertEqual(by_cert["333"]["purchase_price"], 9)
                 self.assertEqual(dummy.status_var.value, "Updated purchase price to $57.25 for 2 inventory card(s).")
+
+                dummy.set_selected_inventory_card_ladder_value()
+                rows = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                by_cert = {record["cert_number"]: record for record in rows}
+                self.assertEqual(by_cert["111"]["card_ladder_value"], 116)
+                self.assertEqual(by_cert["222"]["card_ladder_value"], 116)
+                self.assertIsNone(by_cert["333"]["card_ladder_value"])
+                self.assertEqual(dummy.status_var.value, "Updated Card Ladder value to $116.00 for 2 inventory card(s).")
+
+                dummy.set_selected_inventory_comps_value()
+                rows = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                by_cert = {record["cert_number"]: record for record in rows}
+                self.assertEqual(by_cert["111"]["card_ladder_comps_average"], 99.97)
+                self.assertEqual(by_cert["222"]["card_ladder_comps_average"], 99.97)
+                self.assertIsNone(by_cert["333"]["card_ladder_comps_average"])
+                self.assertEqual(dummy.status_var.value, "Updated comps to $99.97 for 2 inventory card(s).")
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
