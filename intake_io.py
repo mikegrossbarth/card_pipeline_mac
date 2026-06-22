@@ -47,6 +47,7 @@ PHOTO_EXPORT_POSITIONS = {
 CERT_HEADERS = ("certificationnumber", "certnumber", "cert", "certification", "cert#")
 GRADER_HEADERS = ("company", "gradingcompany", "grader", "gradingco", "gradingcompanyname")
 CARD_HEADERS = ("carddescription", "card", "description", "title", "cardtitle", "item", "itemtitle")
+SPORT_HEADERS = ("sport", "sports", "category", "cardcategory", "assignmentcategory")
 PURCHASE_PRICE_HEADERS = ("purchaseprice", "purchase", "price", "cost", "buyprice", "paid")
 CARD_LADDER_VALUE_HEADERS = (
     "cardladdervalue",
@@ -104,6 +105,7 @@ SIMPLE_HEADER_ALIASES = (
     CERT_HEADERS
     + GRADER_HEADERS
     + CARD_HEADERS
+    + SPORT_HEADERS
     + PURCHASE_PRICE_HEADERS
     + CARD_LADDER_VALUE_HEADERS
     + COMPS_AVERAGE_HEADERS
@@ -144,6 +146,7 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
             cert = normalize_cert(_cell_by_header(sheet, row_index, headers, CERT_HEADERS, 1))
             grader = normalize_grader(_cell_by_header(sheet, row_index, headers, GRADER_HEADERS, None))
             card = clean_part(_cell_by_header(sheet, row_index, headers, CARD_HEADERS, 2))
+            sport = clean_part(_cell_by_header(sheet, row_index, headers, SPORT_HEADERS, None))
             purchase_price = parse_money(_cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, 3))
             card_ladder_value = parse_money(_cell_by_header(sheet, row_index, headers, CARD_LADDER_VALUE_HEADERS, None))
             comps_average = parse_money(_cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, None))
@@ -162,6 +165,7 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
                 {
                     "cert_number": cert,
                     "card_title": card,
+                    "sport": sport,
                     "grader": grader,
                     "purchase_price": purchase_price,
                     "card_ladder_value": card_ladder_value,
@@ -269,6 +273,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
     headers = [
         "Source",
         "Certification Number",
+        "Sport",
         "Card Description",
         "Purchase Price",
         "Card Ladder Value",
@@ -288,6 +293,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
             [
                 (source_lookup or {}).get(row.excel_row, ""),
                 row.cert_number,
+                getattr(row, "category", ""),
                 row.card_title,
                 row.existing_value,
                 row.card_ladder_value,
@@ -310,7 +316,7 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
         cell.font = header_font
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    widths = [18, 22, 62, 16, 18, 14, 14, 16, 58, 42, 18, 18, 20, 38]
+    widths = [18, 22, 14, 62, 16, 18, 14, 14, 16, 58, 42, 18, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[chr(64 + index)].width = width
     workbook.save(path)
@@ -629,12 +635,13 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = DEFAULT_SHEET
-    headers = ["Certification Number", "Company", "Card Description", "Purchase Price", "Card Ladder Value", "Comps", "CY Estimate", "CY Confidence", "Source", RECEIVED_HEADER]
+    headers = ["Certification Number", "Company", "Sport", "Card Description", "Purchase Price", "Card Ladder Value", "Comps", "CY Estimate", "CY Confidence", "Source", RECEIVED_HEADER]
     sheet.append(headers)
     for row in rows:
         sheet.append([
             row.cert_number,
             row.grader,
+            getattr(row, "category", ""),
             row.card_title,
             row.existing_value,
             row.card_ladder_value,
@@ -651,7 +658,7 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
         cell.font = header_font
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    for letter, width in {"A": 22, "B": 14, "C": 62, "D": 16, "E": 18, "F": 14, "G": 14, "H": 16, "I": 38, "J": 14}.items():
+    for letter, width in {"A": 22, "B": 14, "C": 14, "D": 62, "E": 16, "F": 18, "G": 14, "H": 14, "I": 16, "J": 38, "K": 14}.items():
         sheet.column_dimensions[letter].width = width
     workbook.save(path)
     return path

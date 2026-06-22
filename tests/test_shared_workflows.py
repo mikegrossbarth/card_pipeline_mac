@@ -139,6 +139,25 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
             self.assertEqual(rows[0]["cy_value"], 19.30)
             self.assertEqual(rows[0]["cy_confidence"], 4)
 
+    def test_working_sheet_round_trips_manual_sport(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manual-sport.xlsx"
+            rows = [
+                WorkbookRow(
+                    excel_row=2,
+                    cert_number="0010355805",
+                    grader="BGS",
+                    category="baseball",
+                    card_title="Generic Prospect Auto BGS 9.5",
+                    existing_value=25,
+                )
+            ]
+
+            write_working_sheet(path, rows)
+            loaded = read_simple_spreadsheet(path)
+
+            self.assertEqual(loaded[0]["sport"], "baseball")
+
     def test_receive_company_append_dedupes_and_profit_backfills(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -798,6 +817,30 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertEqual(decisions["CL Buyer"].payout, 135)
         self.assertEqual(recommendation.company, "CL Buyer")
         self.assertEqual(recommendation.payout, 135)
+
+    def test_manual_row_category_drives_assignment_matching(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="1",
+            grader="BGS",
+            category="baseball",
+            card_title="Generic Prospect Auto BGS 9.5",
+            card_ladder_comps_average=100,
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Baseball Buyer",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("baseball", 10, 500)]),
+                    [assignment_engine.PayoutTier(10, 500, 0.9, "baseball")],
+                )
+            ]
+        )
+
+        recommendation = engine.recommend(row)
+
+        self.assertEqual(recommendation.company, "Baseball Buyer")
+        self.assertEqual(recommendation.payout, 90)
 
     def test_card_ladder_value_source_rejects_company_when_cl_missing(self) -> None:
         row = WorkbookRow(
