@@ -591,7 +591,10 @@ def read_company_profit_records(directory: Path) -> list[dict[str, Any]]:
                     card = clean_part(_cell_by_header(sheet, row_index, headers, CARD_HEADERS, 6))
                     purchase = parse_money(_cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, 7))
                     sale = parse_money(_cell_by_header(sheet, row_index, headers, ESTIMATED_PAYOUT_HEADERS, 12))
+                    source_sheet = clean_part(_cell_by_header(sheet, row_index, headers, ("sourcesheet",), 2))
                     if not cert and not card and purchase is None and sale is None:
+                        continue
+                    if not source_sheet:
                         continue
                     records.append(
                         {
@@ -599,7 +602,7 @@ def read_company_profit_records(directory: Path) -> list[dict[str, Any]]:
                             "company": company,
                             "weekly_sheet": str(path),
                             "weekly_sheet_name": sheet_label,
-                            "source_sheet": clean_part(_cell_by_header(sheet, row_index, headers, ("sourcesheet",), 2)),
+                            "source_sheet": source_sheet,
                             "source": clean_part(_cell_by_header(sheet, row_index, headers, SOURCE_HEADERS, 3)),
                             "cert_number": cert,
                             "grader": normalize_grader(_cell_by_header(sheet, row_index, headers, GRADER_HEADERS, 5)),
