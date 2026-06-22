@@ -2780,12 +2780,14 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _photo_card_to_row = app.CardPipelineApp._photo_card_to_row
             _photo_card_has_inventory = app.CardPipelineApp._photo_card_has_inventory
             _load_photo_env = lambda self: None
+            _mobile_image_parts = app.CardPipelineApp._mobile_image_parts
+            _parse_mobile_quick_card_response = app.CardPipelineApp._parse_mobile_quick_card_response
+            _mobile_quick_card_to_row = app.CardPipelineApp._mobile_quick_card_to_row
+            _mobile_single_card_quick_read = app.CardPipelineApp._mobile_single_card_quick_read
 
         dummy = MobilePhotoDummy()
-        fake_genai = types.SimpleNamespace(Client=lambda api_key: {"api_key": api_key})
-        cards = [
+        quick_response = json.dumps(
             {
-                "is_graded_slab": True,
                 "grading_company": "PSA",
                 "cert_number": "123456789",
                 "player": "Test Player",
@@ -2794,16 +2796,27 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 "grade": "10",
                 "confidence": "high",
             }
-        ]
+        )
+
+        class FakeModels:
+            def generate_content(self, **_kwargs):
+                return types.SimpleNamespace(text=quick_response)
+
+        class FakeClient:
+            models = FakeModels()
+
+        fake_genai = types.SimpleNamespace(Client=lambda api_key: FakeClient())
         with patch.object(app, "genai", fake_genai), \
-                patch.object(app, "identify_cards_sync", return_value=cards), \
+                patch.object(app, "identify_cards_sync") as fallback_ocr, \
                 patch.dict(app.os.environ, {"GOOGLE_API_KEY": "test-key"}):
             result = app.CardPipelineApp.mobile_card_identify(dummy, {"image": "data:image/jpeg;base64,ZmFrZQ=="})
 
         self.assertTrue(result["ok"])
+        self.assertEqual(result["mode"], "quick")
         self.assertEqual(result["query"], "123456789")
         self.assertEqual(result["card"]["grader"], "PSA")
         self.assertIn("Test Player", result["card"]["card_title"])
+        fallback_ocr.assert_not_called()
 
 
 if __name__ == "__main__":

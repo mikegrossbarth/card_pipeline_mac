@@ -89,6 +89,7 @@ if load_dotenv:
     load_dotenv(PHOTO_APP_DIR / ".env", override=False)
 try:
     from google import genai
+    from google.genai import types as genai_types
     from multi_card_extraction import (
         ModelQuotaExceeded,
         ModelResponseParseError,
@@ -97,6 +98,7 @@ try:
     )
 except Exception:
     genai = None
+    genai_types = None
     identify_cards_sync = None
     TemporaryModelUnavailable = ModelQuotaExceeded = ModelResponseParseError = Exception
 SETTINGS_PATH = ROOT / "lucas_settings.json"
@@ -1417,6 +1419,89 @@ class CardPipelineApp(tk.Tk):
         self.events.put(("inventory_refresh", f"Mobile inventory {action}: {saved.get('cert_number') or saved.get('card_title') or 'card'}"))
         return {"ok": True, "action": action, "record": self._mobile_inventory_json_record(saved)}
 
+    def _mobile_image_parts(self, image: str) -> tuple[str, str, bytes]:
+        match = re.match(r"^data:([^;]+);base64,(.*)$", image, re.S)
+        if match:
+            mime_type = match.group(1) or "image/jpeg"
+            image_b64 = match.group(2)
+        else:
+            mime_type = "image/jpeg"
+            image_b64 = image
+        return mime_type, image_b64, base64.b64decode(image_b64)
+
+    def _parse_mobile_quick_card_response(self, raw: str) -> dict:
+        text = str(raw or "").strip()
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            match = re.search(r"\{.*\}", text, re.S)
+            if not match:
+                return {}
+            try:
+                parsed = json.loads(match.group(0))
+            except Exception:
+                return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _mobile_quick_card_to_row(self, parsed: dict) -> dict[str, object]:
+        grader = normalize_grader(parsed.get("grading_company") or parsed.get("grader") or "")
+        title = build_card_title(
+            {
+                "description": "",
+                "year": parsed.get("year"),
+                "set": parsed.get("set"),
+                "player": parsed.get("player") or parsed.get("subject"),
+                "card_number": parsed.get("card_number"),
+                "parallel": parsed.get("parallel"),
+                "subset": parsed.get("subset") or parsed.get("attributes"),
+                "grader": grader,
+                "grade": parsed.get("grade"),
+            }
+        )
+        label_text = str(parsed.get("label_text") or "").strip()
+        if not title:
+            title = str(parsed.get("card_title") or parsed.get("title") or "").strip()
+        notes = clean_part("; ".join(part for part in ("Mobile quick scan", label_text[:180]) if part))
+        return {
+            "cert_number": scan_to_cert(parsed.get("cert_number")),
+            "grader": grader or infer_grader(title),
+            "card_title": title,
+            "purchase_price": None,
+            "source": "Mobile Photo",
+            "notes": notes,
+        }
+
+    def _mobile_single_card_quick_read(self, client, mime_type: str, image_bytes: bytes) -> dict[str, object] | None:
+        if genai_types is None:
+            return None
+        prompt = (
+            "Read this single trading card or graded slab photo for inventory entry. "
+            "Assume the user is photographing one card/slab. Extract only visible facts; do not guess. "
+            "Return JSON only with keys: grading_company, cert_number, player, year, set, card_number, "
+            "parallel, subset, attributes, grade, card_title, label_text, confidence. "
+            "Normalize cert_number to digits only when possible. If a field is unreadable, use an empty string. "
+            "For BGS/Beckett, grade must be the overall slab grade, not a subgrade."
+        )
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                prompt,
+                genai_types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+            ],
+            config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+                max_output_tokens=700,
+                response_mime_type="application/json",
+                temperature=0,
+            ),
+        )
+        parsed = self._parse_mobile_quick_card_response(response.text or "")
+        row = self._mobile_quick_card_to_row(parsed)
+        if row.get("cert_number") or row.get("card_title") or row.get("grader"):
+            return row
+        return None
+
     def mobile_card_identify(self, payload: dict) -> dict:
         image = str(payload.get("image") or "").strip()
         if not image:
@@ -1427,23 +1512,32 @@ class CardPipelineApp(tk.Tk):
         api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
         if not api_key:
             return {"ok": False, "error": "Missing GOOGLE_API_KEY for photo card search."}
-        match = re.match(r"^data:[^;]+;base64,(.*)$", image, re.S)
-        image_b64 = match.group(1) if match else image
+        try:
+            mime_type, image_b64, image_bytes = self._mobile_image_parts(image)
+        except Exception as error:
+            return {"ok": False, "error": f"Could not read that photo: {error}"}
         try:
             client = genai.Client(api_key=api_key)
-            cards = identify_cards_sync(client, image_b64)
+            row = self._mobile_single_card_quick_read(client, mime_type, image_bytes)
+            if row is None:
+                cards = identify_cards_sync(client, image_b64)
+                rows = [
+                    self._photo_card_to_row(Path("mobile-photo.jpg"), card)
+                    for card in cards
+                    if self._photo_card_has_inventory(card)
+                ]
+                if not rows:
+                    return {"ok": False, "error": "No card was found in that photo."}
+                row = rows[0]
+                cards_found = len(rows)
+                mode = "fallback"
+            else:
+                cards_found = 1
+                mode = "quick"
         except (TemporaryModelUnavailable, ModelQuotaExceeded, ModelResponseParseError) as error:
             return {"ok": False, "error": str(error)}
         except Exception as error:
             return {"ok": False, "error": f"Photo search failed: {error}"}
-        rows = [
-            self._photo_card_to_row(Path("mobile-photo.jpg"), card)
-            for card in cards
-            if self._photo_card_has_inventory(card)
-        ]
-        if not rows:
-            return {"ok": False, "error": "No card was found in that photo."}
-        row = rows[0]
         query = scan_to_cert(row.get("cert_number")) or str(row.get("card_title") or "").strip()
         return {
             "ok": True,
@@ -1454,7 +1548,8 @@ class CardPipelineApp(tk.Tk):
                 "card_title": row.get("card_title"),
                 "notes": row.get("notes"),
             },
-            "cards_found": len(rows),
+            "cards_found": cards_found,
+            "mode": mode,
         }
 
     def _retarget_inventory_rows_for_source(self, source_sheet_name: str, assigned_person: str) -> int:
