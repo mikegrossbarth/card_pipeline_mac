@@ -644,6 +644,20 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertTrue(decisions["Lower"].accepted)
         self.assertFalse(decisions["Rejected"].accepted)
 
+    def test_unlicensed_rule_matches_known_unlicensed_patterns(self) -> None:
+        rules = assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("unlicensed", 0, 1000)])
+        examples = [
+            "2021 Panini Prizm Mike Trout Red PSA 10",
+            "2020 Panini Contenders Draft Picks Stephen Curry PSA 10",
+            "2023 Leaf Metal Tom Brady Autograph PSA 10",
+        ]
+
+        for title in examples:
+            with self.subTest(title=title):
+                self.assertTrue(assignment_engine.company_accepts(rules, title, 100, "PSA"))
+
+        self.assertFalse(assignment_engine.company_accepts(rules, "2019 Panini Prizm Stephen Curry Silver PSA 10", 100, "PSA"))
+
     def test_person_payout_policy_locks_companies_and_overrides_rates(self) -> None:
         row = WorkbookRow(
             excel_row=2,

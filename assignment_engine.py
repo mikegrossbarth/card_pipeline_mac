@@ -2040,12 +2040,31 @@ def term_matches(term: str, haystack: str) -> bool:
     }
     options = [words]
     alias_text = " ".join(words)
+    if alias_text == "unlicensed":
+        return has_unlicensed_signal(haystack)
+    if alias_text == "licensed":
+        return not has_unlicensed_signal(haystack)
     if canonical_sport_label(alias_text) and sport_term_matches_known_player(alias_text, haystack):
         return True
     if matcher_matches_text(alias_text, haystack):
         return True
     options.extend(alias.split() for alias in aliases.get(alias_text, []))
     return any(all(word_matches(word, haystack) for word in option) for option in options)
+
+
+def has_unlicensed_signal(haystack: str) -> bool:
+    text = clean_text(haystack)
+    if re.search(r"\bleaf\b", text):
+        return True
+    sports = {canonical_sport_label(match.get("sport") or "") for match in find_known_player_sports(text)}
+    inferred = canonical_sport_label(infer_sport(text))
+    if inferred:
+        sports.add(inferred)
+    if "baseball" in sports and re.search(r"\bpanini\b", text):
+        return True
+    if "basketball" in sports and re.search(r"\bdraft\s+picks?\b", text):
+        return True
+    return False
 
 
 def sport_term_matches_known_player(sport: str, haystack: str) -> bool:
