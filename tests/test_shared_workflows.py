@@ -1028,6 +1028,38 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertIsNone(decisions["No Payout Match"].payout)
         self.assertIn("no payout tier", decisions["No Payout Match"].reason)
 
+    def test_dnb_over_50_section_only_blocks_cards_above_50(self) -> None:
+        values = [
+            ["", "", "", "Do Not Buy these Players", "", "", "", "Do Not Buy these Players over $50"],
+            ["", "Do not buy", "", "Basketball", "Football", "Baseball", "", "Basketball", "Football", "Baseball"],
+            ["", "", "", "", "", "", "", "", "Jayden Daniels", ""],
+        ]
+        rules_text = "\n".join(["football $10-$500", *assignment_engine.synthesize_do_not_buy_rules(values)])
+        rules = assignment_engine.parse_rules(rules_text)
+        engine = assignment_engine.AssignmentEngine([
+            assignment_engine.AssignmentCompany("Arena", rules, [assignment_engine.PayoutTier(10, 500, 0.9)])
+        ])
+        low_value = WorkbookRow(
+            excel_row=2,
+            cert_number="",
+            grader="PSA",
+            category="football",
+            card_title="2024 Panini Absolute Jayden Daniels PSA 9",
+            card_ladder_comps_average=50,
+        )
+        high_value = WorkbookRow(
+            excel_row=3,
+            cert_number="",
+            grader="PSA",
+            category="football",
+            card_title="2024 Panini Absolute Jayden Daniels PSA 9",
+            card_ladder_comps_average=51,
+        )
+
+        self.assertIn("block: Jayden Daniels over 50", rules_text)
+        self.assertTrue(engine.evaluate(low_value)[0].accepted)
+        self.assertFalse(engine.evaluate(high_value)[0].accepted)
+
 
 class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_bridge_only_hands_commands_to_expected_extension_version(self) -> None:
