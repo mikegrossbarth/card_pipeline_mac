@@ -15,6 +15,7 @@ class WorkbookRow:
     card_ladder_comps_average: float | None = None
     card_ladder_comps: str = ""
     card_ladder_screenshot: str = ""
+    category: str = ""
     alt_value: float | None = None
     cy_value: float | None = None
     cy_confidence: Any = None

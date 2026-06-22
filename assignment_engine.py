@@ -692,6 +692,7 @@ def card_row_text(row: Any, source_value: float) -> str:
     parts = [
         getattr(row, "cert_number", ""),
         getattr(row, "grader", ""),
+        getattr(row, "category", ""),
         getattr(row, "card_title", ""),
         f"${source_value}",
     ]

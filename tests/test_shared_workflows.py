@@ -1892,6 +1892,49 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.assignment_engine.last_row.card_ladder_value, 150)
         self.assertEqual(dummy.assignment_engine.last_row.card_ladder_comps_average, 100)
 
+    def test_inventory_assignment_uses_saved_sport_for_company_rules(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
+            _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
+
+        dummy = InventoryDummy()
+        dummy.assignment_engine = assignment_engine.AssignmentEngine([
+            assignment_engine.AssignmentCompany(
+                "Arena Club",
+                assignment_engine.CompanyRules(
+                    accept_all=True,
+                    blocks=[assignment_engine.AssignmentRule("Football Anthony Richardson", block=True)],
+                ),
+                [assignment_engine.PayoutTier(0, 500, 1.05)],
+            ),
+            assignment_engine.AssignmentCompany(
+                "Fanatics",
+                assignment_engine.CompanyRules(accept_all=True),
+                [assignment_engine.PayoutTier(0, 500, 0.95)],
+            ),
+        ])
+
+        record = dummy._enrich_inventory_record_assignment(
+            {
+                "assigned_person": "Tyler Hamlin",
+                "cert_number": "98514082",
+                "sport": "football",
+                "grader": "PSA",
+                "card_title": "2023 Panini Select 117 Anthony Richardson PSA 10",
+                "source_sheet": "TYLER_NASHVILLE_INVENTORY.xlsx",
+                "purchase_price": 20,
+                "card_ladder_value": 31,
+                "card_ladder_comps_average": 31,
+            },
+            force=True,
+        )
+
+        self.assertEqual(record["best_company"], "Fanatics")
+        self.assertEqual(record["estimated_payout"], 29.45)
+
     def test_inventory_refresh_hydrates_source_values_for_card_ladder_company(self) -> None:
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value

@@ -2014,6 +2014,7 @@ class CardPipelineApp(tk.Tk):
             cert_number=str(record.get("cert_number") or ""),
             grader=str(record.get("grader") or ""),
             card_title=str(record.get("card_title") or ""),
+            category=str(record.get("sport") or ""),
             existing_value=self._money_value(record.get("purchase_price")),
             card_ladder_value=card_ladder_value,
             card_ladder_comps_average=comps_average,
