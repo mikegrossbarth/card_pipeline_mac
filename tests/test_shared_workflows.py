@@ -1671,12 +1671,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                     "expense_id": "expense-1",
                     "assigned_person": "Kevin Hambone",
                     "date_added": "2026-06-18",
-                    "expense_type": "Travel Meal",
+                    "expense_type": "Shipping",
                     "expense_amount": 25,
                     "related_type": "Card",
                     "source_sheet": "Lot A.xlsx",
                     "cert_number": "123",
-                    "notes": "Airport dinner",
+                    "notes": "Shipment label",
                 }
                 sale = {
                     "assigned_person": "Kevin Hambone",
@@ -1691,7 +1691,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 ledger = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
                 expense_row = next(record for record in ledger if record.get("record_type") == "expense")
                 self.assertEqual(expense_row["profit"], -25)
-                self.assertEqual(expense_row["company"], "Expense: Travel Meal")
+                self.assertEqual(expense_row["company"], "Expense: Shipping")
                 self.assertEqual(expense_row["source_sheet"], "Lot A.xlsx")
                 self.assertEqual(expense_row["cert_number"], "123")
                 self.assertEqual(dummy._expense_related_label(expense_row), "Lot A.xlsx | 123")

@@ -380,7 +380,7 @@ function bind() {
   $("expenseDate").value = new Date().toISOString().slice(0, 10);
   $("sellDate").value = new Date().toISOString().slice(0, 10);
   fillSelect($("sellMethod"), ["Cash", "Wire", "Venmo", "Zelle", "PayPal", "Check", "Trade", "Other"], { includeAll: false });
-  fillSelect($("expenseType"), ["Travel", "Supplies", "Travel Meal", "Fees"], { includeAll: false });
+  fillSelect($("expenseType"), ["Travel", "Supplies", "Travel Meal", "Fees", "Shipping"], { includeAll: false });
   fillSelect($("expenseRelatedType"), ["General", "Card", "Sheet"], { includeAll: false });
   fillSelect($("profitPeriod"), ["Total", "Year", "Month", "Week", "5 Days"], { includeAll: false });
   fillSelect($("profitGraph"), ["Daily Trend", "Overall Profit"], { includeAll: false });

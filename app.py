@@ -136,7 +136,7 @@ PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Month", "Year", "YTD", "Total")
 PROFIT_GRAPH_OPTIONS = ("Daily Trend", "Overall Profit")
 DEFAULT_PROFIT_PERIOD = "Year"
 DEFAULT_PROFIT_GRAPH = "Overall Profit"
-EXPENSE_CATEGORY_OPTIONS = ("Travel", "Supplies", "Travel Meal", "Fees")
+EXPENSE_CATEGORY_OPTIONS = ("Travel", "Supplies", "Travel Meal", "Fees", "Shipping")
 EXPENSE_LINK_OPTIONS = ("General", "Card", "Sheet")
 ASSIGNMENT_CATEGORY_OPTIONS = (
     "basketball",
