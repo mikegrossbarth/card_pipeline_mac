@@ -497,6 +497,27 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertFalse(any(match["key"] == "tatsumi fujinami" and match["sport"] == "wwe" for match in matches))
         self.assertEqual(assignment_engine.infer_sport(title, "Shintaro Fujinami"), "baseball")
 
+    def test_rule_category_aliases_remember_common_shorthand(self) -> None:
+        self.assertEqual(assignment_engine.infer_sport("B-Ball $17-50 PSA 10"), "basketball")
+        self.assertEqual(assignment_engine.infer_sport("bball $50-250 SGC 9"), "basketball")
+        self.assertEqual(assignment_engine.infer_sport("1 Piece $15-50 PSA 10"), "one piece")
+        self.assertEqual(assignment_engine.infer_sport("Poke $10-100 CGC 10"), "pokemon")
+
+    def test_keep_rule_parser_handles_cy_shorthand_ranges_and_no_blocks(self) -> None:
+        rules = assignment_engine.parse_rules(
+            "\n".join(
+                [
+                    "1 Piece $1.75-2.5k None 5 4+",
+                    "- NO 7-10k CGC",
+                    "- DO NOT BUY ANY MARIO OR LUIGI",
+                ]
+            )
+        )
+
+        self.assertEqual((rules.ranges[0].min_price, rules.ranges[0].max_price), (1750.0, 2500.0))
+        self.assertTrue(any(rule.block and rule.min_price == 7000.0 and rule.max_price == 10000.0 for rule in rules.blocks))
+        self.assertTrue(any(rule.block and "MARIO OR LUIGI" in rule.matcher for rule in rules.blocks))
+
     def test_sports_titles_do_not_match_single_word_entertainment_characters(self) -> None:
         examples = {
             "2023 Topps Chrome Platinum Anniversary Autographs Yd Yusniel Diaz PSA 9": ("Yusniel Diaz", "baseball"),

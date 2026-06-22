@@ -1371,6 +1371,9 @@ def parse_rules(text: str, accept_all: bool = False) -> CompanyRules:
         if "block:" in lowered:
             rules.blocks.append(parse_rule_line(line.split(":", 1)[1], block=True))
             continue
+        if is_block_rule_line(line):
+            rules.blocks.append(parse_rule_line(strip_block_rule_prefix(line), block=True))
+            continue
         parsed = parse_rule_line(line)
         if parsed.min_price is not None or parsed.max_price is not None:
             rules.ranges.append(parsed)
@@ -1450,7 +1453,8 @@ def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:
     range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|–|—)\s*\$?\s*([\d,.]+k?)", text, re.I)
     if range_match:
         matcher = f"{text[:range_match.start()]} {text[range_match.end():]}".strip(" -:|")
-        return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=parse_money(range_match.group(1)), max_price=parse_money(range_match.group(2)), block=block)
+        min_price, max_price = parse_money_range(range_match.group(1), range_match.group(2))
+        return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=min_price, max_price=max_price, block=block)
     return AssignmentRule(matcher=text, block=block)
 
 
@@ -2083,6 +2087,25 @@ def parse_money(value: Any) -> float | None:
     multiplier = 1000 if text.endswith("k") else 1
     text = text.removesuffix("k")
     return to_number(text) * multiplier if to_number(text) is not None else None
+
+
+def parse_money_range(min_value: Any, max_value: Any) -> tuple[float | None, float | None]:
+    min_text = str(min_value or "").strip().lower().replace("$", "").replace(",", "")
+    max_text = str(max_value or "").strip().lower().replace("$", "").replace(",", "")
+    if max_text.endswith("k") and not min_text.endswith("k"):
+        min_number = to_number(min_text)
+        max_number = to_number(max_text.removesuffix("k"))
+        if min_number is not None and max_number is not None and min_number < max_number:
+            min_text = f"{min_text}k"
+    return parse_money(min_text), parse_money(max_text)
+
+
+def is_block_rule_line(value: Any) -> bool:
+    return bool(re.match(r"^\s*[-*•]?\s*(?:no|do\s+not\s+buy|don't\s+buy|never\s+buy)\b", str(value or ""), re.I))
+
+
+def strip_block_rule_prefix(value: Any) -> str:
+    return re.sub(r"^\s*[-*•]?\s*(?:no|do\s+not\s+buy|don't\s+buy|never\s+buy)\s+(?:any\s+)?", "", str(value or ""), flags=re.I).strip()
 
 
 def to_number(value: Any) -> float | None:
