@@ -1151,7 +1151,7 @@ class CardPipelineApp(tk.Tk):
         action_row.grid(row=2, column=0, columnspan=11, sticky="w", pady=(10, 0))
         ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT)
         ttk.Button(action_row, text="Update Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(action_row, text="Recomp", command=self.recomp_inventory_visible_rows, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Recomp", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var):
@@ -2795,13 +2795,67 @@ class CardPipelineApp(tk.Tk):
         changed_count = int(getattr(self, "_last_inventory_enrich_changed_count", 0) or 0)
         self.inventory_status_var.set(f"Updated payouts for {visible_count} visible inventory card(s); changed {changed_count}.")
 
-    def recomp_inventory_visible_rows(self) -> None:
+    def open_inventory_recomp_popup(self) -> None:
+        self.refresh_inventory_tab()
+        visible_count = len(getattr(self, "filtered_inventory_rows", []))
+        eligible_count = sum(
+            1
+            for record in getattr(self, "filtered_inventory_rows", [])
+            if scan_to_cert(record.get("cert_number")) and str(record.get("grader") or "").strip()
+        )
+        cl_value_var = tk.BooleanVar(value=True)
+        cl_comps_var = tk.BooleanVar(value=True)
+        cy_var = tk.BooleanVar(value=True)
+        strategy_var = tk.StringVar(value=self.comp_strategy_label.get() or "Average last 5")
+
+        popup = tk.Toplevel(self)
+        popup.title("Inventory Recomp")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.grab_set()
+        popup.resizable(False, False)
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Inventory Recomp", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(frame, text=f"Filtered rows: {visible_count}   Eligible: {eligible_count}", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 14))
+        ttk.Checkbutton(frame, text="Card Ladder value", variable=cl_value_var, style="Panel.TCheckbutton").grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Checkbutton(frame, text="Card Ladder comps", variable=cl_comps_var, style="Panel.TCheckbutton").grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Checkbutton(frame, text="CY estimate", variable=cy_var, style="Panel.TCheckbutton").grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="Comp Method", style="Muted.TLabel").grid(row=5, column=0, sticky="w", pady=(0, 6))
+        ttk.Combobox(frame, textvariable=strategy_var, values=list(COMP_STRATEGY_DISPLAY.keys()), width=24, state="readonly").grid(row=5, column=1, sticky="w", pady=(0, 6))
+
+        def submit() -> None:
+            features = {
+                "card_ladder_value": bool(cl_value_var.get()),
+                "card_ladder_comps": bool(cl_comps_var.get()),
+                "cy": bool(cy_var.get()),
+                "strategy_label": strategy_var.get(),
+            }
+            if not any(features.get(key) for key in ("card_ladder_value", "card_ladder_comps", "cy")):
+                messagebox.showinfo("Choose recomp features", "Choose at least one field to refresh.", parent=popup)
+                return
+            popup.destroy()
+            self.recomp_inventory_visible_rows(features)
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=6, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(buttons, text="Start Recomp", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
+        popup.bind("<Return>", lambda _event: submit())
+        popup.bind("<Escape>", lambda _event: popup.destroy())
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+
+    def recomp_inventory_visible_rows(self, features: dict[str, object] | None = None) -> None:
+        features = dict(features or {"card_ladder_value": True, "card_ladder_comps": True, "cy": True, "strategy_label": self.comp_strategy_label.get()})
         if self.inventory_recomp_context:
             messagebox.showinfo("Inventory recomp running", "Wait for the current Inventory recomp run to finish.")
             return
-        source_label = self.comp_source_label.get() if hasattr(self, "comp_source_label") else COMP_SOURCE_BOTH
-        run_card_ladder = source_label in {COMP_SOURCE_BOTH, COMP_SOURCE_CARD_LADDER}
-        run_cy = source_label in {COMP_SOURCE_BOTH, COMP_SOURCE_CY}
+        run_card_ladder = bool(features.get("card_ladder_value") or features.get("card_ladder_comps"))
+        run_cy = bool(features.get("cy"))
         if run_card_ladder:
             extension_warning = self._cardladder_extension_warning()
             if extension_warning:
@@ -2847,10 +2901,13 @@ class CardPipelineApp(tk.Tk):
             "selected_working_sheet": current_sheet,
             "comp_output_saved": bool(getattr(self, "comp_output_saved", True)),
             "keys_by_excel_row": keys_by_excel_row,
+            "features": features,
             "total": len(temp_rows),
             "changed": 0,
         }
-        self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE))
+        strategy_label = str(features.get("strategy_label") or self.comp_strategy_label.get() or "Average last 5")
+        self.comp_strategy_label.set(strategy_label)
+        self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(strategy_label, COMP_STRATEGY_AVERAGE))
         self.state.set_rows(temp_rows)
         self.row_sources = {row.excel_row: "Inventory" for row in temp_rows}
         self.comp_sheet_sources = {}
@@ -2866,7 +2923,10 @@ class CardPipelineApp(tk.Tk):
             self.after(12000, lambda queued_command_id=card_ladder_command_id: self._warn_if_extension_not_checked_in(queued_command_id))
         pieces = []
         if run_card_ladder:
-            pieces.append("Card Ladder value/comps")
+            if features.get("card_ladder_value"):
+                pieces.append("Card Ladder value")
+            if features.get("card_ladder_comps"):
+                pieces.append("Card Ladder comps")
         if run_cy:
             pieces.append("CY")
         self.inventory_status_var.set(f"Queued {' and '.join(pieces)} refresh for {len(temp_rows)} visible inventory card(s).")
@@ -2879,6 +2939,7 @@ class CardPipelineApp(tk.Tk):
         keys_by_excel_row = context.get("keys_by_excel_row")
         if not isinstance(keys_by_excel_row, dict):
             return 0
+        features = context.get("features") if isinstance(context.get("features"), dict) else {}
         with self.state.lock:
             comp_rows = list(self.state.rows)
         ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
@@ -2894,10 +2955,13 @@ class CardPipelineApp(tk.Tk):
             record = dict(ledger[index])
             if row.card_title and not is_placeholder_title(row.card_title, row.grader):
                 record["card_title"] = row.card_title
-            record["card_ladder_value"] = row.card_ladder_value
-            record["card_ladder_comps_average"] = row.card_ladder_comps_average
-            record["card_ladder_comps"] = row.card_ladder_comps
-            record["cy_value"] = row.cy_value
+            if features.get("card_ladder_value", True):
+                record["card_ladder_value"] = row.card_ladder_value
+            if features.get("card_ladder_comps", True):
+                record["card_ladder_comps_average"] = row.card_ladder_comps_average
+                record["card_ladder_comps"] = row.card_ladder_comps
+            if features.get("cy", True):
+                record["cy_value"] = row.cy_value
             record["notes"] = row.notes or record.get("notes") or ""
             enriched = self._enrich_inventory_record_assignment(record, force=True)
             enriched["status"] = ledger[index].get("status") or "Active"
