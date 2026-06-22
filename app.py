@@ -3383,14 +3383,21 @@ class CardPipelineApp(tk.Tk):
         if isinstance(source, dict):
             url = str(source.get("url") or "").strip()
             path = source.get("path") or source.get("file")
-            if str(source.get("kind") or "").strip() == "google_keep" and url and path:
-                return {"url": url, "path": str(path), "name": str(source.get("name") or Path(str(path)).stem or "Google Keep note")}
+            if str(source.get("kind") or "").strip() == "google_keep" and url:
+                name = str(source.get("name") or (Path(str(path)).stem if path else "") or "Google Keep note")
+                cache_path = Path(str(path)) if path else output_dir / f"{safe_filename(name)}.txt"
+                try:
+                    cache_path.relative_to(ASSIGNMENT_CONFIG_PATH.parent)
+                    cache_path = output_dir / f"{safe_filename(name)}.txt"
+                except ValueError:
+                    pass
+                return {"url": url, "path": str(cache_path), "name": name}
             return None
         raw = normalize_source_value(source)
         if not is_google_keep_url(raw):
             return None
         name = "Google Keep note"
-        return {"url": raw, "path": str(keep_note_cache_path(raw, ASSIGNMENT_CONFIG_PATH.parent, name)), "name": name}
+        return {"url": raw, "path": str(output_dir / f"{safe_filename(name)}.txt"), "name": name}
 
     def _saved_google_sheet_sources(self) -> list[dict[str, object]]:
         try:

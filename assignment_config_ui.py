@@ -805,7 +805,7 @@ class AssignmentRulesDialog(tk.Toplevel):
             source = {
                 "kind": "google_keep",
                 "url": normalized,
-                "path": str(keep_note_cache_path(normalized, self.config_path.parent, source_name)),
+                "path": str(keep_note_cache_path(normalized, self.pipeline_root, source_name)),
                 "name": source_name,
                 "refresh_on_load": True,
             }
