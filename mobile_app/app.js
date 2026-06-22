@@ -1,8 +1,6 @@
 const state = {
   pin: localStorage.getItem("lucasMobilePin") || "",
   lastDuplicate: null,
-  photoTarget: null,
-  stream: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -107,13 +105,6 @@ async function addInventory(updateExisting = false) {
   searchInventory();
 }
 
-function openPhotoScan(targetId) {
-  state.photoTarget = targetId;
-  const input = $("photoInput");
-  input.value = "";
-  input.click();
-}
-
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -123,8 +114,7 @@ function fileToDataUrl(file) {
   });
 }
 
-async function identifyPhoto(file) {
-  const target = state.photoTarget || "searchInput";
+async function identifyPhoto(file, target) {
   const status = target === "certNumber" ? $("scanAddStatus") : $("scanSearchStatus");
   status.textContent = "Reading card photo...";
   try {
@@ -155,13 +145,13 @@ async function identifyPhoto(file) {
   }
 }
 
-function closeScanner() {
-  if (state.stream) {
-    state.stream.getTracks().forEach((track) => track.stop());
-    state.stream = null;
-  }
-  $("scannerVideo").srcObject = null;
-  if ($("scannerDialog").open) $("scannerDialog").close();
+function bindPhotoInput(inputId, targetId) {
+  $(inputId).addEventListener("change", () => {
+    const input = $(inputId);
+    const file = input.files && input.files[0];
+    if (file) identifyPhoto(file, targetId);
+    input.value = "";
+  });
 }
 
 function bind() {
@@ -183,13 +173,8 @@ function bind() {
   });
   $("searchInput").addEventListener("input", () => searchInventory());
   $("includeSold").addEventListener("change", () => searchInventory());
-  $("scanSearch").addEventListener("click", () => openPhotoScan("searchInput"));
-  $("scanAdd").addEventListener("click", () => openPhotoScan("certNumber"));
-  $("photoInput").addEventListener("change", () => {
-    const file = $("photoInput").files && $("photoInput").files[0];
-    if (file) identifyPhoto(file);
-  });
-  $("closeScanner").addEventListener("click", closeScanner);
+  bindPhotoInput("photoSearchInput", "searchInput");
+  bindPhotoInput("photoAddInput", "certNumber");
   $("addInventory").addEventListener("click", () => addInventory(false));
   $("updateDuplicate").addEventListener("click", () => addInventory(true));
   $("installHelp").addEventListener("click", () => alert("On iPhone: Share -> Add to Home Screen."));
