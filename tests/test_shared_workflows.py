@@ -1652,6 +1652,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
             _expense_related_label = app.CardPipelineApp._expense_related_label
+            _expense_link_options = app.CardPipelineApp._expense_link_options
             _delete_profit_expense_records = app.CardPipelineApp._delete_profit_expense_records
             refresh_profit_tab = lambda self: None
 
@@ -1681,6 +1682,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 sale = {
                     "assigned_person": "Kevin Hambone",
                     "cert_number": "123",
+                    "card_title": "Test Card",
                     "source_sheet": "Lot A.xlsx",
                     "company": "Arena",
                     "purchase_price": 50,
@@ -1694,7 +1696,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(expense_row["company"], "Expense: Shipping")
                 self.assertEqual(expense_row["source_sheet"], "Lot A.xlsx")
                 self.assertEqual(expense_row["cert_number"], "123")
-                self.assertEqual(dummy._expense_related_label(expense_row), "Lot A.xlsx | 123")
+                self.assertEqual(dummy._expense_related_label(expense_row), "Lot A.xlsx")
+                sheets, cards, lookup = dummy._expense_link_options("Kevin")
+                self.assertEqual(sheets, ["Lot A.xlsx"])
+                self.assertEqual(len(cards), 1)
+                self.assertIn("Lot A.xlsx | Test Card | $100.00", cards)
+                self.assertEqual(lookup[cards[0]]["source_sheet"], "Lot A.xlsx")
+                self.assertEqual(lookup[cards[0]]["cert_number"], "123")
                 filtered = dummy._filtered_profit_records(ledger)
                 _days, values = dummy._profit_chart_series(filtered)
                 self.assertEqual(sum(values), 25)

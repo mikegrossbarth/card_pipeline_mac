@@ -189,7 +189,6 @@ function expensePayload() {
     amount: $("expenseAmount").value,
     related_type: $("expenseRelatedType").value,
     source_sheet: $("expenseSheet").value,
-    cert_number: $("expenseCert").value,
     notes: $("expenseNotes").value,
   };
 }
@@ -206,7 +205,6 @@ async function addExpense() {
   $("expenseStatus").textContent = "Expense added.";
   $("expenseAmount").value = "";
   $("expenseSheet").value = "";
-  $("expenseCert").value = "";
   $("expenseNotes").value = "";
   loadProfit();
 }

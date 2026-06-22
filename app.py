@@ -3370,17 +3370,16 @@ class CardPipelineApp(tk.Tk):
         if not hasattr(self, "profit_tree"):
             return
         if mode == "Expenses":
-            columns = ("date", "person", "type", "amount", "related", "cert", "notes")
+            columns = ("date", "person", "type", "amount", "related", "notes")
             headings = {
                 "date": "Date",
                 "person": "Person",
                 "type": "Type",
                 "amount": "Amount",
                 "related": "Related",
-                "cert": "Cert",
                 "notes": "Notes",
             }
-            widths = {"date": 95, "person": 150, "type": 120, "amount": 105, "related": 260, "cert": 110, "notes": 320}
+            widths = {"date": 95, "person": 150, "type": 120, "amount": 105, "related": 320, "notes": 320}
         elif mode == "Sold Sheets":
             columns = ("person", "sheet", "companies", "cards", "purchase", "sale", "profit", "last_sale")
             headings = {
@@ -3417,13 +3416,52 @@ class CardPipelineApp(tk.Tk):
     def _expense_related_label(self, record: dict[str, object]) -> str:
         related_type = str(record.get("related_type") or "General").strip() or "General"
         source_sheet = str(record.get("source_sheet") or "").strip()
-        cert = str(record.get("cert_number") or "").strip()
         if related_type == "Card":
-            parts = [part for part in (source_sheet if source_sheet != "Expenses" else "", cert) if part]
-            return " | ".join(parts) or "Card"
+            return source_sheet if source_sheet and source_sheet != "Expenses" else "Card"
         if related_type == "Sheet":
             return source_sheet if source_sheet and source_sheet != "Expenses" else "Sheet"
         return "General"
+
+    def _expense_link_options(self, person: str = "") -> tuple[list[str], list[str], dict[str, dict[str, str]]]:
+        person_filter = person.strip().lower()
+        sheets: set[str] = set()
+        card_options: list[str] = []
+        card_lookup: dict[str, dict[str, str]] = {}
+        seen_cards: set[tuple[str, str, str]] = set()
+        rows = self.profit_rows if hasattr(self, "profit_rows") and self.profit_rows else [
+            self._normalize_profit_record(record) for record in self._load_profit_ledger()
+        ]
+        for record in rows:
+            if str(record.get("record_type") or "").strip().lower() == "expense":
+                continue
+            record_person = str(record.get("assigned_person") or "Unassigned").strip()
+            if person_filter and person_filter not in record_person.lower():
+                continue
+            source_sheet = str(record.get("source_sheet") or "").strip()
+            if not source_sheet:
+                source_sheet = str(record.get("weekly_sheet_name") or "").strip()
+            if not source_sheet:
+                continue
+            sheets.add(source_sheet)
+            cert = str(record.get("cert_number") or "").strip()
+            card_title = str(record.get("card_title") or "").strip()
+            card_key = (source_sheet.lower(), cert.lower(), card_title.lower())
+            if card_key in seen_cards:
+                continue
+            seen_cards.add(card_key)
+            sale = self._money_value(record.get("sale_price"))
+            label_parts = [source_sheet]
+            if card_title:
+                label_parts.append(card_title)
+            if sale is not None:
+                label_parts.append(format_money(sale))
+            label = " | ".join(label_parts)
+            card_options.append(label)
+            card_lookup[label] = {
+                "source_sheet": source_sheet,
+                "cert_number": cert,
+            }
+        return sorted(sheets, key=str.lower), sorted(card_options, key=str.lower), card_lookup
 
     def _profit_sheet_rows(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         grouped: dict[tuple[str, str], dict[str, object]] = {}
@@ -3504,6 +3542,7 @@ class CardPipelineApp(tk.Tk):
         link_var = tk.StringVar(value=EXPENSE_LINK_OPTIONS[0])
         sheet_var = tk.StringVar()
         cert_var = tk.StringVar()
+        card_var = tk.StringVar()
         notes_var = tk.StringVar()
 
         popup = tk.Toplevel(self)
@@ -3527,11 +3566,14 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(frame, text="Amount", style="Panel.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         ttk.Entry(frame, textvariable=amount_var, width=18).grid(row=4, column=1, sticky="w", pady=(0, 10))
         ttk.Label(frame, text="Tie To", style="Panel.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
-        ttk.Combobox(frame, textvariable=link_var, values=EXPENSE_LINK_OPTIONS, width=18, state="readonly").grid(row=5, column=1, sticky="w", pady=(0, 10))
+        link_combo = ttk.Combobox(frame, textvariable=link_var, values=EXPENSE_LINK_OPTIONS, width=18, state="readonly")
+        link_combo.grid(row=5, column=1, sticky="w", pady=(0, 10))
         ttk.Label(frame, text="Sheet", style="Panel.TLabel").grid(row=6, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
-        ttk.Entry(frame, textvariable=sheet_var, width=36).grid(row=6, column=1, sticky="ew", pady=(0, 10))
-        ttk.Label(frame, text="Cert", style="Panel.TLabel").grid(row=7, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
-        ttk.Entry(frame, textvariable=cert_var, width=20).grid(row=7, column=1, sticky="w", pady=(0, 10))
+        sheet_combo = ttk.Combobox(frame, textvariable=sheet_var, width=36, state="disabled")
+        sheet_combo.grid(row=6, column=1, sticky="ew", pady=(0, 10))
+        ttk.Label(frame, text="Card", style="Panel.TLabel").grid(row=7, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
+        card_combo = ttk.Combobox(frame, textvariable=card_var, width=50, state="disabled")
+        card_combo.grid(row=7, column=1, sticky="ew", pady=(0, 10))
         ttk.Label(frame, text="Notes", style="Panel.TLabel").grid(row=8, column=0, sticky="w", padx=(0, 10), pady=(0, 14))
         ttk.Entry(frame, textvariable=notes_var, width=36).grid(row=8, column=1, sticky="ew", pady=(0, 14))
         buttons = ttk.Frame(frame, style="Panel.TFrame")
@@ -3543,6 +3585,47 @@ class CardPipelineApp(tk.Tk):
             command=lambda: self._save_expense_from_popup(person_var, date_var, type_var, amount_var, link_var, sheet_var, cert_var, notes_var, popup),
             style="Primary.TButton",
         ).pack(side=tk.LEFT)
+        card_lookup: dict[str, dict[str, str]] = {}
+
+        def refresh_link_options(*_args) -> None:
+            nonlocal card_lookup
+            sheet_options, card_options, card_lookup = self._expense_link_options(person_var.get())
+            related_type = link_var.get().strip()
+            sheet_combo["values"] = sheet_options
+            card_combo["values"] = card_options
+            if related_type == "Sheet":
+                sheet_combo.configure(state="readonly")
+                card_combo.configure(state="disabled")
+                card_var.set("")
+                cert_var.set("")
+                if sheet_var.get() not in sheet_options:
+                    sheet_var.set(sheet_options[0] if sheet_options else "")
+            elif related_type == "Card":
+                sheet_combo.configure(state="disabled")
+                card_combo.configure(state="readonly")
+                if card_var.get() not in card_options:
+                    card_var.set(card_options[0] if card_options else "")
+                selection = card_lookup.get(card_var.get(), {})
+                sheet_var.set(selection.get("source_sheet", ""))
+                cert_var.set(selection.get("cert_number", ""))
+            else:
+                sheet_combo.configure(state="disabled")
+                card_combo.configure(state="disabled")
+                sheet_var.set("")
+                cert_var.set("")
+                card_var.set("")
+
+        def apply_card_selection(*_args) -> None:
+            selection = card_lookup.get(card_var.get(), {})
+            sheet_var.set(selection.get("source_sheet", ""))
+            cert_var.set(selection.get("cert_number", ""))
+
+        link_combo.bind("<<ComboboxSelected>>", refresh_link_options, add="+")
+        person_combo.bind("<<ComboboxSelected>>", refresh_link_options, add="+")
+        person_var.trace_add("write", refresh_link_options)
+        card_combo.bind("<<ComboboxSelected>>", apply_card_selection, add="+")
+        card_var.trace_add("write", apply_card_selection)
+        refresh_link_options()
         frame.columnconfigure(1, weight=1)
         popup.update_idletasks()
         x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
@@ -3582,10 +3665,10 @@ class CardPipelineApp(tk.Tk):
         related_sheet = sheet_var.get().strip()
         related_cert = cert_var.get().strip()
         if related_type == "Sheet" and not related_sheet:
-            messagebox.showinfo("Sheet required", "Enter the sold sheet this expense belongs to.")
+            messagebox.showinfo("Sheet required", "Choose the sold sheet this expense belongs to.")
             return
         if related_type == "Card" and not (related_sheet or related_cert):
-            messagebox.showinfo("Card required", "Enter a cert number or sold sheet for the card expense.")
+            messagebox.showinfo("Card required", "Choose the sold card this expense belongs to.")
             return
         record = {
             "record_type": "expense",
@@ -3809,7 +3892,6 @@ class CardPipelineApp(tk.Tk):
                         record.get("expense_type") or "",
                         format_money(record.get("expense_amount")),
                         self._expense_related_label(record),
-                        record.get("cert_number") or "",
                         record.get("notes") or "",
                     ),
                     tags=("profit_negative",),
@@ -3856,7 +3938,7 @@ class CardPipelineApp(tk.Tk):
         display_count = len([record for record in self.filtered_profit_rows if str(record.get("record_type") or "").strip().lower() == "expense"]) if mode == "Expenses" else len(self.filtered_profit_rows)
         if self.filtered_profit_rows:
             total_values = (
-                ("TOTAL", "", "", format_money(total_expenses), "", "", "")
+                ("TOTAL", "", "", format_money(total_expenses), "", "")
                 if mode == "Expenses"
                 else
                 ("TOTAL", "", "", f"{len(self.filtered_profit_rows)} card(s)", format_money(total_purchase), format_money(total_sale), format_money(total_profit), "")
