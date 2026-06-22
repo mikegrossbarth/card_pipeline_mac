@@ -2773,6 +2773,14 @@ class CardPipelineApp(tk.Tk):
             for field in ("cert_number", "company", "date_added", "weekly_sheet_name", "source_sheet")
         )
 
+    def _is_manual_company_profit_backfill(self, record: dict[str, object]) -> bool:
+        if str(record.get("record_type") or "").strip().lower() == "expense":
+            return False
+        if str(record.get("source_sheet") or "").strip():
+            return False
+        weekly = str(record.get("weekly_sheet_name") or "").strip().lower()
+        return ".xlsx" in weekly
+
     def _money_value(self, value: object) -> float | None:
         if value is None or value == "":
             return None
@@ -3318,6 +3326,14 @@ class CardPipelineApp(tk.Tk):
 
     def refresh_profit_tab(self) -> None:
         ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        pruned_manual = len([record for record in ledger if self._is_manual_company_profit_backfill(record)])
+        if pruned_manual:
+            ledger = [record for record in ledger if not self._is_manual_company_profit_backfill(record)]
+            with shared_lock(CARD_PIPELINE_DIR, "profit-ledger", self.lucas_identity):
+                current = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+                kept = [record for record in current if not self._is_manual_company_profit_backfill(record)]
+                if len(kept) != len(current):
+                    self._save_profit_ledger(kept)
         existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
         backfilled = 0
         for record in read_company_profit_records(COMPANY_SHEETS_DIR):
@@ -3454,7 +3470,8 @@ class CardPipelineApp(tk.Tk):
         search_suffix = f" | Search: {search_label}" if search_label else ""
         period_suffix = f" | Period: {self._profit_period_label()}"
         backfill_suffix = f" | backfilled {backfilled} from company sheets" if backfilled else ""
-        self.profit_status_var.set(f"Loaded {display_count}/{len(self.profit_rows)} profit row(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{search_suffix}{period_suffix}{suffix}{backfill_suffix}.")
+        cleanup_suffix = f" | removed {pruned_manual} manual row(s)" if pruned_manual else ""
+        self.profit_status_var.set(f"Loaded {display_count}/{len(self.profit_rows)} profit row(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{search_suffix}{period_suffix}{suffix}{backfill_suffix}{cleanup_suffix}.")
         self._draw_profit_chart()
 
     def _profit_month_key(self, value: object) -> str:
