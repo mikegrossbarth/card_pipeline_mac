@@ -134,6 +134,8 @@ COMP_SOURCE_CY = "CY"
 NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
 PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Month", "Year", "YTD", "Total")
 PROFIT_GRAPH_OPTIONS = ("Daily Trend", "Overall Profit")
+DEFAULT_PROFIT_PERIOD = "Year"
+DEFAULT_PROFIT_GRAPH = "Overall Profit"
 EXPENSE_CATEGORY_OPTIONS = ("Travel", "Supplies", "Travel Meal", "Fees")
 EXPENSE_LINK_OPTIONS = ("General", "Card", "Sheet")
 ASSIGNMENT_CATEGORY_OPTIONS = (
@@ -548,8 +550,9 @@ class CardPipelineApp(tk.Tk):
         self.profit_status_var = tk.StringVar(value="No profit ledger loaded.")
         self.profit_metric_var = tk.StringVar(value="")
         self.profit_person_var = tk.StringVar()
-        self.profit_period_var = tk.StringVar(value="Total")
-        self.profit_graph_var = tk.StringVar(value="Daily Trend")
+        self.profit_period_var = tk.StringVar(value=DEFAULT_PROFIT_PERIOD)
+        self.profit_graph_var = tk.StringVar(value=DEFAULT_PROFIT_GRAPH)
+        self.profit_chart_title_var = tk.StringVar(value=self._profit_chart_title())
         self.profit_view_mode = tk.StringVar(value="Sold Cards")
         self.profit_rows: list[dict[str, object]] = []
         self.filtered_profit_rows: list[dict[str, object]] = []
@@ -1195,7 +1198,7 @@ class CardPipelineApp(tk.Tk):
 
         chart_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
         chart_panel.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(chart_panel, text="Daily Profit Over Time", style="Panel.TLabel").pack(anchor=tk.W)
+        ttk.Label(chart_panel, textvariable=self.profit_chart_title_var, style="Panel.TLabel").pack(anchor=tk.W)
         self.profit_chart_canvas = tk.Canvas(
             chart_panel,
             height=230,
@@ -2660,12 +2663,15 @@ class CardPipelineApp(tk.Tk):
         return None, today
 
     def _profit_period_label(self) -> str:
-        period = self.profit_period_var.get().strip() if hasattr(self, "profit_period_var") else "Total"
-        return period if period in PROFIT_PERIOD_OPTIONS else "Total"
+        period = self.profit_period_var.get().strip() if hasattr(self, "profit_period_var") else DEFAULT_PROFIT_PERIOD
+        return period if period in PROFIT_PERIOD_OPTIONS else DEFAULT_PROFIT_PERIOD
 
     def _profit_graph_label(self) -> str:
-        graph = self.profit_graph_var.get().strip() if hasattr(self, "profit_graph_var") else "Daily Trend"
-        return graph if graph in PROFIT_GRAPH_OPTIONS else "Daily Trend"
+        graph = self.profit_graph_var.get().strip() if hasattr(self, "profit_graph_var") else DEFAULT_PROFIT_GRAPH
+        return graph if graph in PROFIT_GRAPH_OPTIONS else DEFAULT_PROFIT_GRAPH
+
+    def _profit_chart_title(self) -> str:
+        return f"{self._profit_graph_label()} ({self._profit_period_label()})"
 
     def _profit_chart_series(self, rows: list[dict[str, object]]) -> tuple[list[str], list[float]]:
         daily: dict[str, float] = {}
@@ -3200,10 +3206,12 @@ class CardPipelineApp(tk.Tk):
         plot_h = max(height - pad_top - pad_bottom, 10)
         chart_rows = self.filtered_profit_rows if hasattr(self, "filtered_profit_rows") else self.profit_rows
         days, chart_values = self._profit_chart_series(chart_rows)
+        chart_title = self._profit_chart_title()
+        if hasattr(self, "profit_chart_title_var"):
+            self.profit_chart_title_var.set(chart_title)
         if not days:
             canvas.create_text(width / 2, height / 2, text="No profit data yet", fill="#b3b3b3", font=("Segoe UI", 12, "bold"))
             return
-        graph_label = self._profit_graph_label()
         values = chart_values + [0.0]
         min_y = min(values)
         max_y = max(values)
@@ -3238,7 +3246,7 @@ class CardPipelineApp(tk.Tk):
             canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=color, outline="")
             if len(days) <= 14 or index % max(1, len(days) // 8) == 0:
                 canvas.create_text(x, height - 24, text=days[index][5:], fill="#b3b3b3", font=("Segoe UI", 8))
-        canvas.create_text(pad_left, 8, anchor="nw", text=f"Line: {graph_label.lower()} ({self._profit_period_label()})", fill="#22c55e", font=("Segoe UI", 9, "bold"))
+        canvas.create_text(pad_left, 8, anchor="nw", text=f"Line: {chart_title.lower()}", fill="#22c55e", font=("Segoe UI", 9, "bold"))
 
     def choose_working_folder(self) -> None:
         selected = filedialog.askdirectory(

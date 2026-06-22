@@ -1500,6 +1500,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
             _profit_period_label = app.CardPipelineApp._profit_period_label
             _profit_graph_label = app.CardPipelineApp._profit_graph_label
+            _profit_chart_title = app.CardPipelineApp._profit_chart_title
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
             _expense_related_label = app.CardPipelineApp._expense_related_label
@@ -2751,6 +2752,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
             _profit_period_label = app.CardPipelineApp._profit_period_label
             _profit_graph_label = app.CardPipelineApp._profit_graph_label
+            _profit_chart_title = app.CardPipelineApp._profit_chart_title
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
 
@@ -2763,13 +2765,19 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         ]
 
         dummy = ProfitDummy()
+        self.assertEqual(dummy._profit_period_label(), "Year")
+        self.assertEqual(dummy._profit_graph_label(), "Overall Profit")
+        self.assertEqual(dummy._profit_chart_title(), "Overall Profit (Year)")
+
         dummy.profit_person_var = types.SimpleNamespace(get=lambda: "luc")
         dummy.profit_period_var = types.SimpleNamespace(get=lambda: "5 Days")
         dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Daily Trend")
+        self.assertEqual(dummy._profit_chart_title(), "Daily Trend (5 Days)")
 
         filtered = dummy._filtered_profit_records(rows)
         days, daily_values = dummy._profit_chart_series(filtered)
         dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Overall Profit")
+        self.assertEqual(dummy._profit_chart_title(), "Overall Profit (5 Days)")
         overall_days, overall_values = dummy._profit_chart_series(filtered)
 
         self.assertEqual([record["date_added"] for record in filtered], ["2026-06-17", "2026-06-13"])
