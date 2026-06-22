@@ -2452,6 +2452,56 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.SELLER_TERMS_PATH = old_terms
 
+    def test_selected_inventory_purchase_price_updates_active_rows(self) -> None:
+        class FakeTree:
+            def selection(self):
+                return ["row-1", "row-2"]
+
+        class FakeStatus:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class InventoryPriceDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _set_inventory_purchase_price_by_keys = app.CardPipelineApp._set_inventory_purchase_price_by_keys
+            set_selected_inventory_purchase_price = app.CardPipelineApp.set_selected_inventory_purchase_price
+            refresh_inventory_tab = lambda self: None
+            _inventory_purchase_price_dialog = lambda self, _records: 57.25
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryPriceDummy()
+            dummy.inventory_tree = FakeTree()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.status_var = FakeStatus()
+            selected_missing = dummy._normalize_inventory_record({"assigned_person": "Lucas", "cert_number": "111", "source_sheet": "A.xlsx", "status": "Active"})
+            selected_existing = dummy._normalize_inventory_record({"assigned_person": "Lucas", "cert_number": "222", "source_sheet": "B.xlsx", "purchase_price": 12, "status": "Active"})
+            unselected = dummy._normalize_inventory_record({"assigned_person": "Lucas", "cert_number": "333", "source_sheet": "C.xlsx", "purchase_price": 9, "status": "Active"})
+            dummy._save_inventory_ledger([selected_missing, selected_existing, unselected])
+            dummy.inventory_tree_records = {"row-1": selected_missing, "row-2": selected_existing}
+            try:
+                dummy.set_selected_inventory_purchase_price()
+
+                rows = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                by_cert = {record["cert_number"]: record for record in rows}
+                self.assertEqual(by_cert["111"]["purchase_price"], 57.25)
+                self.assertEqual(by_cert["222"]["purchase_price"], 57.25)
+                self.assertEqual(by_cert["333"]["purchase_price"], 9)
+                self.assertEqual(dummy.status_var.value, "Updated purchase price to $57.25 for 2 inventory card(s).")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_inventory_records_can_move_to_company_sheets(self) -> None:
         class FakeTree:
             def selection(self):
