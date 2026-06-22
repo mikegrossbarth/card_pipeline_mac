@@ -1194,11 +1194,9 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(controls, text="Refresh", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(10, 0))
         ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=8, sticky="w", padx=(8, 0))
         controls.columnconfigure(9, weight=1)
-        ttk.Label(controls, text="Search Sold Cards", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(controls, textvariable=self.profit_search_var, width=42).grid(row=1, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
         self.profit_search_var.trace_add("write", lambda *_args: self.refresh_profit_tab())
-        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=2, column=0, columnspan=10, sticky="w", pady=(10, 0))
-        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=10, sticky="w", pady=(6, 0))
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=10, sticky="w", pady=(10, 0))
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=10, sticky="w", pady=(6, 0))
 
         chart_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
         chart_panel.pack(fill=tk.X, pady=(0, 10))
@@ -1213,6 +1211,11 @@ class CardPipelineApp(tk.Tk):
         self.profit_chart_canvas.pack(fill=tk.X, expand=False, pady=(8, 0))
         self.profit_chart_canvas.bind("<Configure>", lambda _event: self._draw_profit_chart())
 
+        search_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 10))
+        search_panel.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(search_panel, text="Search Sold Cards", style="Muted.TLabel").pack(side=tk.LEFT)
+        ttk.Entry(search_panel, textvariable=self.profit_search_var, width=44).pack(side=tk.LEFT, padx=(8, 0))
+
         ledger_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
         ledger_panel.pack(fill=tk.BOTH, expand=True)
         view_row = ttk.Frame(ledger_panel, style="Panel.TFrame")
@@ -1223,8 +1226,6 @@ class CardPipelineApp(tk.Tk):
         self.profit_sheets_button.pack(side=tk.LEFT, padx=(8, 0))
         self.profit_expenses_button = ttk.Button(view_row, text="Expenses", command=lambda: self._set_profit_view_mode("Expenses"), style="Soft.TButton")
         self.profit_expenses_button.pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(view_row, text="Refund Selected", command=self.refund_selected_profit_to_inventory, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(view_row, text="Delete Expense", command=self.delete_selected_profit_expenses, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         self.profit_table_title_var = tk.StringVar(value="Sold Cards")
         ttk.Label(ledger_panel, textvariable=self.profit_table_title_var, style="Panel.TLabel").pack(anchor=tk.W)
         self.profit_tree = self._build_home_tree(
@@ -1246,6 +1247,8 @@ class CardPipelineApp(tk.Tk):
         self.profit_tree.tag_configure("profit_positive", foreground="#d7fbe8")
         self.profit_tree.tag_configure("profit_negative", foreground="#ffd1d1")
         self.profit_tree.tag_configure("total_row", background="#242424", foreground="#ffffff", font=("Segoe UI Semibold", 10))
+        self.profit_tree.bind("<Button-3>", self._show_profit_context_menu)
+        self.profit_tree.bind("<Button-2>", self._show_profit_context_menu)
 
     def _load_profit_ledger(self) -> list[dict[str, object]]:
         if not PROFIT_LEDGER_PATH.exists():
@@ -3290,6 +3293,29 @@ class CardPipelineApp(tk.Tk):
         self.refresh_profit_tab()
         self.refresh_inventory_tab()
         self.status_var.set(f"Refunded {refunded or len(records)} card(s) back to active inventory.")
+
+    def _show_profit_context_menu(self, event: tk.Event) -> None:
+        if not hasattr(self, "profit_tree"):
+            return
+        iid = self.profit_tree.identify_row(event.y)
+        if iid:
+            if iid not in self.profit_tree.selection():
+                self.profit_tree.selection_set(iid)
+            self.profit_tree.focus(iid)
+        selected = list(self.profit_tree.selection())
+        records = [self.profit_tree_records.get(item) for item in selected if self.profit_tree_records.get(item)]
+        if not records:
+            return
+        expenses = [record for record in records if str(record.get("record_type") or "").strip().lower() == "expense"]
+        sold_cards = [record for record in records if str(record.get("record_type") or "").strip().lower() != "expense"]
+        menu = tk.Menu(self, tearoff=0)
+        if sold_cards and len(sold_cards) == len(records):
+            menu.add_command(label="Refund to Inventory", command=self.refund_selected_profit_to_inventory)
+        if expenses and len(expenses) == len(records):
+            menu.add_command(label="Delete Expense", command=self.delete_selected_profit_expenses)
+        if menu.index("end") is None:
+            return
+        menu.tk_popup(event.x_root, event.y_root)
 
     def refresh_profit_tab(self) -> None:
         ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
