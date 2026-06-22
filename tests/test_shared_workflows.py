@@ -1920,7 +1920,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(by_person["Kevin Hambone"]["estimated_payout"], 88)
                 self.assertEqual(by_person["Lucas"]["best_company"], "Old")
                 self.assertEqual(by_person["Lucas"]["estimated_payout"], 1)
-                self.assertEqual(dummy.inventory_status_var.value, "Updated estimated payouts for 1 visible inventory card(s).")
+                self.assertEqual(dummy.inventory_status_var.value, "Updated payouts for 1 visible inventory card(s); changed 1.")
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 

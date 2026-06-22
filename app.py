@@ -2699,6 +2699,8 @@ class CardPipelineApp(tk.Tk):
         return "break"
 
     def refresh_inventory_tab(self, reconcile: bool = False, enrich: bool = False, filtered_only: bool = False) -> None:
+        self._last_inventory_enrich_visible_count = 0
+        self._last_inventory_enrich_changed_count = 0
         if reconcile and not getattr(self, "_inventory_reconcile_running", False):
             self._inventory_reconcile_running = True
             try:
@@ -2712,12 +2714,29 @@ class CardPipelineApp(tk.Tk):
             stored_rows = active_rows
         if enrich and filtered_only:
             filtered_keys = {str(record.get("inventory_key") or "") for record in self._filtered_inventory_records(stored_rows)}
-            self.inventory_rows = [
-                self._enrich_inventory_record_assignment(record, force=True) if str(record.get("inventory_key") or "") in filtered_keys else record
-                for record in stored_rows
-            ]
+            self._last_inventory_enrich_visible_count = len(filtered_keys)
+            inventory_rows: list[dict[str, object]] = []
+            for record in stored_rows:
+                if str(record.get("inventory_key") or "") not in filtered_keys:
+                    inventory_rows.append(record)
+                    continue
+                enriched = self._enrich_inventory_record_assignment(record, force=True)
+                if enriched != record:
+                    self._last_inventory_enrich_changed_count += 1
+                inventory_rows.append(enriched)
+            self.inventory_rows = inventory_rows
         else:
-            self.inventory_rows = [self._enrich_inventory_record_assignment(record) for record in stored_rows] if enrich else stored_rows
+            if enrich:
+                self._last_inventory_enrich_visible_count = len(stored_rows)
+                inventory_rows = []
+                for record in stored_rows:
+                    enriched = self._enrich_inventory_record_assignment(record)
+                    if enriched != record:
+                        self._last_inventory_enrich_changed_count += 1
+                    inventory_rows.append(enriched)
+                self.inventory_rows = inventory_rows
+            else:
+                self.inventory_rows = stored_rows
         if enrich and self.inventory_rows != stored_rows:
             self._save_inventory_ledger(self.inventory_rows)
         self.filtered_inventory_rows = self._filtered_inventory_records(self.inventory_rows)
@@ -2764,9 +2783,15 @@ class CardPipelineApp(tk.Tk):
         self.inventory_status_var.set(f"Loaded {len(self.filtered_inventory_rows)}/{len(self.inventory_rows)} inventory card(s) from {INVENTORY_LEDGER_PATH.name}.")
 
     def update_inventory_payouts(self) -> None:
+        try:
+            self._load_player_overrides()
+            self.assignment_engine = AssignmentEngine.load()
+        except Exception:
+            pass
         self.refresh_inventory_tab(enrich=True, filtered_only=True)
-        visible_count = len(getattr(self, "filtered_inventory_rows", []))
-        self.inventory_status_var.set(f"Updated estimated payouts for {visible_count} visible inventory card(s).")
+        visible_count = int(getattr(self, "_last_inventory_enrich_visible_count", 0) or len(getattr(self, "filtered_inventory_rows", [])))
+        changed_count = int(getattr(self, "_last_inventory_enrich_changed_count", 0) or 0)
+        self.inventory_status_var.set(f"Updated payouts for {visible_count} visible inventory card(s); changed {changed_count}.")
 
     def delete_selected_inventory_records(self) -> None:
         if not hasattr(self, "inventory_tree"):
