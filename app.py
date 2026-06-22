@@ -552,6 +552,7 @@ class CardPipelineApp(tk.Tk):
         self.profit_person_var = tk.StringVar()
         self.profit_period_var = tk.StringVar(value=DEFAULT_PROFIT_PERIOD)
         self.profit_graph_var = tk.StringVar(value=DEFAULT_PROFIT_GRAPH)
+        self.profit_search_var = tk.StringVar()
         self.profit_chart_title_var = tk.StringVar(value=self._profit_chart_title())
         self.profit_view_mode = tk.StringVar(value="Sold Cards")
         self.profit_rows: list[dict[str, object]] = []
@@ -1193,8 +1194,11 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(controls, text="Refresh", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(10, 0))
         ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=8, sticky="w", padx=(8, 0))
         controls.columnconfigure(9, weight=1)
-        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=10, sticky="w", pady=(10, 0))
-        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=10, sticky="w", pady=(6, 0))
+        ttk.Label(controls, text="Search Sold Cards", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(controls, textvariable=self.profit_search_var, width=42).grid(row=1, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.profit_search_var.trace_add("write", lambda *_args: self.refresh_profit_tab())
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=2, column=0, columnspan=10, sticky="w", pady=(10, 0))
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=10, sticky="w", pady=(6, 0))
 
         chart_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
         chart_panel.pack(fill=tk.X, pady=(0, 10))
@@ -2739,12 +2743,20 @@ class CardPipelineApp(tk.Tk):
 
     def _filtered_profit_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         needle = self.profit_person_var.get().strip().lower() if hasattr(self, "profit_person_var") else ""
+        search = self.profit_search_var.get().strip().lower() if hasattr(self, "profit_search_var") else ""
         period = self.profit_period_var.get().strip() if hasattr(self, "profit_period_var") else "Total"
         period_start, period_end = self._profit_period_bounds(period)
         filtered: list[dict[str, object]] = []
         for record in rows:
             if needle and needle not in (str(record.get("assigned_person") or "Unassigned").lower()):
                 continue
+            if search:
+                searchable = " ".join(
+                    str(record.get(field) or "")
+                    for field in ("cert_number", "card_title", "company", "source_sheet", "weekly_sheet_name", "assigned_person")
+                ).lower()
+                if any(part not in searchable for part in search.split()):
+                    continue
             if period_start is not None:
                 sold_date = self._profit_record_date(record.get("date_added"))
                 if sold_date is None or sold_date < period_start or sold_date > period_end:
@@ -3297,9 +3309,11 @@ class CardPipelineApp(tk.Tk):
         suffix = f" | {missing} card(s) missing purchase or sale price" if missing else ""
         filter_label = self.profit_person_var.get().strip()
         filter_suffix = f" | Filter: {filter_label}" if filter_label else ""
+        search_label = self.profit_search_var.get().strip() if hasattr(self, "profit_search_var") else ""
+        search_suffix = f" | Search: {search_label}" if search_label else ""
         period_suffix = f" | Period: {self._profit_period_label()}"
         backfill_suffix = f" | backfilled {backfilled} from company sheets" if backfilled else ""
-        self.profit_status_var.set(f"Loaded {display_count}/{len(self.profit_rows)} profit row(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{period_suffix}{suffix}{backfill_suffix}.")
+        self.profit_status_var.set(f"Loaded {display_count}/{len(self.profit_rows)} profit row(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{search_suffix}{period_suffix}{suffix}{backfill_suffix}.")
         self._draw_profit_chart()
 
     def _profit_month_key(self, value: object) -> str:

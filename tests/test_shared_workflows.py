@@ -2805,6 +2805,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.home_sheet_markers = {"Received|Lot A.xlsx": {"assigned_person": "Lucas"}}
         dummy.profit_person_var = types.SimpleNamespace(get=lambda: "luc")
         dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Total")
+        dummy.profit_search_var = types.SimpleNamespace(get=lambda: "")
 
         rows = dummy._enrich_profit_records_with_people([
             {
@@ -2821,6 +2822,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(rows[0]["assigned_person"], "Lucas")
         self.assertEqual(rows[0]["profit"], 50)
         self.assertEqual(dummy._filtered_profit_records(rows), rows)
+
+        dummy.profit_search_var = types.SimpleNamespace(get=lambda: "123 test")
+        self.assertEqual(dummy._filtered_profit_records(rows), rows)
+
+        dummy.profit_search_var = types.SimpleNamespace(get=lambda: "fanatics")
+        self.assertEqual(dummy._filtered_profit_records(rows), [])
 
     def test_profit_period_filter_and_chart_series_support_daily_and_overall_views(self) -> None:
         class ProfitDummy:
@@ -2850,6 +2857,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.profit_person_var = types.SimpleNamespace(get=lambda: "luc")
         dummy.profit_period_var = types.SimpleNamespace(get=lambda: "5 Days")
         dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Daily Trend")
+        dummy.profit_search_var = types.SimpleNamespace(get=lambda: "")
         self.assertEqual(dummy._profit_chart_title(), "Daily Trend (5 Days)")
 
         filtered = dummy._filtered_profit_records(rows)
