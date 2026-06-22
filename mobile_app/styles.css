@@ -58,6 +58,10 @@ main {
   background: #17232d;
 }
 
+.inlinePanel {
+  margin: 0 0 12px;
+}
+
 .tabs {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -100,6 +104,16 @@ button,
 .secondary {
   width: 100%;
   margin-top: 8px;
+}
+
+.buttonRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.buttonRow .secondary {
+  margin-top: 0;
 }
 
 label {
@@ -236,6 +250,11 @@ textarea {
   margin: 0 0 8px;
   font-size: 16px;
   line-height: 1.25;
+}
+
+.resultActions {
+  display: flex;
+  margin-top: 10px;
 }
 
 .meta {

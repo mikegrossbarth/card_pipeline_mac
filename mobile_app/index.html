@@ -49,6 +49,20 @@
           </div>
           <div id="scanSearchStatus" class="status"></div>
           <label class="checkLine"><input id="includeSold" type="checkbox"> Include inactive/sold</label>
+          <section id="sellPanel" class="panel inlinePanel hidden">
+            <h2 id="sellTitle">Mark Sold</h2>
+            <div class="grid">
+              <label>Sale Price<input id="sellPrice" inputmode="decimal" placeholder="0.00"></label>
+              <label>Date<input id="sellDate" type="date"></label>
+              <label>Method<select id="sellMethod"></select></label>
+              <label>Buyer/company<input id="sellCompany" placeholder="Cash buyer, Arena, etc."></label>
+            </div>
+            <div class="buttonRow">
+              <button id="cancelSell" class="secondary" type="button">Cancel</button>
+              <button id="confirmSell" class="primary" type="button">Mark Sold</button>
+            </div>
+            <div id="sellStatus" class="status"></div>
+          </section>
           <div id="results" class="results"></div>
         </section>
 

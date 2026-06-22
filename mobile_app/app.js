@@ -1,6 +1,7 @@
 const state = {
   pin: localStorage.getItem("lucasMobilePin") || "",
   lastDuplicate: null,
+  sellRecord: null,
   people: [],
 };
 
@@ -57,7 +58,7 @@ function renderResults(items) {
     host.innerHTML = '<div class="hint">No inventory matched.</div>';
     return;
   }
-  host.innerHTML = items.map((item) => `
+  host.innerHTML = items.map((item, index) => `
     <article class="result">
       <h2>${escapeHtml(item.card_title || item.cert_number || "Untitled card")}</h2>
       <div class="meta">
@@ -70,8 +71,12 @@ function renderResults(items) {
         <div><strong>Person</strong>${escapeHtml(item.assigned_person || "-")}</div>
         <div><strong>Source</strong>${escapeHtml(item.source || item.source_sheet || "-")}</div>
       </div>
+      ${String(item.status || "").toLowerCase() === "active" ? `<div class="resultActions"><button class="secondary sellButton" data-index="${index}" type="button">Mark Sold</button></div>` : ""}
     </article>
   `).join("");
+  document.querySelectorAll(".sellButton").forEach((button) => {
+    button.addEventListener("click", () => startSell(items[Number(button.dataset.index)]));
+  });
 }
 
 function escapeHtml(value) {
@@ -132,6 +137,48 @@ async function addInventory(updateExisting = false) {
   updatePeople(result.people || state.people);
   $("searchInput").value = result.record?.cert_number || result.record?.card_title || "";
   searchInventory();
+}
+
+function startSell(record) {
+  state.sellRecord = record || null;
+  if (!state.sellRecord) return;
+  $("sellTitle").textContent = `Mark Sold: ${state.sellRecord.cert_number || state.sellRecord.card_title || "card"}`;
+  $("sellPrice").value = state.sellRecord.estimated_payout || state.sellRecord.inventory_value || state.sellRecord.purchase_price || "";
+  $("sellDate").value = new Date().toISOString().slice(0, 10);
+  $("sellCompany").value = "";
+  $("sellStatus").textContent = "";
+  $("sellPanel").classList.remove("hidden");
+  $("sellPrice").focus();
+}
+
+function cancelSell() {
+  state.sellRecord = null;
+  $("sellPanel").classList.add("hidden");
+  $("sellStatus").textContent = "";
+}
+
+async function confirmSell() {
+  if (!state.sellRecord) return;
+  $("sellStatus").textContent = "Saving sale...";
+  const result = await api("/mobile/api/inventory/sold", {
+    inventory_key: state.sellRecord.inventory_key,
+    sale_price: $("sellPrice").value,
+    sale_date: $("sellDate").value,
+    sale_method: $("sellMethod").value,
+    company: $("sellCompany").value,
+  });
+  if (!result.ok) {
+    if (/pin/i.test(result.error || "")) setUnlocked(false);
+    $("sellStatus").textContent = result.error || "Could not mark sold.";
+    return;
+  }
+  $("sellStatus").textContent = `Sold for ${result.sale?.sale_price_display || money(result.sale?.sale_price, "")}.`;
+  const query = state.sellRecord.cert_number || state.sellRecord.card_title || $("searchInput").value;
+  cancelSell();
+  $("searchInput").value = query;
+  await searchInventory();
+  loadProfit();
+  loadPayouts();
 }
 
 function expensePayload() {
@@ -331,6 +378,8 @@ function bindPhotoInput(inputId, targetId) {
 function bind() {
   $("pin").value = state.pin;
   $("expenseDate").value = new Date().toISOString().slice(0, 10);
+  $("sellDate").value = new Date().toISOString().slice(0, 10);
+  fillSelect($("sellMethod"), ["Cash", "Wire", "Venmo", "Zelle", "PayPal", "Check", "Trade", "Other"], { includeAll: false });
   fillSelect($("expenseType"), ["Travel", "Supplies", "Travel Meal", "Fees"], { includeAll: false });
   fillSelect($("expenseRelatedType"), ["General", "Card", "Sheet"], { includeAll: false });
   fillSelect($("profitPeriod"), ["Total", "Year", "Month", "Week", "5 Days"], { includeAll: false });
@@ -360,6 +409,8 @@ function bind() {
     searchInventory();
   });
   $("includeSold").addEventListener("change", () => searchInventory());
+  $("cancelSell").addEventListener("click", () => cancelSell());
+  $("confirmSell").addEventListener("click", () => confirmSell());
   $("profitPerson").addEventListener("change", () => loadProfit());
   $("profitPeriod").addEventListener("change", () => loadProfit());
   $("profitGraph").addEventListener("change", () => loadProfit());

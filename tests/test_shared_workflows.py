@@ -2890,6 +2890,80 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
 
+    def test_mobile_inventory_mark_sold_removes_inventory_and_records_method(self) -> None:
+        class MobileSaleDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
+            _general_sold_sheet_name = app.CardPipelineApp._general_sold_sheet_name
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _append_profit_records = app.CardPipelineApp._append_profit_records
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
+            mobile_inventory_mark_sold = app.CardPipelineApp.mobile_inventory_mark_sold
+
+            def __init__(self):
+                self.events = queue.Queue()
+                self.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+                self.home_sheet_markers = {}
+
+            def _known_people(self):
+                return ["Kevin Hambone"]
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            try:
+                dummy = MobileSaleDummy()
+                record = dummy._normalize_inventory_record(
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "cert_number": "999111",
+                        "grader": "PSA",
+                        "card_title": "Mobile Sold Card",
+                        "purchase_price": 40,
+                        "inventory_value": 90,
+                        "source_sheet": "Lot A.xlsx",
+                    }
+                )
+                dummy._save_inventory_ledger([record])
+
+                result = dummy.mobile_inventory_mark_sold(
+                    {
+                        "inventory_key": record["inventory_key"],
+                        "sale_price": "125",
+                        "sale_date": "2026-06-20",
+                        "sale_method": "Venmo",
+                        "company": "Cash Buyer",
+                    }
+                )
+                self.assertTrue(result["ok"])
+                self.assertEqual(dummy._load_inventory_ledger(), [])
+                profit = [dummy._normalize_profit_record(item) for item in dummy._load_profit_ledger()]
+                self.assertEqual(len(profit), 1)
+                self.assertEqual(profit[0]["date_added"], "2026-06-20")
+                self.assertEqual(profit[0]["company"], "Cash Buyer")
+                self.assertEqual(profit[0]["sale_price"], 125.0)
+                self.assertEqual(profit[0]["profit"], 85.0)
+                self.assertEqual(profit[0]["sale_method"], "Venmo")
+                self.assertIn("Sale method: Venmo", profit[0]["notes"])
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
+
     def test_mobile_card_identify_returns_search_query_from_photo_ocr(self) -> None:
         class MobilePhotoDummy:
             _photo_card_to_row = app.CardPipelineApp._photo_card_to_row

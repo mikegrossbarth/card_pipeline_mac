@@ -398,6 +398,7 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_pin_provider = lambda: self.mobile_pin
         self.state.mobile_inventory_search = self.mobile_inventory_search
         self.state.mobile_inventory_add = self.mobile_inventory_add
+        self.state.mobile_inventory_mark_sold = self.mobile_inventory_mark_sold
         self.state.mobile_card_identify = self.mobile_card_identify
         self.state.mobile_profit_summary = self.mobile_profit_summary
         self.state.mobile_expense_add = self.mobile_expense_add
@@ -1425,6 +1426,48 @@ class CardPipelineApp(tk.Tk):
         self.events.put(("inventory_refresh", f"Mobile inventory {action}: {saved.get('cert_number') or saved.get('card_title') or 'card'}"))
         return {"ok": True, "action": action, "record": self._mobile_inventory_json_record(saved)}
 
+    def mobile_inventory_mark_sold(self, payload: dict) -> dict:
+        inventory_key = str(payload.get("inventory_key") or payload.get("key") or "").strip()
+        if not inventory_key:
+            return {"ok": False, "error": "Choose an inventory card to mark sold."}
+        sale_price = self._money_value(payload.get("sale_price") or payload.get("amount") or payload.get("price"))
+        if sale_price is None or sale_price < 0:
+            return {"ok": False, "error": "Enter a valid sale price."}
+        sale_date = str(payload.get("sale_date") or payload.get("date") or "").strip() or datetime.now().strftime("%Y-%m-%d")
+        if self._profit_record_date(sale_date) is None:
+            return {"ok": False, "error": "Enter the sale date as YYYY-MM-DD."}
+        sale_method = str(payload.get("sale_method") or payload.get("method") or "").strip()
+        company = str(payload.get("company") or payload.get("buyer") or "").strip()
+        with shared_lock(CARD_PIPELINE_DIR, "mobile-inventory-sold", self.lucas_identity):
+            ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+            record = next((item for item in ledger if str(item.get("inventory_key") or "") == inventory_key), None)
+            if record is None:
+                return {"ok": False, "error": "That inventory card was not found."}
+            if str(record.get("status") or "").lower() != "active":
+                return {"ok": False, "error": "Only active inventory cards can be marked sold."}
+            profit_record = self._inventory_sale_profit_record(record, company, float(sale_price), sale_date=sale_date, sale_method=sale_method)
+            added = self._append_profit_records([profit_record])
+            changed = self._mark_inventory_record_sold(inventory_key, company or "General Sold", float(sale_price))
+        if not (added or changed):
+            return {"ok": False, "error": "That sale already exists."}
+        title = record.get("cert_number") or record.get("card_title") or "card"
+        self.events.put(("inventory_refresh", f"Mobile marked sold: {title} for {format_money(sale_price)}."))
+        self.events.put(("profit_refresh", f"Mobile marked sold: {title} for {format_money(sale_price)}."))
+        return {
+            "ok": True,
+            "record": self._mobile_inventory_json_record(record),
+            "sale": {
+                "date": sale_date[:10],
+                "method": sale_method,
+                "company": company or "General Sold",
+                "sale_price": round(float(sale_price), 2),
+                "sale_price_display": format_money(sale_price),
+                "profit": profit_record.get("profit"),
+                "profit_display": format_money(profit_record.get("profit")),
+            },
+            "people": self._known_people(),
+        }
+
     def _mobile_profit_rows(self, person: str = "", period: str = "Total") -> list[dict[str, object]]:
         needle = person.strip().lower()
         period_start, period_end = self._profit_period_bounds(period)
@@ -2004,7 +2047,14 @@ class CardPipelineApp(tk.Tk):
     def _general_sold_sheet_name(self, person: str) -> str:
         return f"{str(person or '').strip() or 'Unassigned'} General Sold"
 
-    def _inventory_sale_profit_record(self, record: dict[str, object], company: str, sale_price: float) -> dict[str, object]:
+    def _inventory_sale_profit_record(
+        self,
+        record: dict[str, object],
+        company: str,
+        sale_price: float,
+        sale_date: str | None = None,
+        sale_method: str = "",
+    ) -> dict[str, object]:
         normalized = self._normalize_inventory_record(record)
         assigned_person = str(normalized.get("assigned_person") or "Unassigned").strip() or "Unassigned"
         company_name = str(company or "").strip()
@@ -2012,9 +2062,16 @@ class CardPipelineApp(tk.Tk):
         if not company_name:
             company_name = "General Sold"
             source_sheet = self._general_sold_sheet_name(assigned_person)
+        sold_date = str(sale_date or "").strip()[:10]
+        if CardPipelineApp._profit_record_date(self, sold_date) is None:
+            sold_date = datetime.now().strftime("%Y-%m-%d")
+        notes = str(normalized.get("notes") or "").strip()
+        method = str(sale_method or "").strip()
+        if method:
+            notes = clean_part("; ".join(part for part in (notes, f"Sale method: {method}") if part))
         return self._normalize_profit_record(
             {
-                "date_added": datetime.now().strftime("%Y-%m-%d"),
+                "date_added": sold_date,
                 "company": company_name,
                 "weekly_sheet_name": "Inventory Sale",
                 "source_sheet": source_sheet,
@@ -2024,19 +2081,20 @@ class CardPipelineApp(tk.Tk):
                 "card_title": normalized.get("card_title") or "",
                 "purchase_price": normalized.get("purchase_price"),
                 "sale_price": sale_price,
+                "sale_method": method,
                 "assigned_person": assigned_person,
                 "status": "Sold from inventory",
-                "notes": normalized.get("notes") or "",
+                "notes": notes,
             }
         )
 
-    def mark_inventory_record_sold(self, record: dict[str, object], company: str, sale_price: float) -> bool:
+    def mark_inventory_record_sold(self, record: dict[str, object], company: str, sale_price: float, sale_date: str | None = None, sale_method: str = "") -> bool:
         normalized = self._normalize_inventory_record(record)
         if str(normalized.get("status") or "").lower() != "active":
             return False
         company = str(company or "").strip()
         sold_company = company or "General Sold"
-        profit_record = self._inventory_sale_profit_record(normalized, company, sale_price)
+        profit_record = self._inventory_sale_profit_record(normalized, company, sale_price, sale_date=sale_date, sale_method=sale_method)
         added = self.record_profit_sales([profit_record])
         changed = self._mark_inventory_record_sold(str(normalized.get("inventory_key") or ""), sold_company, sale_price)
         return bool(added or changed)
