@@ -38,8 +38,9 @@
         <section id="searchView" class="view">
           <div class="searchRow">
             <input id="searchInput" placeholder="Cert, player, card, seller">
-            <button id="scanSearch" type="button">Scan</button>
+            <button id="scanSearch" type="button">Scan Photo</button>
           </div>
+          <div id="scanSearchStatus" class="status"></div>
           <label class="checkLine"><input id="includeSold" type="checkbox"> Include inactive/sold</label>
           <div id="results" class="results"></div>
         </section>
@@ -47,8 +48,9 @@
         <section id="addView" class="view hidden">
           <div class="scanBlock">
             <input id="certNumber" inputmode="numeric" placeholder="Cert number">
-            <button id="scanAdd" type="button">Scan</button>
+            <button id="scanAdd" type="button">Scan Photo</button>
           </div>
+          <div id="scanAddStatus" class="status"></div>
           <div class="grid">
             <label>Grader<input id="grader" placeholder="PSA"></label>
             <label>Purchase<input id="purchasePrice" inputmode="decimal" placeholder="0.00"></label>
@@ -72,6 +74,7 @@
         <button id="closeScanner" type="button">Close</button>
       </div>
     </dialog>
+    <input id="photoInput" class="hidden" type="file" accept="image/*" capture="environment">
 
     <script src="/mobile/app.js" defer></script>
   </body>

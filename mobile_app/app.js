@@ -1,7 +1,7 @@
 const state = {
   pin: localStorage.getItem("lucasMobilePin") || "",
   lastDuplicate: null,
-  scannerTarget: null,
+  photoTarget: null,
   stream: null,
 };
 
@@ -107,36 +107,48 @@ async function addInventory(updateExisting = false) {
   searchInventory();
 }
 
-async function openScanner(targetId) {
-  if (!("BarcodeDetector" in window)) {
-    $("scannerStatus").textContent = "Barcode scanning is not supported in this browser.";
-    $("scannerDialog").showModal();
-    return;
-  }
-  state.scannerTarget = targetId;
-  const detector = new BarcodeDetector({ formats: ["code_128", "code_39", "ean_13", "qr_code"] });
-  state.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-  $("scannerVideo").srcObject = state.stream;
-  await $("scannerVideo").play();
-  $("scannerDialog").showModal();
+function openPhotoScan(targetId) {
+  state.photoTarget = targetId;
+  const input = $("photoInput");
+  input.value = "";
+  input.click();
+}
 
-  async function tick() {
-    if (!state.stream) return;
-    try {
-      const codes = await detector.detect($("scannerVideo"));
-      if (codes.length) {
-        const value = codes[0].rawValue || "";
-        $(state.scannerTarget).value = value.replace(/\D/g, "") || value;
-        closeScanner();
-        if (state.scannerTarget === "searchInput") searchInventory();
-        return;
-      }
-    } catch (_error) {
-      $("scannerStatus").textContent = "Scanning paused. Try typing the cert.";
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function identifyPhoto(file) {
+  const target = state.photoTarget || "searchInput";
+  const status = target === "certNumber" ? $("scanAddStatus") : $("scanSearchStatus");
+  status.textContent = "Reading card photo...";
+  try {
+    const image = await fileToDataUrl(file);
+    const result = await api("/mobile/api/card/identify", { image });
+    if (!result.ok) {
+      status.textContent = result.error || "Could not read that card.";
+      return;
     }
-    requestAnimationFrame(tick);
+    const card = result.card || {};
+    const query = result.query || card.cert_number || card.card_title || "";
+    status.textContent = `Found ${card.cert_number || card.card_title || "card"}.`;
+    if (target === "certNumber") {
+      $("certNumber").value = card.cert_number || query;
+      if (card.grader) $("grader").value = card.grader;
+      if (card.card_title) $("cardTitle").value = card.card_title;
+      if (card.notes && !$("notes").value) $("notes").value = card.notes;
+    } else {
+      $("searchInput").value = query;
+      await searchInventory();
+    }
+  } catch (error) {
+    status.textContent = `Photo search failed: ${error.message || error}`;
   }
-  requestAnimationFrame(tick);
 }
 
 function closeScanner() {
@@ -167,8 +179,12 @@ function bind() {
   });
   $("searchInput").addEventListener("input", () => searchInventory());
   $("includeSold").addEventListener("change", () => searchInventory());
-  $("scanSearch").addEventListener("click", () => openScanner("searchInput"));
-  $("scanAdd").addEventListener("click", () => openScanner("certNumber"));
+  $("scanSearch").addEventListener("click", () => openPhotoScan("searchInput"));
+  $("scanAdd").addEventListener("click", () => openPhotoScan("certNumber"));
+  $("photoInput").addEventListener("change", () => {
+    const file = $("photoInput").files && $("photoInput").files[0];
+    if (file) identifyPhoto(file);
+  });
   $("closeScanner").addEventListener("click", closeScanner);
   $("addInventory").addEventListener("click", () => addInventory(false));
   $("updateDuplicate").addEventListener("click", () => addInventory(true));

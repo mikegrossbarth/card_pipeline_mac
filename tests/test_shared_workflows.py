@@ -2775,6 +2775,36 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_root
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_mobile_card_identify_returns_search_query_from_photo_ocr(self) -> None:
+        class MobilePhotoDummy:
+            _photo_card_to_row = app.CardPipelineApp._photo_card_to_row
+            _photo_card_has_inventory = app.CardPipelineApp._photo_card_has_inventory
+            _load_photo_env = lambda self: None
+
+        dummy = MobilePhotoDummy()
+        fake_genai = types.SimpleNamespace(Client=lambda api_key: {"api_key": api_key})
+        cards = [
+            {
+                "is_graded_slab": True,
+                "grading_company": "PSA",
+                "cert_number": "123456789",
+                "player": "Test Player",
+                "year": "2024",
+                "set": "Prizm",
+                "grade": "10",
+                "confidence": "high",
+            }
+        ]
+        with patch.object(app, "genai", fake_genai), \
+                patch.object(app, "identify_cards_sync", return_value=cards), \
+                patch.dict(app.os.environ, {"GOOGLE_API_KEY": "test-key"}):
+            result = app.CardPipelineApp.mobile_card_identify(dummy, {"image": "data:image/jpeg;base64,ZmFrZQ=="})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["query"], "123456789")
+        self.assertEqual(result["card"]["grader"], "PSA")
+        self.assertIn("Test Player", result["card"]["card_title"])
+
 
 if __name__ == "__main__":
     unittest.main()

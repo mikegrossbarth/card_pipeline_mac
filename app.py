@@ -396,6 +396,7 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_pin_provider = lambda: self.mobile_pin
         self.state.mobile_inventory_search = self.mobile_inventory_search
         self.state.mobile_inventory_add = self.mobile_inventory_add
+        self.state.mobile_card_identify = self.mobile_card_identify
         self.bridge = BridgeServer(self.state)
         self.bridge.start()
         self._refresh_keep_source_registry()
@@ -1415,6 +1416,46 @@ class CardPipelineApp(tk.Tk):
                 action = "added"
         self.events.put(("inventory_refresh", f"Mobile inventory {action}: {saved.get('cert_number') or saved.get('card_title') or 'card'}"))
         return {"ok": True, "action": action, "record": self._mobile_inventory_json_record(saved)}
+
+    def mobile_card_identify(self, payload: dict) -> dict:
+        image = str(payload.get("image") or "").strip()
+        if not image:
+            return {"ok": False, "error": "Take or choose a card photo first."}
+        if genai is None or identify_cards_sync is None:
+            return {"ok": False, "error": "Photo OCR dependencies are not available."}
+        self._load_photo_env()
+        api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+        if not api_key:
+            return {"ok": False, "error": "Missing GOOGLE_API_KEY for photo card search."}
+        match = re.match(r"^data:[^;]+;base64,(.*)$", image, re.S)
+        image_b64 = match.group(1) if match else image
+        try:
+            client = genai.Client(api_key=api_key)
+            cards = identify_cards_sync(client, image_b64)
+        except (TemporaryModelUnavailable, ModelQuotaExceeded, ModelResponseParseError) as error:
+            return {"ok": False, "error": str(error)}
+        except Exception as error:
+            return {"ok": False, "error": f"Photo search failed: {error}"}
+        rows = [
+            self._photo_card_to_row(Path("mobile-photo.jpg"), card)
+            for card in cards
+            if self._photo_card_has_inventory(card)
+        ]
+        if not rows:
+            return {"ok": False, "error": "No card was found in that photo."}
+        row = rows[0]
+        query = scan_to_cert(row.get("cert_number")) or str(row.get("card_title") or "").strip()
+        return {
+            "ok": True,
+            "query": query,
+            "card": {
+                "cert_number": row.get("cert_number"),
+                "grader": row.get("grader"),
+                "card_title": row.get("card_title"),
+                "notes": row.get("notes"),
+            },
+            "cards_found": len(rows),
+        }
 
     def _retarget_inventory_rows_for_source(self, source_sheet_name: str, assigned_person: str) -> int:
         source_name = Path(str(source_sheet_name or "")).name.strip().lower()

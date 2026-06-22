@@ -60,6 +60,7 @@ class BridgeState:
         self.mobile_pin_provider: Callable[[], str] | None = None
         self.mobile_inventory_search: Callable[[dict], dict] | None = None
         self.mobile_inventory_add: Callable[[dict], dict] | None = None
+        self.mobile_card_identify: Callable[[dict], dict] | None = None
         self.keep_note_sources: list[dict[str, str]] = []
         self.last_keep_sync: dict[str, str] = {}
         self.cy_lookup_inflight: set[int] = set()
@@ -125,7 +126,7 @@ class BridgeState:
             "ok": True,
             "service": "lucas-mobile",
             "requiresPin": bool(self.mobile_pin_provider),
-            "barcodeScanning": True,
+            "photoSearch": True,
         }
 
     def search_mobile_inventory(self, payload: dict) -> dict:
@@ -141,6 +142,13 @@ class BridgeState:
         if not self.mobile_inventory_add:
             return {"ok": False, "error": "Inventory add is not available."}
         return self.mobile_inventory_add(payload)
+
+    def identify_mobile_card(self, payload: dict) -> dict:
+        if not self.mobile_auth_ok(payload):
+            return {"ok": False, "error": "Invalid mobile PIN."}
+        if not self.mobile_card_identify:
+            return {"ok": False, "error": "Photo card search is not available."}
+        return self.mobile_card_identify(payload)
 
     def start_all_comps(self, requery_all: bool = False) -> int:
         with self.lock:
@@ -863,6 +871,9 @@ class BridgeServer:
                     return
                 if self.path.startswith("/mobile/api/inventory/add"):
                     self._send_json(state.add_mobile_inventory(payload))
+                    return
+                if self.path.startswith("/mobile/api/card/identify"):
+                    self._send_json(state.identify_mobile_card(payload))
                     return
                 if self.path.startswith("/ack"):
                     state.acknowledge_command(int(payload.get("id") or 0))
