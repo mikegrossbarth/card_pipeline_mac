@@ -1,6 +1,7 @@
 const state = {
   pin: localStorage.getItem("lucasMobilePin") || "",
   lastDuplicate: null,
+  people: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -23,6 +24,31 @@ function money(value, fallback = "") {
   const number = Number(value);
   if (!Number.isFinite(number)) return String(value);
   return number.toLocaleString(undefined, { style: "currency", currency: "USD" });
+}
+
+function fillSelect(select, values, options = {}) {
+  const current = select.value;
+  const allLabel = options.allLabel || "All people";
+  const includeAll = options.includeAll !== false;
+  const choices = includeAll ? [`<option value="">${escapeHtml(allLabel)}</option>`] : [];
+  values.forEach((value) => choices.push(`<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`));
+  select.innerHTML = choices.join("");
+  if ([...select.options].some((option) => option.value === current)) {
+    select.value = current;
+  }
+}
+
+function updatePeople(people) {
+  if (Array.isArray(people)) {
+    state.people = people.filter(Boolean);
+  }
+  ["personFilter", "profitPerson", "payoutPerson"].forEach((id) => fillSelect($(id), state.people));
+}
+
+function syncPersonInputs(person) {
+  const value = person || $("personFilter").value || $("profitPerson").value || $("payoutPerson").value || "";
+  if (value && !$("assignedPerson").value) $("assignedPerson").value = value;
+  if (value && !$("expensePerson").value) $("expensePerson").value = value;
 }
 
 function renderResults(items) {
@@ -61,6 +87,7 @@ function escapeHtml(value) {
 async function searchInventory() {
   const result = await api("/mobile/api/inventory/search", {
     query: $("searchInput").value,
+    person: $("personFilter").value,
     include_sold: $("includeSold").checked,
   });
   if (!result.ok) {
@@ -68,6 +95,7 @@ async function searchInventory() {
     $("results").innerHTML = `<div class="hint">${escapeHtml(result.error || "Search failed.")}</div>`;
     return;
   }
+  updatePeople(result.people || []);
   renderResults(result.items || []);
 }
 
@@ -101,8 +129,154 @@ async function addInventory(updateExisting = false) {
     return;
   }
   $("addStatus").textContent = `${result.action === "updated" ? "Updated" : "Added"} ${result.record?.cert_number || result.record?.card_title || "card"}.`;
+  updatePeople(result.people || state.people);
   $("searchInput").value = result.record?.cert_number || result.record?.card_title || "";
   searchInventory();
+}
+
+function expensePayload() {
+  return {
+    person: $("expensePerson").value,
+    date: $("expenseDate").value,
+    expense_type: $("expenseType").value,
+    amount: $("expenseAmount").value,
+    related_type: $("expenseRelatedType").value,
+    source_sheet: $("expenseSheet").value,
+    cert_number: $("expenseCert").value,
+    notes: $("expenseNotes").value,
+  };
+}
+
+async function addExpense() {
+  $("expenseStatus").textContent = "Saving...";
+  const result = await api("/mobile/api/expenses/add", expensePayload());
+  if (!result.ok) {
+    if (/pin/i.test(result.error || "")) setUnlocked(false);
+    $("expenseStatus").textContent = result.error || "Expense add failed.";
+    return;
+  }
+  updatePeople(result.people || state.people);
+  $("expenseStatus").textContent = "Expense added.";
+  $("expenseAmount").value = "";
+  $("expenseSheet").value = "";
+  $("expenseCert").value = "";
+  $("expenseNotes").value = "";
+  loadProfit();
+}
+
+function renderMetrics(host, items) {
+  host.innerHTML = items.map((item) => `
+    <div class="metric">
+      <strong>${escapeHtml(item.label)}</strong>
+      <span>${escapeHtml(item.value)}</span>
+    </div>
+  `).join("");
+}
+
+function drawChart(chart) {
+  const svg = $("profitChart");
+  const values = (chart && chart.values) || [];
+  if (!values.length) {
+    svg.innerHTML = '<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#9eb1ba">No profit data</text>';
+    return;
+  }
+  const width = 700;
+  const height = 220;
+  const pad = 24;
+  const min = Math.min(...values, 0);
+  const max = Math.max(...values, 0);
+  const span = max - min || 1;
+  const point = (value, index) => {
+    const x = pad + (values.length === 1 ? 0 : (index / (values.length - 1)) * (width - pad * 2));
+    const y = height - pad - ((value - min) / span) * (height - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  };
+  const points = values.map(point).join(" ");
+  const zeroY = height - pad - ((0 - min) / span) * (height - pad * 2);
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.innerHTML = `
+    <line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${width - pad}" y2="${zeroY.toFixed(1)}" stroke="#304453" stroke-width="1" />
+    <polyline points="${points}" fill="none" stroke="#7ed8bd" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+    <circle cx="${point(values[values.length - 1], values.length - 1).split(",")[0]}" cy="${point(values[values.length - 1], values.length - 1).split(",")[1]}" r="5" fill="#eef5f6" />
+    <text x="${pad}" y="18" fill="#9eb1ba" font-size="13">${escapeHtml(money(max))}</text>
+    <text x="${pad}" y="${height - 7}" fill="#9eb1ba" font-size="13">${escapeHtml(money(min))}</text>
+  `;
+}
+
+async function loadProfit() {
+  const result = await api("/mobile/api/profit/summary", {
+    person: $("profitPerson").value,
+    period: $("profitPeriod").value,
+    graph: $("profitGraph").value,
+  });
+  if (!result.ok) {
+    if (/pin/i.test(result.error || "")) setUnlocked(false);
+    $("profitRecent").innerHTML = `<div class="hint">${escapeHtml(result.error || "Profit load failed.")}</div>`;
+    return;
+  }
+  updatePeople(result.people || []);
+  fillSelect($("profitPeriod"), result.periods || ["Total", "Year", "Month", "Week", "5 Days"], { includeAll: false });
+  fillSelect($("profitGraph"), result.graphs || ["Daily Trend", "Overall Profit"], { includeAll: false });
+  const totals = result.totals || {};
+  renderMetrics($("profitCards"), [
+    { label: "Net Profit", value: money(totals.net_profit, "$0.00") },
+    { label: "Gross Profit", value: money(totals.gross_profit, "$0.00") },
+    { label: "Expenses", value: money(totals.expenses, "$0.00") },
+    { label: "Sales", value: money(totals.sale, "$0.00") },
+  ]);
+  drawChart(result.chart || {});
+  const recent = result.recent || [];
+  $("profitRecent").innerHTML = recent.length ? recent.map((item) => `
+    <article class="result">
+      <h2>${escapeHtml(item.title || item.company || item.type)}</h2>
+      <div class="meta">
+        <div><strong>Date</strong>${escapeHtml(item.date || "")}</div>
+        <div><strong>Person</strong>${escapeHtml(item.person || "")}</div>
+        <div><strong>Type</strong>${escapeHtml(item.type || "")}</div>
+        <div><strong>Profit</strong>${escapeHtml(item.profit_display || money(item.profit, "-"))}</div>
+      </div>
+    </article>
+  `).join("") : '<div class="hint">No profit rows matched.</div>';
+}
+
+async function loadPayouts() {
+  const result = await api("/mobile/api/payouts", { person: $("payoutPerson").value });
+  if (!result.ok) {
+    if (/pin/i.test(result.error || "")) setUnlocked(false);
+    $("payoutSummary").innerHTML = `<div class="hint">${escapeHtml(result.error || "Payout load failed.")}</div>`;
+    return;
+  }
+  updatePeople(result.people || []);
+  const totals = result.totals || {};
+  renderMetrics($("payoutCards"), [
+    { label: "Balance", value: totals.balance_display || money(totals.balance, "$0.00") },
+    { label: "Sheets", value: String(totals.sheets || 0) },
+    { label: "Cards", value: String(totals.cards || 0) },
+    { label: "Mode", value: "View only" },
+  ]);
+  const summary = result.summary || [];
+  $("payoutSummary").innerHTML = summary.length ? summary.map((item) => `
+    <article class="result">
+      <h2>${escapeHtml(item.person || "Unassigned")}</h2>
+      <div class="meta">
+        <div><strong>Sheets</strong>${escapeHtml(item.sheets || 0)}</div>
+        <div><strong>Cards</strong>${escapeHtml(item.cards || 0)}</div>
+        <div><strong>Balance</strong>${escapeHtml(item.balance_display || money(item.balance, "-"))}</div>
+      </div>
+    </article>
+  `).join("") : '<div class="hint">No active payout balances matched.</div>';
+  const details = result.details || [];
+  $("payoutDetails").innerHTML = details.length ? details.slice(0, 30).map((item) => `
+    <article class="result">
+      <h2>${escapeHtml(item.name || "Sheet")}</h2>
+      <div class="meta">
+        <div><strong>Person</strong>${escapeHtml(item.person || "")}</div>
+        <div><strong>Status</strong>${escapeHtml(item.status || "")}</div>
+        <div><strong>Received</strong>${escapeHtml(`${item.received_count || 0}/${item.row_count || 0}`)}</div>
+        <div><strong>Balance</strong>${escapeHtml(item.payout_balance_display || money(item.payout_balance, "-"))}</div>
+      </div>
+    </article>
+  `).join("") : "";
 }
 
 function fileToDataUrl(file) {
@@ -156,6 +330,12 @@ function bindPhotoInput(inputId, targetId) {
 
 function bind() {
   $("pin").value = state.pin;
+  $("expenseDate").value = new Date().toISOString().slice(0, 10);
+  fillSelect($("expenseType"), ["Travel", "Supplies", "Travel Meal", "Fees"], { includeAll: false });
+  fillSelect($("expenseRelatedType"), ["General", "Card", "Sheet"], { includeAll: false });
+  fillSelect($("profitPeriod"), ["Total", "Year", "Month", "Week", "5 Days"], { includeAll: false });
+  fillSelect($("profitGraph"), ["Daily Trend", "Overall Profit"], { includeAll: false });
+  updatePeople([]);
   setUnlocked(Boolean(state.pin));
   $("savePin").addEventListener("click", () => {
     state.pin = $("pin").value.trim();
@@ -167,16 +347,28 @@ function bind() {
     button.addEventListener("click", () => {
       document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
-      $("searchView").classList.toggle("hidden", button.dataset.view !== "search");
-      $("addView").classList.toggle("hidden", button.dataset.view !== "add");
+      ["search", "add", "expense", "profit", "payout"].forEach((view) => {
+        $(`${view}View`).classList.toggle("hidden", button.dataset.view !== view);
+      });
+      if (button.dataset.view === "profit") loadProfit();
+      if (button.dataset.view === "payout") loadPayouts();
     });
   });
   $("searchInput").addEventListener("input", () => searchInventory());
+  $("personFilter").addEventListener("change", () => {
+    syncPersonInputs($("personFilter").value);
+    searchInventory();
+  });
   $("includeSold").addEventListener("change", () => searchInventory());
+  $("profitPerson").addEventListener("change", () => loadProfit());
+  $("profitPeriod").addEventListener("change", () => loadProfit());
+  $("profitGraph").addEventListener("change", () => loadProfit());
+  $("payoutPerson").addEventListener("change", () => loadPayouts());
   bindPhotoInput("photoSearchInput", "searchInput");
   bindPhotoInput("photoAddInput", "certNumber");
   $("addInventory").addEventListener("click", () => addInventory(false));
   $("updateDuplicate").addEventListener("click", () => addInventory(true));
+  $("addExpense").addEventListener("click", () => addExpense());
   $("installHelp").addEventListener("click", () => alert("On iPhone: Share -> Add to Home Screen."));
   if (state.pin) searchInventory();
 }

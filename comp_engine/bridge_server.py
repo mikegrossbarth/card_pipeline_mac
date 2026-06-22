@@ -61,6 +61,9 @@ class BridgeState:
         self.mobile_inventory_search: Callable[[dict], dict] | None = None
         self.mobile_inventory_add: Callable[[dict], dict] | None = None
         self.mobile_card_identify: Callable[[dict], dict] | None = None
+        self.mobile_profit_summary: Callable[[dict], dict] | None = None
+        self.mobile_expense_add: Callable[[dict], dict] | None = None
+        self.mobile_payouts: Callable[[dict], dict] | None = None
         self.keep_note_sources: list[dict[str, str]] = []
         self.last_keep_sync: dict[str, str] = {}
         self.cy_lookup_inflight: set[int] = set()
@@ -127,6 +130,9 @@ class BridgeState:
             "service": "lucas-mobile",
             "requiresPin": bool(self.mobile_pin_provider),
             "photoSearch": True,
+            "profit": True,
+            "expenses": True,
+            "payouts": True,
         }
 
     def search_mobile_inventory(self, payload: dict) -> dict:
@@ -149,6 +155,27 @@ class BridgeState:
         if not self.mobile_card_identify:
             return {"ok": False, "error": "Photo card search is not available."}
         return self.mobile_card_identify(payload)
+
+    def get_mobile_profit_summary(self, payload: dict) -> dict:
+        if not self.mobile_auth_ok(payload):
+            return {"ok": False, "error": "Invalid mobile PIN."}
+        if not self.mobile_profit_summary:
+            return {"ok": False, "error": "Profit view is not available."}
+        return self.mobile_profit_summary(payload)
+
+    def add_mobile_expense(self, payload: dict) -> dict:
+        if not self.mobile_auth_ok(payload):
+            return {"ok": False, "error": "Invalid mobile PIN."}
+        if not self.mobile_expense_add:
+            return {"ok": False, "error": "Expense entry is not available."}
+        return self.mobile_expense_add(payload)
+
+    def get_mobile_payouts(self, payload: dict) -> dict:
+        if not self.mobile_auth_ok(payload):
+            return {"ok": False, "error": "Invalid mobile PIN."}
+        if not self.mobile_payouts:
+            return {"ok": False, "error": "Payout view is not available."}
+        return self.mobile_payouts(payload)
 
     def start_all_comps(self, requery_all: bool = False) -> int:
         with self.lock:
@@ -874,6 +901,15 @@ class BridgeServer:
                     return
                 if self.path.startswith("/mobile/api/card/identify"):
                     self._send_json(state.identify_mobile_card(payload))
+                    return
+                if self.path.startswith("/mobile/api/profit/summary"):
+                    self._send_json(state.get_mobile_profit_summary(payload))
+                    return
+                if self.path.startswith("/mobile/api/expenses/add"):
+                    self._send_json(state.add_mobile_expense(payload))
+                    return
+                if self.path.startswith("/mobile/api/payouts"):
+                    self._send_json(state.get_mobile_payouts(payload))
                     return
                 if self.path.startswith("/ack"):
                     state.acknowledge_command(int(payload.get("id") or 0))

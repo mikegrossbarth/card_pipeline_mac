@@ -33,9 +33,15 @@
         <nav class="tabs" aria-label="Inventory actions">
           <button class="tab active" data-view="search" type="button">Search</button>
           <button class="tab" data-view="add" type="button">Add</button>
+          <button class="tab" data-view="expense" type="button">Expense</button>
+          <button class="tab" data-view="profit" type="button">Profit</button>
+          <button class="tab" data-view="payout" type="button">Payouts</button>
         </nav>
 
         <section id="searchView" class="view">
+          <label>Person
+            <select id="personFilter"></select>
+          </label>
           <div class="searchRow">
             <input id="searchInput" placeholder="Cert, player, card, seller">
             <label class="fileButton" for="photoSearchInput">Scan Photo</label>
@@ -65,6 +71,39 @@
           <button id="addInventory" class="primary" type="button">Add Inventory</button>
           <button id="updateDuplicate" class="secondary hidden" type="button">Update Existing</button>
           <div id="addStatus" class="status"></div>
+        </section>
+
+        <section id="expenseView" class="view hidden">
+          <div class="grid">
+            <label>Person<input id="expensePerson" placeholder="Owner/person"></label>
+            <label>Date<input id="expenseDate" type="date"></label>
+            <label>Type<select id="expenseType"></select></label>
+            <label>Amount<input id="expenseAmount" inputmode="decimal" placeholder="0.00"></label>
+            <label>Tie To<select id="expenseRelatedType"></select></label>
+            <label>Sheet<input id="expenseSheet" placeholder="Optional"></label>
+            <label>Cert<input id="expenseCert" inputmode="numeric" placeholder="Optional"></label>
+            <label>Notes<textarea id="expenseNotes" rows="3"></textarea></label>
+          </div>
+          <button id="addExpense" class="primary" type="button">Add Expense</button>
+          <div id="expenseStatus" class="status"></div>
+        </section>
+
+        <section id="profitView" class="view hidden">
+          <div class="controlGrid">
+            <label>Person<select id="profitPerson"></select></label>
+            <label>Period<select id="profitPeriod"></select></label>
+            <label>Graph<select id="profitGraph"></select></label>
+          </div>
+          <div id="profitCards" class="metricGrid"></div>
+          <svg id="profitChart" class="chart" role="img" aria-label="Profit graph"></svg>
+          <div id="profitRecent" class="results"></div>
+        </section>
+
+        <section id="payoutView" class="view hidden">
+          <label>Person<select id="payoutPerson"></select></label>
+          <div id="payoutCards" class="metricGrid"></div>
+          <div id="payoutSummary" class="results"></div>
+          <div id="payoutDetails" class="results compact"></div>
         </section>
       </section>
     </main>

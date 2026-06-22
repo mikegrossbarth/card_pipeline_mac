@@ -2730,6 +2730,16 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.events = queue.Queue()
                 self.lucas_identity = {"display_name": "test", "machine": "test"}
 
+            def _known_people(self):
+                return sorted(
+                    {
+                        str(record.get("assigned_person") or "").strip()
+                        for record in self._load_inventory_ledger()
+                        if str(record.get("assigned_person") or "").strip()
+                    },
+                    key=str.lower,
+                )
+
         old_root = app.CARD_PIPELINE_DIR
         old_inventory = app.INVENTORY_LEDGER_PATH
         with TemporaryDirectory() as tmp:
@@ -2757,6 +2767,9 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertTrue(search["ok"])
                 self.assertEqual(search["count"], 1)
                 self.assertEqual(search["items"][0]["purchase_price_display"], "$42.00")
+                self.assertEqual(search["people"], ["Kevin Hambone"])
+                self.assertEqual(dummy.mobile_inventory_search({"person": "Kevin"})["count"], 1)
+                self.assertEqual(dummy.mobile_inventory_search({"person": "Mike"})["count"], 0)
 
                 duplicate = dummy.mobile_inventory_add({"cert_number": "123456", "purchase_price": "50"})
                 self.assertFalse(duplicate["ok"])
@@ -2774,6 +2787,108 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             finally:
                 app.CARD_PIPELINE_DIR = old_root
                 app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_mobile_expenses_profit_summary_and_payouts(self) -> None:
+        class MobileFinanceDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
+            _append_profit_records = app.CardPipelineApp._append_profit_records
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_today = lambda self: datetime(2026, 6, 19).date()
+            _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
+            _mobile_profit_rows = app.CardPipelineApp._mobile_profit_rows
+            _mobile_profit_chart_series = app.CardPipelineApp._mobile_profit_chart_series
+            mobile_profit_summary = app.CardPipelineApp.mobile_profit_summary
+            mobile_expense_add = app.CardPipelineApp.mobile_expense_add
+            mobile_payouts = app.CardPipelineApp.mobile_payouts
+
+            def __init__(self):
+                self.events = queue.Queue()
+                self.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+                self.home_sheet_markers = {}
+                self.home_sheet_paths = {"Incoming": {}, "Received": {}}
+                self.home_sheet_summaries = {}
+
+            def _known_people(self):
+                return ["Kevin Hambone", "Mike Seller"]
+
+            def _payout_sheet_items(self):
+                return [
+                    {
+                        "name": "Lot A.xlsx",
+                        "stage": "Received",
+                        "person": "Mike Seller",
+                        "paid": False,
+                        "row_count": 3,
+                        "received_count": 3,
+                        "payout_balance": 120.0,
+                        "status": "Ready",
+                    },
+                    {
+                        "name": "Lot B.xlsx",
+                        "stage": "Received",
+                        "person": "Kevin Hambone",
+                        "paid": True,
+                        "row_count": 2,
+                        "received_count": 2,
+                        "payout_balance": 0.0,
+                        "status": "Paid",
+                    },
+                ]
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_ledger = app.PROFIT_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            try:
+                dummy = MobileFinanceDummy()
+                dummy._save_profit_ledger(
+                    [
+                        {
+                            "assigned_person": "Kevin Hambone",
+                            "cert_number": "123",
+                            "source_sheet": "Lot A.xlsx",
+                            "company": "Arena",
+                            "purchase_price": 40,
+                            "sale_price": 100,
+                            "date_added": "2026-06-18",
+                        }
+                    ]
+                )
+
+                added = dummy.mobile_expense_add(
+                    {
+                        "person": "Kevin Hambone",
+                        "date": "2026-06-18",
+                        "expense_type": "Travel Meal",
+                        "amount": "15",
+                        "related_type": "Card",
+                        "cert_number": "123",
+                        "notes": "Dinner",
+                    }
+                )
+                self.assertTrue(added["ok"])
+                summary = dummy.mobile_profit_summary({"person": "Kevin", "period": "YTD", "graph": "Overall Profit"})
+                self.assertTrue(summary["ok"])
+                self.assertEqual(summary["totals"]["gross_profit"], 60.0)
+                self.assertEqual(summary["totals"]["expenses"], 15.0)
+                self.assertEqual(summary["totals"]["net_profit"], 45.0)
+                self.assertEqual(summary["chart"]["values"][-1], 45.0)
+
+                payouts = dummy.mobile_payouts({"person": "Mike"})
+                self.assertTrue(payouts["ok"])
+                self.assertEqual(payouts["totals"]["balance"], 120.0)
+                self.assertEqual(payouts["summary"][0]["person"], "Mike Seller")
+                self.assertEqual(payouts["details"][0]["status"], "Ready")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.PROFIT_LEDGER_PATH = old_ledger
 
     def test_mobile_card_identify_returns_search_query_from_photo_ocr(self) -> None:
         class MobilePhotoDummy:

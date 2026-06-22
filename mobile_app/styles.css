@@ -60,7 +60,7 @@ main {
 
 .tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   max-width: 720px;
   margin: 0 auto 14px;
@@ -111,6 +111,7 @@ label {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   min-height: 44px;
@@ -122,6 +123,10 @@ textarea {
   color: #eef5f6;
   font: inherit;
   font-size: 16px;
+}
+
+select {
+  appearance: none;
 }
 
 textarea {
@@ -148,6 +153,51 @@ textarea {
 .grid {
   display: grid;
   gap: 2px;
+}
+
+.controlGrid,
+.metricGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.metricGrid {
+  grid-template-columns: 1fr 1fr;
+  margin: 8px 0 12px;
+}
+
+.metric {
+  min-height: 74px;
+  padding: 10px;
+  border: 1px solid #2b3e4d;
+  border-radius: 8px;
+  background: #17232d;
+}
+
+.metric strong {
+  display: block;
+  color: #82d7bd;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.metric span {
+  display: block;
+  margin-top: 4px;
+  color: #eef5f6;
+  font-size: 20px;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.chart {
+  width: 100%;
+  height: 220px;
+  margin: 2px 0 12px;
+  border: 1px solid #2b3e4d;
+  border-radius: 8px;
+  background: #0f171d;
 }
 
 .checkLine {
@@ -203,14 +253,38 @@ textarea {
   text-transform: uppercase;
 }
 
+.compact {
+  margin-top: 10px;
+}
+
+.compact .result {
+  padding: 10px;
+}
+
 .hidden {
   display: none !important;
+}
+
+@media (max-width: 430px) {
+  .tabs {
+    gap: 5px;
+  }
+
+  .tab {
+    min-height: 40px;
+    padding: 0 5px;
+    font-size: 12px;
+  }
 }
 
 @media (min-width: 620px) {
   .grid {
     grid-template-columns: 1fr 1fr;
     gap: 8px 10px;
+  }
+
+  .controlGrid {
+    grid-template-columns: 1fr 1fr 1fr;
   }
 
   .grid label:nth-last-child(1),

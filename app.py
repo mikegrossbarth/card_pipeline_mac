@@ -399,6 +399,9 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_inventory_search = self.mobile_inventory_search
         self.state.mobile_inventory_add = self.mobile_inventory_add
         self.state.mobile_card_identify = self.mobile_card_identify
+        self.state.mobile_profit_summary = self.mobile_profit_summary
+        self.state.mobile_expense_add = self.mobile_expense_add
+        self.state.mobile_payouts = self.mobile_payouts
         self.bridge = BridgeServer(self.state)
         self.bridge.start()
         self._refresh_keep_source_registry()
@@ -1358,12 +1361,15 @@ class CardPipelineApp(tk.Tk):
 
     def mobile_inventory_search(self, payload: dict) -> dict:
         query = str(payload.get("query") or payload.get("q") or "").strip().lower()
+        person = str(payload.get("person") or "").strip().lower()
         include_sold = bool(payload.get("include_sold"))
         rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         results: list[dict[str, object]] = []
         for record in rows:
             status = str(record.get("status") or "").lower()
             if status != "active" and not include_sold:
+                continue
+            if person and person not in str(record.get("assigned_person") or "Unassigned").lower():
                 continue
             haystack = " ".join(
                 str(record.get(field) or "")
@@ -1374,7 +1380,7 @@ class CardPipelineApp(tk.Tk):
             results.append(self._mobile_inventory_json_record(record))
             if len(results) >= 75:
                 break
-        return {"ok": True, "count": len(results), "items": results}
+        return {"ok": True, "count": len(results), "items": results, "people": self._known_people()}
 
     def mobile_inventory_add(self, payload: dict) -> dict:
         record = self._mobile_inventory_payload_record(payload)
@@ -1418,6 +1424,199 @@ class CardPipelineApp(tk.Tk):
                 action = "added"
         self.events.put(("inventory_refresh", f"Mobile inventory {action}: {saved.get('cert_number') or saved.get('card_title') or 'card'}"))
         return {"ok": True, "action": action, "record": self._mobile_inventory_json_record(saved)}
+
+    def _mobile_profit_rows(self, person: str = "", period: str = "Total") -> list[dict[str, object]]:
+        needle = person.strip().lower()
+        period_start, period_end = self._profit_period_bounds(period)
+        rows = self._enrich_profit_records_with_people(self._load_profit_ledger())
+        filtered: list[dict[str, object]] = []
+        for record in rows:
+            if needle and needle not in str(record.get("assigned_person") or "Unassigned").lower():
+                continue
+            if period_start is not None:
+                sold_date = self._profit_record_date(record.get("date_added"))
+                if sold_date is None or sold_date < period_start or sold_date > period_end:
+                    continue
+            filtered.append(record)
+        return sorted(filtered, key=lambda item: (str(item.get("date_added") or ""), str(item.get("company") or ""), str(item.get("card_title") or "")), reverse=True)
+
+    def _mobile_profit_chart_series(self, rows: list[dict[str, object]], period: str, graph: str) -> tuple[list[str], list[float]]:
+        daily: dict[str, float] = {}
+        for record in rows:
+            profit = self._money_value(record.get("profit"))
+            sold_date = self._profit_record_date(record.get("date_added"))
+            if profit is None or sold_date is None:
+                continue
+            day = sold_date.isoformat()
+            daily[day] = daily.get(day, 0.0) + float(profit)
+        period_start, period_end = self._profit_period_bounds(period)
+        if period_start is not None:
+            cursor = period_start
+            while cursor <= period_end:
+                daily.setdefault(cursor.isoformat(), 0.0)
+                cursor += timedelta(days=1)
+        days = sorted(daily)
+        values = [daily[day] for day in days]
+        if graph == "Overall Profit":
+            running = 0.0
+            cumulative: list[float] = []
+            for value in values:
+                running += value
+                cumulative.append(round(running, 2))
+            values = cumulative
+        return days, [round(value, 2) for value in values]
+
+    def mobile_profit_summary(self, payload: dict) -> dict:
+        period = str(payload.get("period") or "Total").strip()
+        if period not in PROFIT_PERIOD_OPTIONS:
+            period = "Total"
+        graph = str(payload.get("graph") or "Daily Trend").strip()
+        if graph not in PROFIT_GRAPH_OPTIONS:
+            graph = "Daily Trend"
+        rows = self._mobile_profit_rows(str(payload.get("person") or ""), period)
+        total_purchase = 0.0
+        total_sale = 0.0
+        gross_profit = 0.0
+        expenses = 0.0
+        net_profit = 0.0
+        complete_count = 0
+        recent: list[dict[str, object]] = []
+        for record in rows:
+            is_expense = str(record.get("record_type") or "").strip().lower() == "expense"
+            purchase = self._money_value(record.get("purchase_price"))
+            sale = self._money_value(record.get("sale_price"))
+            profit = self._money_value(record.get("profit"))
+            if purchase is not None:
+                total_purchase += purchase
+            if sale is not None:
+                total_sale += sale
+            if profit is not None:
+                net_profit += profit
+                if is_expense:
+                    expenses += abs(profit)
+                else:
+                    gross_profit += profit
+                complete_count += 1
+            if len(recent) < 25:
+                recent.append(
+                    {
+                        "date": record.get("date_added") or "",
+                        "person": record.get("assigned_person") or "Unassigned",
+                        "type": "Expense" if is_expense else "Sale",
+                        "title": record.get("card_title") or record.get("company") or "",
+                        "company": record.get("company") or "",
+                        "profit": round(profit or 0.0, 2) if profit is not None else None,
+                        "profit_display": format_money(profit),
+                    }
+                )
+        labels, values = self._mobile_profit_chart_series(rows, period, graph)
+        return {
+            "ok": True,
+            "people": self._known_people(),
+            "periods": list(PROFIT_PERIOD_OPTIONS),
+            "graphs": list(PROFIT_GRAPH_OPTIONS),
+            "totals": {
+                "purchase": round(total_purchase, 2),
+                "sale": round(total_sale, 2),
+                "gross_profit": round(gross_profit, 2),
+                "expenses": round(expenses, 2),
+                "net_profit": round(net_profit, 2),
+                "complete_count": complete_count,
+                "row_count": len(rows),
+            },
+            "chart": {"labels": labels, "values": values},
+            "recent": recent,
+        }
+
+    def mobile_expense_add(self, payload: dict) -> dict:
+        person = str(payload.get("person") or payload.get("assigned_person") or "").strip()
+        if not person:
+            return {"ok": False, "error": "Choose the person this expense belongs to."}
+        expense_date = str(payload.get("date") or payload.get("date_added") or "").strip() or datetime.now().strftime("%Y-%m-%d")
+        if self._profit_record_date(expense_date) is None:
+            return {"ok": False, "error": "Enter the expense date as YYYY-MM-DD."}
+        amount = self._money_value(payload.get("amount") or payload.get("expense_amount"))
+        if amount is None or amount <= 0:
+            return {"ok": False, "error": "Enter an expense amount greater than zero."}
+        expense_type = str(payload.get("expense_type") or payload.get("type") or "").strip()
+        if expense_type not in EXPENSE_CATEGORY_OPTIONS:
+            expense_type = "Fees"
+        related_type = str(payload.get("related_type") or payload.get("tie_to") or "").strip()
+        if related_type not in EXPENSE_LINK_OPTIONS:
+            related_type = "General"
+        related_sheet = str(payload.get("source_sheet") or payload.get("sheet") or "").strip()
+        related_cert = str(payload.get("cert_number") or payload.get("cert") or "").strip()
+        if related_type == "Sheet" and not related_sheet:
+            return {"ok": False, "error": "Enter the sold sheet this expense belongs to."}
+        if related_type == "Card" and not (related_sheet or related_cert):
+            return {"ok": False, "error": "Enter a cert number or sold sheet for the card expense."}
+        record = {
+            "record_type": "expense",
+            "expense_id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            "date_added": expense_date[:10],
+            "assigned_person": person,
+            "expense_type": expense_type,
+            "expense_amount": amount,
+            "related_type": related_type,
+            "source_sheet": related_sheet,
+            "cert_number": related_cert,
+            "notes": str(payload.get("notes") or "").strip(),
+        }
+        added = self._append_profit_records([record])
+        if not added:
+            return {"ok": False, "error": "That expense already exists in the profit ledger."}
+        self.events.put(("profit_refresh", f"Added {expense_type} expense for {person}: {format_money(amount)}."))
+        return {"ok": True, "record": self._normalize_profit_record(record), "people": self._known_people()}
+
+    def mobile_payouts(self, payload: dict) -> dict:
+        needle = str(payload.get("person") or "").strip().lower()
+        balances: dict[str, dict[str, float | int]] = {}
+        details: list[dict[str, object]] = []
+        for item in self._payout_sheet_items():
+            person = str(item.get("person") or "Unassigned")
+            if needle and needle not in person.lower():
+                continue
+            if not item.get("paid"):
+                balance = balances.setdefault(person, {"sheets": 0, "cards": 0, "balance": 0.0})
+                balance["sheets"] = int(balance["sheets"]) + 1
+                balance["cards"] = int(balance["cards"]) + int(item.get("row_count") or 0)
+                balance["balance"] = float(balance["balance"]) + float(item.get("payout_balance") or 0.0)
+            details.append(
+                {
+                    "name": item.get("name") or "",
+                    "stage": item.get("stage") or "",
+                    "person": person,
+                    "row_count": int(item.get("row_count") or 0),
+                    "received_count": int(item.get("received_count") or 0),
+                    "payout_balance": round(float(item.get("payout_balance") or 0.0), 2),
+                    "payout_balance_display": format_money(float(item.get("payout_balance") or 0.0)),
+                    "status": item.get("status") or "",
+                    "paid": bool(item.get("paid")),
+                }
+            )
+        summary = [
+            {
+                "person": person,
+                "sheets": int(values["sheets"]),
+                "cards": int(values["cards"]),
+                "balance": round(float(values["balance"]), 2),
+                "balance_display": format_money(float(values["balance"])),
+            }
+            for person, values in sorted(balances.items(), key=lambda pair: (-float(pair[1]["balance"]), pair[0].lower()))
+        ]
+        total_balance = sum(item["balance"] for item in summary)
+        return {
+            "ok": True,
+            "people": self._known_people(),
+            "summary": summary,
+            "details": details,
+            "totals": {
+                "balance": round(total_balance, 2),
+                "balance_display": format_money(total_balance),
+                "sheets": sum(int(item["sheets"]) for item in summary),
+                "cards": sum(int(item["cards"]) for item in summary),
+            },
+        }
 
     def _mobile_image_parts(self, image: str) -> tuple[str, str, bytes]:
         match = re.match(r"^data:([^;]+);base64,(.*)$", image, re.S)
@@ -2483,7 +2682,7 @@ class CardPipelineApp(tk.Tk):
             result.append(group)
         return sorted(result, key=lambda item: (str(item.get("last_sale") or ""), str(item.get("person") or ""), str(item.get("sheet") or "")), reverse=True)
 
-    def record_profit_sales(self, records: list[dict[str, object]]) -> int:
+    def _append_profit_records(self, records: list[dict[str, object]]) -> int:
         if not records:
             return 0
         with shared_lock(CARD_PIPELINE_DIR, "profit-ledger", self.lucas_identity):
@@ -2502,6 +2701,10 @@ class CardPipelineApp(tk.Tk):
                 added += 1
             if added:
                 self._save_profit_ledger(ledger)
+        return added
+
+    def record_profit_sales(self, records: list[dict[str, object]]) -> int:
+        added = CardPipelineApp._append_profit_records(self, records)
         self.refresh_profit_tab()
         return added
 
@@ -6742,6 +6945,10 @@ class CardPipelineApp(tk.Tk):
                         self._handle_assignment_recommendation_error(payload)
                     elif kind == "inventory_refresh":
                         self.refresh_inventory_tab(enrich=True)
+                        self.status_var.set(str(payload))
+                    elif kind == "profit_refresh":
+                        self.refresh_profit_tab()
+                        self.refresh_payouts_tab()
                         self.status_var.set(str(payload))
         except queue.Empty:
             pass
