@@ -728,6 +728,7 @@ def clean_comp_title(value) -> str:
 
 def compact_comp_title(value) -> str:
     text = clean_comp_title(value).lower()
+    text = re.sub(r"\$\s*[\d,]+(?:\.\d{1,2})?", " ", text)
     text = re.sub(r"\b(psa|bgs|sgc|cgc|gem|mint|mt|pop|rookie|rc)\b", " ", text)
     text = re.sub(r"[^a-z0-9]+", "", text)
     return text
@@ -750,11 +751,25 @@ def comp_quality(comp: dict) -> int:
         score += 20
     if re.search(r"#\s*[A-Za-z0-9-]+|\b[A-Za-z]{1,5}\d{1,4}\b", title):
         score += 10
-    if re.search(r"\$\s*[\d,]+(?:\.\d{1,2})?", title):
+    if comp_price_conflicts_with_title(comp):
+        score -= 120
+    elif re.search(r"\$\s*[\d,]+(?:\.\d{1,2})?", title):
         score -= 40
     if is_junk_comp_title(title):
         score -= 200
     return score
+
+
+def comp_price_conflicts_with_title(comp: dict) -> bool:
+    price = parse_value(comp.get("price"))
+    if price is None:
+        return False
+    title_values = [
+        parse_value(match.group(0))
+        for match in re.finditer(r"\$\s*[\d,]+(?:\.\d{1,2})?", clean_comp_title(comp.get("title")))
+    ]
+    title_values = [value for value in title_values if value is not None]
+    return bool(title_values and all(abs(value - price) > 0.01 for value in title_values))
 
 
 def comp_price(comps: list[dict], strategy: str) -> float | None:
