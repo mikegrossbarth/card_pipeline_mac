@@ -373,6 +373,62 @@ class GoogleSheetCacheTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.ASSIGNMENT_CONFIG_PATH = old_config
 
+    def test_startup_google_sheet_cache_materializes_url_sources(self) -> None:
+        class Dummy:
+            _saved_google_sheet_sources = app.CardPipelineApp._saved_google_sheet_sources
+            _google_sheet_cache_source = app.CardPipelineApp._google_sheet_cache_source
+            _refresh_startup_google_sheet_caches = app.CardPipelineApp._refresh_startup_google_sheet_caches
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_config = app.ASSIGNMENT_CONFIG_PATH
+            app.CARD_PIPELINE_DIR = tmp_path / "CARD_PIPELINE"
+            app.ASSIGNMENT_CONFIG_PATH = tmp_path / "assignment_companies.json"
+            app.ASSIGNMENT_CONFIG_PATH.write_text(
+                json.dumps(
+                    {
+                        "companies": [
+                            {
+                                "name": "Rules URL",
+                                "rules": "https://docs.google.com/spreadsheets/d/raw-url/edit",
+                            },
+                            {
+                                "name": "Payout URL",
+                                "payout": {
+                                    "kind": "google_sheet",
+                                    "url": "https://docs.google.com/spreadsheets/d/dict-url/edit",
+                                    "name": "Payout URL",
+                                },
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            calls: list[tuple[str, Path, bool]] = []
+
+            def fake_export(url: str, output_path: Path, interactive: bool = False) -> Path:
+                calls.append((url, Path(output_path), interactive))
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(output_path).write_bytes(b"fake")
+                return Path(output_path)
+
+            dummy = Dummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            try:
+                with patch.object(app, "export_google_sheet_to_xlsx", side_effect=fake_export):
+                    result = dummy._refresh_startup_google_sheet_caches()
+                self.assertEqual(result["refreshed"], 2)
+                self.assertEqual({call[0] for call in calls}, {
+                    "https://docs.google.com/spreadsheets/d/raw-url/edit",
+                    "https://docs.google.com/spreadsheets/d/dict-url/edit",
+                })
+                self.assertTrue(all(call[1].parent.name == "SHEET EXPORTS" for call in calls))
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.ASSIGNMENT_CONFIG_PATH = old_config
+
     def test_google_keep_source_reads_cached_note_text(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

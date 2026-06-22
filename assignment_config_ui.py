@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import tkinter as tk
+import urllib.parse
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -814,6 +815,20 @@ class AssignmentRulesDialog(tk.Toplevel):
             else:
                 self.rule_materialized_source = source
             return source
+        if is_google_sheet_url(normalized):
+            source_name = google_sheet_display_name(normalized)
+            source = {
+                "kind": "google_sheet",
+                "url": normalized,
+                "path": str(self.rules_dir / "SHEET EXPORTS" / f"{safe_filename(source_name)}.xlsx"),
+                "name": source_name,
+                "refresh_on_load": True,
+            }
+            if is_payout:
+                self.payout_materialized_source = source
+            else:
+                self.rule_materialized_source = source
+            return source
         path = Path(normalized).expanduser()
         if path.suffix.lower() != ".gsheet":
             return normalized
@@ -974,6 +989,16 @@ def safe_stem(value: str) -> str:
 def keep_note_display_name(url: str) -> str:
     match = re.search(r"/notes/([^/?#]+)", str(url or ""))
     return f"Google Keep {match.group(1)}" if match else "Google Keep note"
+
+
+def is_google_sheet_url(value: object) -> bool:
+    parsed = urllib.parse.urlparse(str(value or "").strip())
+    return parsed.scheme in {"http", "https"} and parsed.netloc.lower().endswith("docs.google.com") and "/spreadsheets/" in parsed.path
+
+
+def google_sheet_display_name(url: str) -> str:
+    match = re.search(r"/spreadsheets/d/([^/?#]+)", str(url or ""))
+    return f"Google Sheet {match.group(1)}" if match else "Google Sheet"
 
 
 def title_case(value: str) -> str:

@@ -202,6 +202,11 @@ def app_debug_log(message: str) -> None:
         pass
 
 
+def is_google_sheet_url(value: object) -> bool:
+    parsed = urllib.parse.urlparse(str(value or "").strip())
+    return parsed.scheme in {"http", "https"} and parsed.netloc.lower().endswith("docs.google.com") and "/spreadsheets/" in parsed.path
+
+
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
     global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
@@ -3431,12 +3436,16 @@ class CardPipelineApp(tk.Tk):
         if isinstance(source, dict):
             url = str(source.get("url") or "").strip()
             path = source.get("path") or source.get("file")
-            if str(source.get("kind") or "").strip() == "google_sheet" and url and path:
-                return {"url": url, "path": str(path), "name": str(source.get("name") or Path(str(path)).stem or "google-sheet")}
+            if str(source.get("kind") or "").strip() == "google_sheet" and url:
+                name = str(source.get("name") or (Path(str(path)).stem if path else "") or "Google Sheet")
+                cache_path = Path(str(path)) if path else output_dir / f"{safe_filename(name)}.xlsx"
+                return {"url": url, "path": str(cache_path), "name": name}
             return None
         raw = normalize_source_value(source)
         if not raw:
             return None
+        if is_google_sheet_url(raw):
+            return {"url": raw, "path": str(output_dir / "Google Sheet.xlsx"), "name": "Google Sheet"}
         path = Path(raw).expanduser()
         if not path.is_absolute():
             path = ASSIGNMENT_CONFIG_PATH.parent / path
