@@ -1691,6 +1691,95 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.clipboard, "2026-06-18\tKevin Hambone\tBasketball\t12345678\tPSA\tTest Card")
         self.assertEqual(dummy.status_var.value, "Copied inventory row.")
 
+    def test_inventory_table_shows_source_values_separately(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        class FakeTree:
+            def __init__(self):
+                self.rows = []
+
+            def get_children(self):
+                return []
+
+            def delete(self, *_args):
+                return None
+
+            def insert(self, *_args, **kwargs):
+                self.rows.append(kwargs["values"])
+                return "row-1"
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+            refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
+
+            def __init__(self):
+                self.inventory_person_var = FieldVar("")
+                self.inventory_sport_var = FieldVar("")
+                self.inventory_search_var = FieldVar("")
+                self.inventory_min_var = FieldVar("")
+                self.inventory_max_var = FieldVar("")
+                self.inventory_tree = FakeTree()
+                self.inventory_metric_var = FieldVar("")
+                self.inventory_status_var = FieldVar("")
+
+            def _load_inventory_ledger(self):
+                return [
+                    self._normalize_inventory_record(
+                        {
+                            "date_added": "2026-06-18",
+                            "assigned_person": "Kevin Hambone",
+                            "sport": "football",
+                            "cert_number": "141119049",
+                            "grader": "PSA",
+                            "card_title": "2025 Panini Mosaic Elevate Travis Hunter PSA 10",
+                            "purchase_price": 40,
+                            "inventory_value": 41,
+                            "card_ladder_value": 41,
+                            "card_ladder_comps_average": 38.87,
+                            "cy_value": "",
+                            "cy_confidence": "",
+                            "best_company": "FANATICS",
+                            "estimated_payout": 38.95,
+                            "source_sheet": "SCOTSBORO_HAMBONE_6_16_26.xlsx",
+                            "status": "Active",
+                        }
+                    )
+                ]
+
+            def _save_inventory_ledger(self, _rows):
+                raise AssertionError("active-only refresh should not rewrite this fixture")
+
+            def _refresh_person_combo_values(self):
+                return None
+
+        self.assertNotIn("value", app.INVENTORY_TABLE_COLUMNS)
+        self.assertIn("card_ladder", app.INVENTORY_TABLE_COLUMNS)
+        self.assertIn("comps", app.INVENTORY_TABLE_COLUMNS)
+        self.assertIn("cy_estimate", app.INVENTORY_TABLE_COLUMNS)
+        self.assertIn("cy_confidence", app.INVENTORY_TABLE_COLUMNS)
+
+        dummy = InventoryDummy()
+        dummy.refresh_inventory_tab()
+
+        row = dummy.inventory_tree.rows[0]
+        self.assertEqual(row[7], "$41.00")
+        self.assertEqual(row[8], "$38.87")
+        self.assertEqual(row[9], "")
+        self.assertEqual(row[11], "FANATICS")
+        self.assertEqual(row[12], "$38.95")
+        self.assertIn("Source Value: $41.00", dummy.inventory_metric_var.value)
+
     def test_filtered_inventory_refresh_only_enriches_visible_rows(self) -> None:
         class FieldVar:
             def __init__(self, value=""):
