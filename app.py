@@ -1137,8 +1137,9 @@ class CardPipelineApp(tk.Tk):
         ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
         action_row = ttk.Frame(controls, style="Panel.TFrame")
         action_row.grid(row=2, column=0, columnspan=11, sticky="w", pady=(10, 0))
-        ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(enrich=True, filtered_only=True), style="Soft.TButton").pack(side=tk.LEFT)
-        ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Refresh", command=self.refresh_inventory_tab, style="Soft.TButton").pack(side=tk.LEFT)
+        ttk.Button(action_row, text="Update Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Export", command=self.export_inventory, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Reconcile Received", command=self.reconcile_received_inventory, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var):
@@ -2413,6 +2414,11 @@ class CardPipelineApp(tk.Tk):
             self.inventory_tree_records[iid] = record
         self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Purchase Total: {format_money(total_purchase)}   Source Value: {format_money(total_value)}")
         self.inventory_status_var.set(f"Loaded {len(self.filtered_inventory_rows)}/{len(self.inventory_rows)} inventory card(s) from {INVENTORY_LEDGER_PATH.name}.")
+
+    def update_inventory_payouts(self) -> None:
+        self.refresh_inventory_tab(enrich=True, filtered_only=True)
+        visible_count = len(getattr(self, "filtered_inventory_rows", []))
+        self.inventory_status_var.set(f"Updated estimated payouts for {visible_count} visible inventory card(s).")
 
     def delete_selected_inventory_records(self) -> None:
         if not hasattr(self, "inventory_tree"):

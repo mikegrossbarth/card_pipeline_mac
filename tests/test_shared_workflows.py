@@ -1815,6 +1815,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
             refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
+            update_inventory_payouts = app.CardPipelineApp.update_inventory_payouts
             _refresh_person_combo_values = lambda self: None
 
         with TemporaryDirectory() as tmp:
@@ -1836,7 +1837,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                     dummy._normalize_inventory_record({"assigned_person": "Lucas", "cert_number": "2", "source_sheet": "B.xlsx", "card_title": "Lucas Card", "best_company": "Old", "estimated_payout": 1}),
                 ])
 
-                dummy.refresh_inventory_tab(enrich=True, filtered_only=True)
+                dummy.update_inventory_payouts()
 
                 ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
                 by_person = {record["assigned_person"]: record for record in ledger}
@@ -1844,6 +1845,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(by_person["Kevin Hambone"]["estimated_payout"], 88)
                 self.assertEqual(by_person["Lucas"]["best_company"], "Old")
                 self.assertEqual(by_person["Lucas"]["estimated_payout"], 1)
+                self.assertEqual(dummy.inventory_status_var.value, "Updated estimated payouts for 1 visible inventory card(s).")
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
