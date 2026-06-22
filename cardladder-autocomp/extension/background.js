@@ -7,11 +7,14 @@ const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
 const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-no-blind-grader-option-v22";
+const KEEP_SYNC_TAB_CLOSE_MS = 12000;
+const KEEP_SYNC_RETRY_MS = 60000;
 
 let runInProgress = false;
 let activeWindowId = null;
 let activeBridgeUrl = BRIDGE_URLS[0];
 let cancelRequested = false;
+const keepSyncAttempts = new Map();
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(BRIDGE_ALARM_NAME, { periodInMinutes: 0.05 });
@@ -112,6 +115,7 @@ async function pollDesktopBridge() {
       const command = response?.command;
       if (!response) continue;
       activeBridgeUrl = bridgeUrl;
+      maybeSyncKeepSources(bridgeUrl, response).catch(() => {});
       if (!command || command.type !== "RUN_ALL_COMPS") continue;
       await fetch(`${bridgeUrl}/ack`, {
         method: "POST",
@@ -123,6 +127,37 @@ async function pollDesktopBridge() {
     }
   } catch (_error) {
     return;
+  }
+}
+
+async function maybeSyncKeepSources(bridgeUrl, response) {
+  const sources = Array.isArray(response?.keepNoteSources) ? response.keepNoteSources : [];
+  if (!sources.length) return;
+  const instanceId = response.instanceId || "bridge";
+  for (const source of sources) {
+    const url = String(source?.url || "").trim();
+    if (!url || !/^https:\/\/keep\.google\.com\//i.test(url)) continue;
+    const key = `${instanceId}:${url}`;
+    const attempt = keepSyncAttempts.get(key) || {};
+    const now = Date.now();
+    if (attempt.inFlight || (attempt.lastAttempt && now - attempt.lastAttempt < KEEP_SYNC_RETRY_MS)) continue;
+    keepSyncAttempts.set(key, { inFlight: true, lastAttempt: now });
+    syncKeepSourceInBackground(url, bridgeUrl, key).catch(() => {}).finally(() => {
+      const latest = keepSyncAttempts.get(key) || {};
+      keepSyncAttempts.set(key, { ...latest, inFlight: false });
+    });
+  }
+}
+
+async function syncKeepSourceInBackground(url, bridgeUrl, key) {
+  const before = await fetch(`${bridgeUrl}/status`).then((r) => r.json()).catch(() => null);
+  const tab = await chrome.tabs.create({ url, active: false });
+  await delay(KEEP_SYNC_TAB_CLOSE_MS);
+  const after = await fetch(`${bridgeUrl}/status`).then((r) => r.json()).catch(() => null);
+  const saved = Number(after?.lastKeepSync?.saved || 0);
+  await chrome.tabs.remove(tab.id).catch(() => {});
+  if (saved > 0 && after?.lastKeepSync?.syncedAt !== before?.lastKeepSync?.syncedAt) {
+    keepSyncAttempts.set(key, { inFlight: false, lastAttempt: Date.now() + 24 * 60 * 60 * 1000 });
   }
 }
 

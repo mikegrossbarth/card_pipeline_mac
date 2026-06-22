@@ -278,7 +278,12 @@ class BridgeState:
                     f"name={self.extension_name or 'unknown'}"
                 )
             command = self.command if extension_version == EXPECTED_CARDLADDER_EXTENSION_VERSION else None
-            return {"instanceId": self.instance_id, "command": command}
+            return {
+                "instanceId": self.instance_id,
+                "command": command,
+                "keepNoteSources": list(self.keep_note_sources),
+                "lastKeepSync": dict(self.last_keep_sync),
+            }
 
     def acknowledge_command(self, command_id: int) -> None:
         with self.lock:

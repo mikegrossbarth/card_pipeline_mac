@@ -454,6 +454,23 @@ class GoogleSheetCacheTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(cache_path.read_text(encoding="utf-8").strip(), "Football $20-$200 95%")
 
+    def test_bridge_poll_advertises_google_keep_sources(self) -> None:
+        bridge = app.BridgeState()
+        bridge.register_keep_note_sources(
+            [
+                {
+                    "url": "https://keep.google.com/u/0/#NOTE/abc123",
+                    "path": "rules.txt",
+                    "name": "Rules",
+                }
+            ]
+        )
+
+        result = bridge.extension_poll({"extensionVersion": app.EXPECTED_CARDLADDER_EXTENSION_VERSION})
+
+        self.assertEqual(result["keepNoteSources"][0]["url"], "https://keep.google.com/u/0/#NOTE/abc123")
+        self.assertEqual(result["keepNoteSources"][0]["path"], "rules.txt")
+
     def test_google_keep_hash_note_url_matches_notes_url(self) -> None:
         self.assertTrue(
             bridge_server.keep_urls_match(
