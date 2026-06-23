@@ -360,13 +360,17 @@ class BridgeState:
             self.cy_lookup_inflight.discard(excel_row)
             row = next((candidate for candidate in self.rows if candidate.excel_row == excel_row), None)
             if row is not None and str(row.cert_number or "").strip() == cert_number:
+                existing_status = str(row.status or "").strip()
+                is_cy_only_status = existing_status in {"CY queued", "CY unavailable", "CY OK"}
                 if value is not None:
                     row.cy_value = value
-                    row.status = "CY OK"
+                    if is_cy_only_status:
+                        row.status = "CY OK"
                     row.notes = append_note(row.notes, f"CY value: ${value:,.2f}")
                     debug_log(f"cy_lookup_ok row={excel_row} cert={cert_number} value={value}")
                 elif message:
-                    row.status = "CY unavailable"
+                    if is_cy_only_status:
+                        row.status = "CY unavailable"
                     row.notes = append_note(row.notes, f"CY lookup: {message}")
                     debug_log(f"cy_lookup_unavailable row={excel_row} cert={cert_number} message={message}")
             should_close = self.cy_batch_running and not self.cy_lookup_inflight and not self.cy_lookup_pending and not self.cardladder_running

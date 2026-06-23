@@ -278,7 +278,39 @@ class CYLookupTests(unittest.TestCase):
 
         self.assertEqual(row.card_ladder_value, 100)
         self.assertEqual(row.cy_value, 87.5)
+        self.assertEqual(row.status, "Card Ladder OK")
         self.assertIn("CY value: $87.50", row.notes)
+
+    def test_cardladder_status_survives_cy_unavailable(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="11111111",
+            grader="PSA",
+            card_title="Card One PSA 10",
+        )
+        state.set_rows([row])
+
+        with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
+                patch.object(bridge_server, "lookup_cy_buy_price", return_value=(None, "not found")):
+            state.post_cardladder_result(
+                {
+                    "excelRow": 2,
+                    "certNumber": "11111111",
+                    "value": "$100",
+                    "status": "ok",
+                    "ocr": {"comps": [{"price": "$90", "date_sold": "2026-06-01"}]},
+                }
+            )
+
+            deadline = time.time() + 2
+            while "CY lookup:" not in row.notes and time.time() < deadline:
+                time.sleep(0.01)
+
+        self.assertEqual(row.card_ladder_value, 100)
+        self.assertIsNone(row.cy_value)
+        self.assertEqual(row.status, "Card Ladder OK")
+        self.assertIn("CY lookup: not found", row.notes)
 
     def test_cy_lookup_waits_until_cardladder_finishes(self) -> None:
         state = bridge_server.BridgeState()
@@ -329,7 +361,27 @@ class CYLookupTests(unittest.TestCase):
                 time.sleep(0.01)
 
         self.assertEqual([row.cy_value for row in rows], [87.5])
+        self.assertEqual(rows[0].status, "CY OK")
         close_cy.assert_called_once()
+
+    def test_cy_only_unavailable_sets_cy_unavailable_status(self) -> None:
+        state = bridge_server.BridgeState()
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="11111111", grader="PSA", card_title="Card One PSA 10"),
+        ]
+        state.set_rows(rows)
+
+        with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
+                patch.object(bridge_server, "lookup_cy_buy_price", return_value=(None, "not found")), \
+                patch.object(bridge_server, "close_cy_adapter"):
+            state.start_cy_lookups(rows)
+            deadline = time.time() + 2
+            while rows[0].status == "CY queued" and time.time() < deadline:
+                time.sleep(0.01)
+
+        self.assertIsNone(rows[0].cy_value)
+        self.assertEqual(rows[0].status, "CY unavailable")
+        self.assertIn("CY lookup: not found", rows[0].notes)
 
     def test_cy_lookup_is_disabled_off_mac(self) -> None:
         self.assertFalse(bridge_server.cy_lookup_enabled("win32"))
