@@ -7,6 +7,7 @@ import threading
 import time
 import types
 import unittest
+import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -446,6 +447,40 @@ class GoogleSheetCacheTests(unittest.TestCase):
                 self.assertEqual(workbook["Payouts"].cell(2, 2).value, "90%")
             finally:
                 workbook.close()
+
+    def test_oauth_callback_ignores_unrelated_browser_requests(self) -> None:
+        server = google_sheets_import.OAuthCallbackServer(("127.0.0.1", 0), google_sheets_import.OAuthCallbackHandler)
+        server.timeout = 1
+        server.expected_state = "state-123"
+        base_url = f"http://127.0.0.1:{server.server_port}"
+
+        def serve_once() -> None:
+            server.handle_request()
+
+        try:
+            thread = threading.Thread(target=serve_once)
+            thread.start()
+            with urllib.request.urlopen(f"{base_url}/favicon.ico", timeout=5) as response:
+                self.assertEqual(response.status, 204)
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+            self.assertFalse(server.done)
+            self.assertEqual(server.code, "")
+            self.assertEqual(server.error, "")
+
+            thread = threading.Thread(target=serve_once)
+            thread.start()
+            with urllib.request.urlopen(f"{base_url}/oauth2callback?state=state-123&code=abc123", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                body = response.read().decode("utf-8")
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+            self.assertTrue(server.done)
+            self.assertEqual(server.code, "abc123")
+            self.assertEqual(server.error, "")
+            self.assertIn("Google Sheets connected", body)
+        finally:
+            server.server_close()
 
     def test_startup_google_sheet_cache_refresh_discovers_and_exports_sources(self) -> None:
         class Dummy:

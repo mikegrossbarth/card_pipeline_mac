@@ -232,7 +232,7 @@ def refresh_token_if_needed(token: dict[str, Any], client_id: str, client_secret
 def run_desktop_oauth(client_id: str, client_secret: str) -> dict[str, Any]:
     state = secrets.token_urlsafe(24)
     server = OAuthCallbackServer(("127.0.0.1", 0), OAuthCallbackHandler)
-    server.timeout = 120
+    server.timeout = 1
     server.expected_state = state
     redirect_uri = f"http://127.0.0.1:{server.server_port}/oauth2callback"
     params = {
@@ -246,13 +246,17 @@ def run_desktop_oauth(client_id: str, client_secret: str) -> dict[str, Any]:
     }
     webbrowser.open(f"{AUTH_URL}?{urllib.parse.urlencode(params)}")
     try:
-        server.handle_request()
+        deadline = time.time() + 180
+        while not server.done and time.time() < deadline:
+            server.handle_request()
     finally:
         server.server_close()
     if server.error:
         raise GoogleSheetsAuthError(server.error)
     if not server.code:
-        raise GoogleSheetsAuthError("Google Sheets OAuth did not return an authorization code.")
+        raise GoogleSheetsAuthError(
+            "Google Sheets OAuth timed out before approval finished. Try Connect Google again and complete the Allow screen in the browser."
+        )
 
     payload = {
         "client_id": client_id,
@@ -273,22 +277,37 @@ class OAuthCallbackServer(ThreadingHTTPServer):
     expected_state: str = ""
     code: str = ""
     error: str = ""
+    done: bool = False
 
 
 class OAuthCallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != "/oauth2callback":
+            self.send_response(204)
+            self.end_headers()
+            return
+        query = urllib.parse.parse_qs(parsed.query)
         state = query.get("state", [""])[0]
         if state != self.server.expected_state:
             self.server.error = "Google Sheets OAuth state did not match. Try connecting again."
+            self.server.done = True
             self.send_oauth_response(False)
             return
         oauth_error = query.get("error", [""])[0]
         if oauth_error:
-            self.server.error = f"Google Sheets OAuth failed: {oauth_error}"
+            description = query.get("error_description", [""])[0]
+            detail = f": {urllib.parse.unquote_plus(description)}" if description else ""
+            self.server.error = f"Google Sheets OAuth failed: {oauth_error}{detail}"
+            self.server.done = True
             self.send_oauth_response(False)
             return
         self.server.code = query.get("code", [""])[0]
+        if not self.server.code:
+            self.server.error = (
+                "Google Sheets OAuth finished without an authorization code. Try Connect Google again, choose the Google account that can open the sheet, and click Allow."
+            )
+        self.server.done = True
         self.send_oauth_response(bool(self.server.code))
 
     def send_oauth_response(self, success: bool) -> None:
