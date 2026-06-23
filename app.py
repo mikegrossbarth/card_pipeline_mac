@@ -582,6 +582,8 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_kind = tk.StringVar(value="Incoming")
         self.home_sheet_paths: dict[str, dict[str, Path]] = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries: dict[str, dict[str, object]] = {}
+        self.home_summary_cache: dict[str, dict[str, object]] = {}
+        self.home_summary_cache_lock = threading.Lock()
         self.home_sheet_markers: dict[str, dict[str, object]] = self._load_sheet_markers()
         self.deleted_sheet_marker_keys: set[str] = set()
         self.home_selected_sheet_key = ""
@@ -1248,8 +1250,9 @@ class CardPipelineApp(tk.Tk):
         self.profit_graph_combo.grid(row=0, column=6, sticky="w")
         self.profit_graph_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
         ttk.Button(controls, text="Refresh", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(10, 0))
-        ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=8, sticky="w", padx=(8, 0))
-        controls.columnconfigure(9, weight=1)
+        ttk.Button(controls, text="Deep Sync", command=lambda: self.refresh_profit_tab(deep_sync=True), style="Soft.TButton").grid(row=0, column=8, sticky="w", padx=(8, 0))
+        ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=9, sticky="w", padx=(8, 0))
+        controls.columnconfigure(10, weight=1)
         self.profit_search_var.trace_add("write", lambda *_args: self.refresh_profit_tab())
         ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=10, sticky="w", pady=(10, 0))
         ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=10, sticky="w", pady=(6, 0))
@@ -3865,7 +3868,7 @@ class CardPipelineApp(tk.Tk):
             return
         menu.tk_popup(event.x_root, event.y_root)
 
-    def refresh_profit_tab(self) -> None:
+    def refresh_profit_tab(self, deep_sync: bool = False) -> None:
         perf_start = time.perf_counter()
         ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
         pruned_manual = len([record for record in ledger if self._is_manual_company_profit_backfill(record)])
@@ -3878,17 +3881,18 @@ class CardPipelineApp(tk.Tk):
                     self._save_profit_ledger(kept)
         existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
         backfilled = 0
-        company_backfill_start = time.perf_counter()
-        company_profit_records = read_company_profit_records(COMPANY_SHEETS_DIR)
-        record_performance_event("profit.company_sheet_scan", company_backfill_start, f"records={len(company_profit_records)}")
-        for record in company_profit_records:
-            normalized = self._normalize_profit_record(record)
-            key = str(normalized.get("ledger_key") or "")
-            if not key or key in existing_keys:
-                continue
-            ledger.append(normalized)
-            existing_keys.add(key)
-            backfilled += 1
+        if deep_sync:
+            company_backfill_start = time.perf_counter()
+            company_profit_records = read_company_profit_records(COMPANY_SHEETS_DIR)
+            record_performance_event("profit.company_sheet_scan", company_backfill_start, f"records={len(company_profit_records)}")
+            for record in company_profit_records:
+                normalized = self._normalize_profit_record(record)
+                key = str(normalized.get("ledger_key") or "")
+                if not key or key in existing_keys:
+                    continue
+                ledger.append(normalized)
+                existing_keys.add(key)
+                backfilled += 1
         if backfilled:
             with shared_lock(CARD_PIPELINE_DIR, "profit-ledger", self.lucas_identity):
                 current = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
@@ -4019,13 +4023,14 @@ class CardPipelineApp(tk.Tk):
         search_suffix = f" | Search: {search_label}" if search_label else ""
         period_suffix = f" | Period: {self._profit_period_label()}"
         backfill_suffix = f" | backfilled {backfilled} from company sheets" if backfilled else ""
+        sync_suffix = " | deep sync checked company sheets" if deep_sync and not backfilled else ""
         cleanup_suffix = f" | removed {pruned_manual} manual row(s)" if pruned_manual else ""
-        self.profit_status_var.set(f"Loaded {display_count}/{len(self.profit_rows)} profit row(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{search_suffix}{period_suffix}{suffix}{backfill_suffix}{cleanup_suffix}.")
+        self.profit_status_var.set(f"Loaded {display_count}/{len(self.profit_rows)} profit row(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{search_suffix}{period_suffix}{suffix}{backfill_suffix}{sync_suffix}{cleanup_suffix}.")
         self._draw_profit_chart()
         record_performance_event(
             "profit.refresh",
             perf_start,
-            f"rows={len(self.profit_rows)} filtered={len(self.filtered_profit_rows)} mode={mode} backfilled={backfilled} pruned_manual={pruned_manual}",
+            f"rows={len(self.profit_rows)} filtered={len(self.filtered_profit_rows)} mode={mode} deep_sync={deep_sync} backfilled={backfilled} pruned_manual={pruned_manual}",
         )
 
     def _profit_month_key(self, value: object) -> str:
@@ -4190,6 +4195,7 @@ class CardPipelineApp(tk.Tk):
         perf_start = time.perf_counter()
         self.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries = {}
+        live_summary_paths: list[Path] = []
         errors: list[str] = []
         conflict_files = self._shared_conflict_files()
         if conflict_files:
@@ -4202,14 +4208,16 @@ class CardPipelineApp(tk.Tk):
                 errors.append(f"{kind}: {error}")
                 continue
             self.home_sheet_paths[kind] = {path.name: path for path in paths}
+            live_summary_paths.extend(paths)
             for path in paths:
                 key = self._home_sheet_key(kind, path.name)
                 try:
-                    summary = summarize_workbook(path)
+                    summary = self._summarize_home_workbook_cached(path)
                 except Exception as error:
                     errors.append(f"{path.name}: {error}")
                     summary = {"name": path.name, "row_count": 0, "received_count": 0, "purchase_total": 0.0, "all_received": False, "partially_received": False}
                 self.home_sheet_summaries[key] = summary
+        self._prune_home_summary_cache(live_summary_paths)
         self._refresh_home_sheet_list()
         self._refresh_home_metrics()
         self.refresh_payouts_tab()
@@ -4224,6 +4232,28 @@ class CardPipelineApp(tk.Tk):
             perf_start,
             f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived=0 errors={len(errors)}",
         )
+
+    def _home_summary_cache_key(self, path: Path) -> str:
+        return os.path.normcase(str(path.resolve()))
+
+    def _summarize_home_workbook_cached(self, path: Path) -> dict[str, object]:
+        stat = path.stat()
+        key = self._home_summary_cache_key(path)
+        with self.home_summary_cache_lock:
+            cached = self.home_summary_cache.get(key)
+            if cached and cached.get("mtime_ns") == stat.st_mtime_ns and cached.get("size") == stat.st_size:
+                return dict(cached.get("summary") or {})
+        summary = summarize_workbook(path)
+        with self.home_summary_cache_lock:
+            self.home_summary_cache[key] = {"mtime_ns": stat.st_mtime_ns, "size": stat.st_size, "summary": dict(summary)}
+        return summary
+
+    def _prune_home_summary_cache(self, live_paths: list[Path]) -> None:
+        live_keys = {self._home_summary_cache_key(path) for path in live_paths}
+        with self.home_summary_cache_lock:
+            for key in list(self.home_summary_cache):
+                if key not in live_keys:
+                    self.home_summary_cache.pop(key, None)
 
     def _shared_conflict_files(self) -> list[Path]:
         if not CARD_PIPELINE_DIR.exists():
@@ -4454,15 +4484,18 @@ class CardPipelineApp(tk.Tk):
         record_performance_event("startup.incoming_index", incoming_index_start, f"sheets={len(incoming_paths)} certs={len(index)}")
 
         summaries_start = time.perf_counter()
+        live_summary_paths: list[Path] = []
         for kind, paths in (("Incoming", incoming_paths), ("Working", working_paths), ("Received", received_paths)):
+            live_summary_paths.extend(paths)
             for path in paths:
                 key = self._home_sheet_key(kind, path.name)
                 try:
-                    summary = summarize_workbook(path)
+                    summary = self._summarize_home_workbook_cached(path)
                 except Exception as error:
                     errors.append(f"{path.name}: {error}")
                     summary = {"name": path.name, "row_count": 0, "received_count": 0, "purchase_total": 0.0, "all_received": False, "partially_received": False}
                 payload["home_summaries"][key] = summary
+        self._prune_home_summary_cache(live_summary_paths)
         record_performance_event("startup.home_summaries", summaries_start, f"summaries={len(payload['home_summaries'])}")
 
         payload["perf_elapsed"] = time.perf_counter() - perf_start

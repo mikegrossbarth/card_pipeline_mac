@@ -1725,6 +1725,90 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
 
+    def test_profit_refresh_skips_company_scan_until_deep_sync(self) -> None:
+        class ProfitRefreshDummy:
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _is_manual_company_profit_backfill = app.CardPipelineApp._is_manual_company_profit_backfill
+            _money_value = app.CardPipelineApp._money_value
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
+            _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
+            _profit_today = lambda self: datetime(2026, 6, 20).date()
+            refresh_profit_tab = app.CardPipelineApp.refresh_profit_tab
+
+            def _person_for_profit_record(self, record):
+                return str(record.get("assigned_person") or "")
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_company = app.COMPANY_SHEETS_DIR
+            old_ledger = app.PROFIT_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = root
+            app.COMPANY_SHEETS_DIR = root / "COMPANY SHEETS"
+            app.PROFIT_LEDGER_PATH = root / "profit_ledger.json"
+            dummy = ProfitRefreshDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.profit_person_var = types.SimpleNamespace(get=lambda: "")
+            dummy.profit_search_var = types.SimpleNamespace(get=lambda: "")
+            dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Total")
+            company_record = {
+                "assigned_person": "Kevin Hambone",
+                "date_added": "2026-06-20",
+                "company": "Arena Club",
+                "weekly_sheet_name": "Arena Club.xlsx:Week of 2026-06-15",
+                "source_sheet": "Lot A.xlsx",
+                "cert_number": "123",
+                "card_title": "Test Card",
+                "purchase_price": 40,
+                "sale_price": 90,
+            }
+            try:
+                with patch("app.read_company_profit_records", side_effect=AssertionError("normal refresh scanned company sheets")):
+                    dummy.refresh_profit_tab()
+                self.assertEqual(dummy.profit_rows, [])
+                self.assertFalse(app.PROFIT_LEDGER_PATH.exists())
+
+                with patch("app.read_company_profit_records", return_value=[company_record]) as reader:
+                    dummy.refresh_profit_tab(deep_sync=True)
+                reader.assert_called_once_with(app.COMPANY_SHEETS_DIR)
+                ledger = json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8"))
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger[0]["cert_number"], "123")
+                self.assertEqual(ledger[0]["profit"], 50.0)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.COMPANY_SHEETS_DIR = old_company
+                app.PROFIT_LEDGER_PATH = old_ledger
+
+    def test_home_workbook_summary_cache_reuses_unchanged_files(self) -> None:
+        class HomeSummaryDummy:
+            _home_summary_cache_key = app.CardPipelineApp._home_summary_cache_key
+            _summarize_home_workbook_cached = app.CardPipelineApp._summarize_home_workbook_cached
+            _prune_home_summary_cache = app.CardPipelineApp._prune_home_summary_cache
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Lot A.xlsx"
+            path.write_text("first", encoding="utf-8")
+            dummy = HomeSummaryDummy()
+            dummy.home_summary_cache = {}
+            dummy.home_summary_cache_lock = threading.Lock()
+            with patch("app.summarize_workbook", side_effect=[{"name": "first"}, {"name": "second"}]) as summarizer:
+                self.assertEqual(dummy._summarize_home_workbook_cached(path), {"name": "first"})
+                self.assertEqual(dummy._summarize_home_workbook_cached(path), {"name": "first"})
+                self.assertEqual(summarizer.call_count, 1)
+
+                path.write_text("second and larger", encoding="utf-8")
+                self.assertEqual(dummy._summarize_home_workbook_cached(path), {"name": "second"})
+                self.assertEqual(summarizer.call_count, 2)
+
+                dummy._prune_home_summary_cache([])
+                self.assertEqual(dummy.home_summary_cache, {})
+
     def test_expense_records_deduct_from_person_profit(self) -> None:
         class ExpenseDummy:
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
