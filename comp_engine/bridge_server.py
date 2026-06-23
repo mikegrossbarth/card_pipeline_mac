@@ -38,6 +38,7 @@ COMP_STRATEGY_LABELS = {
 }
 _CY_ADAPTER: CYMacOSAdapter | None = None
 _CY_ADAPTER_LOCK = threading.Lock()
+_CY_LOOKUP_LOCK = threading.Lock()
 
 
 class BridgeState:
@@ -537,7 +538,12 @@ def lookup_cy_buy_price(cert_number: str, slab_type: str) -> tuple[float | None,
         return None, "missing cert number"
     if slab_type not in {"PSA", "BGS", "CGC", "SGC"}:
         return None, f"unsupported slab type {slab_type or 'unknown'}"
-    payload = get_cy_adapter().submit_cert_lookup(cert_number, slab_type)
+    # CourtYard is a single macOS GUI, so only one automation sequence can safely
+    # click/type/read at a time even when LUCAS has several CY worker threads.
+    with _CY_LOOKUP_LOCK:
+        debug_log(f"cy_lookup_gui_start cert={cert_number} slab={slab_type}")
+        payload = get_cy_adapter().submit_cert_lookup(cert_number, slab_type)
+        debug_log(f"cy_lookup_gui_done cert={cert_number} slab={slab_type}")
     value = parse_value(payload.get("cy_buy_price"))
     if value is not None:
         return value, str(payload.get("message") or "CY lookup OK")
