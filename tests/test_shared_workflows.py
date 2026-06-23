@@ -3126,6 +3126,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
+            _inventory_sale_expense_record = app.CardPipelineApp._inventory_sale_expense_record
             _general_sold_sheet_name = app.CardPipelineApp._general_sold_sheet_name
             mark_inventory_record_sold = app.CardPipelineApp.mark_inventory_record_sold
             record_profit_sales = app.CardPipelineApp.record_profit_sales
@@ -3156,15 +3157,25 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             )
             dummy._save_inventory_ledger([record])
             try:
-                self.assertTrue(dummy.mark_inventory_record_sold(record, "Arena Club", 95))
+                self.assertTrue(dummy.mark_inventory_record_sold(record, "Arena Club", 95, expense_type="Shipping", expense_amount=12.5, expense_notes="label"))
                 inventory = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
                 profit = json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8"))
                 self.assertEqual(inventory, [])
-                self.assertEqual(len(profit), 1)
-                self.assertEqual(profit[0]["company"], "Arena Club")
-                self.assertEqual(profit[0]["assigned_person"], "Hambone")
-                self.assertEqual(profit[0]["sale_price"], 95.0)
-                self.assertEqual(profit[0]["profit"], 55.0)
+                self.assertEqual(len(profit), 2)
+                sale_row = next(record for record in profit if record.get("record_type") != "expense")
+                expense_row = next(record for record in profit if record.get("record_type") == "expense")
+                self.assertEqual(sale_row["company"], "Arena Club")
+                self.assertEqual(sale_row["assigned_person"], "Hambone")
+                self.assertEqual(sale_row["sale_price"], 95.0)
+                self.assertEqual(sale_row["profit"], 55.0)
+                self.assertEqual(expense_row["company"], "Expense: Shipping")
+                self.assertEqual(expense_row["assigned_person"], "Hambone")
+                self.assertEqual(expense_row["related_type"], "Card")
+                self.assertEqual(expense_row["source_sheet"], "Lot.xlsx")
+                self.assertEqual(expense_row["cert_number"], "123")
+                self.assertEqual(expense_row["expense_amount"], 12.5)
+                self.assertEqual(expense_row["profit"], -12.5)
+                self.assertEqual(expense_row["notes"], "label")
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_profit

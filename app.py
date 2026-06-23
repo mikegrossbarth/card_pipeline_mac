@@ -2235,22 +2235,63 @@ class CardPipelineApp(tk.Tk):
             }
         )
 
-    def mark_inventory_record_sold(self, record: dict[str, object], company: str, sale_price: float, sale_date: str | None = None, sale_method: str = "") -> bool:
+    def _inventory_sale_expense_record(
+        self,
+        sale_record: dict[str, object],
+        expense_type: str,
+        expense_amount: float,
+        notes: str = "",
+    ) -> dict[str, object]:
+        expense_type = str(expense_type or "").strip()
+        if expense_type not in EXPENSE_CATEGORY_OPTIONS:
+            expense_type = "Fees"
+        return self._normalize_profit_record(
+            {
+                "record_type": "expense",
+                "expense_id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+                "date_added": str(sale_record.get("date_added") or datetime.now().strftime("%Y-%m-%d"))[:10],
+                "assigned_person": sale_record.get("assigned_person") or "Unassigned",
+                "expense_type": expense_type,
+                "expense_amount": expense_amount,
+                "related_type": "Card",
+                "source_sheet": sale_record.get("source_sheet") or "",
+                "cert_number": sale_record.get("cert_number") or "",
+                "notes": str(notes or "").strip(),
+            }
+        )
+
+    def mark_inventory_record_sold(
+        self,
+        record: dict[str, object],
+        company: str,
+        sale_price: float,
+        sale_date: str | None = None,
+        sale_method: str = "",
+        expense_type: str = "",
+        expense_amount: float | None = None,
+        expense_notes: str = "",
+    ) -> bool:
         normalized = self._normalize_inventory_record(record)
         if str(normalized.get("status") or "").lower() != "active":
             return False
         company = str(company or "").strip()
         sold_company = company or "General Sold"
         profit_record = self._inventory_sale_profit_record(normalized, company, sale_price, sale_date=sale_date, sale_method=sale_method)
-        added = self.record_profit_sales([profit_record])
+        profit_records = [profit_record]
+        if expense_amount is not None and expense_amount > 0:
+            profit_records.append(self._inventory_sale_expense_record(profit_record, expense_type, expense_amount, expense_notes))
+        added = self.record_profit_sales(profit_records)
         changed = self._mark_inventory_record_sold(str(normalized.get("inventory_key") or ""), sold_company, sale_price)
         return bool(added or changed)
 
-    def _inventory_sale_dialog(self, record: dict[str, object]) -> tuple[str, float] | None:
+    def _inventory_sale_dialog(self, record: dict[str, object]) -> dict[str, object] | None:
         normalized = self._normalize_inventory_record(record)
         default_sale = self._money_value(normalized.get("estimated_payout")) or self._money_value(normalized.get("inventory_value")) or 0.0
         company_var = tk.StringVar(value="")
         sale_var = tk.StringVar(value=f"{default_sale:.2f}" if default_sale else "")
+        expense_type_var = tk.StringVar(value="Shipping")
+        expense_amount_var = tk.StringVar()
+        expense_notes_var = tk.StringVar()
         result: dict[str, object] = {}
 
         popup = tk.Toplevel(self)
@@ -2266,11 +2307,18 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(frame, text=str(normalized.get("card_title") or normalized.get("cert_number") or "Inventory card"), style="Muted.TLabel", wraplength=420).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
         ttk.Label(frame, text="Company / buyer", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         ttk.Entry(frame, textvariable=company_var, width=34).grid(row=2, column=1, sticky="ew", pady=(0, 10))
-        ttk.Label(frame, text="Sale price", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=(0, 14))
+        ttk.Label(frame, text="Sale price", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         sale_entry = ttk.Entry(frame, textvariable=sale_var, width=34)
-        sale_entry.grid(row=3, column=1, sticky="ew", pady=(0, 14))
+        sale_entry.grid(row=3, column=1, sticky="ew", pady=(0, 10))
+        ttk.Label(frame, text="Expense Type", style="Panel.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
+        ttk.Combobox(frame, textvariable=expense_type_var, values=EXPENSE_CATEGORY_OPTIONS, width=18, state="readonly").grid(row=4, column=1, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="Expense Amount", style="Panel.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
+        expense_entry = ttk.Entry(frame, textvariable=expense_amount_var, width=18)
+        expense_entry.grid(row=5, column=1, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="Expense Notes", style="Panel.TLabel").grid(row=6, column=0, sticky="w", padx=(0, 10), pady=(0, 14))
+        ttk.Entry(frame, textvariable=expense_notes_var, width=34).grid(row=6, column=1, sticky="ew", pady=(0, 14))
         status_var = tk.StringVar(value="Leave company / buyer blank for that person's General Sold sheet.")
-        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 14))
 
         def submit() -> None:
             sale_price = self._money_value(sale_var.get())
@@ -2278,12 +2326,20 @@ class CardPipelineApp(tk.Tk):
                 status_var.set("Enter a valid sale price.")
                 sale_entry.focus_set()
                 return
+            expense_amount = self._money_value(expense_amount_var.get())
+            if expense_amount_var.get().strip() and (expense_amount is None or expense_amount <= 0):
+                status_var.set("Enter a valid expense amount or leave it blank.")
+                expense_entry.focus_set()
+                return
             result["company"] = company_var.get().strip()
             result["sale_price"] = float(sale_price)
+            result["expense_type"] = expense_type_var.get().strip()
+            result["expense_amount"] = float(expense_amount) if expense_amount is not None else None
+            result["expense_notes"] = expense_notes_var.get().strip()
             popup.destroy()
 
         buttons = ttk.Frame(frame, style="Panel.TFrame")
-        buttons.grid(row=5, column=0, columnspan=2, sticky="e")
+        buttons.grid(row=8, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(buttons, text="Mark Sold", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
         frame.columnconfigure(1, weight=1)
@@ -2297,7 +2353,7 @@ class CardPipelineApp(tk.Tk):
         self.wait_window(popup)
         if "sale_price" not in result:
             return None
-        return str(result.get("company") or ""), float(result["sale_price"])
+        return result
 
     def mark_selected_inventory_sold(self) -> None:
         if not hasattr(self, "inventory_tree"):
@@ -2314,8 +2370,15 @@ class CardPipelineApp(tk.Tk):
         sale = self._inventory_sale_dialog(record)
         if sale is None:
             return
-        company, sale_price = sale
-        if self.mark_inventory_record_sold(record, company, float(sale_price)):
+        sale_price = float(sale["sale_price"])
+        if self.mark_inventory_record_sold(
+            record,
+            str(sale.get("company") or ""),
+            sale_price,
+            expense_type=str(sale.get("expense_type") or ""),
+            expense_amount=sale.get("expense_amount") if sale.get("expense_amount") is not None else None,
+            expense_notes=str(sale.get("expense_notes") or ""),
+        ):
             self.refresh_inventory_tab()
             self.refresh_profit_tab()
             self.status_var.set(f"Marked inventory card sold: {record.get('cert_number') or record.get('card_title') or 'card'} for {format_money(sale_price)}.")
@@ -3643,7 +3706,11 @@ class CardPipelineApp(tk.Tk):
             sheet_options, card_options, card_lookup = self._expense_link_options(person_var.get())
             related_type = link_var.get().strip()
             sheet_combo["values"] = sheet_options
-            card_combo["values"] = card_options
+            filtered_card_options = [
+                option for option in card_options
+                if not sheet_var.get().strip() or card_lookup.get(option, {}).get("source_sheet") == sheet_var.get().strip()
+            ]
+            card_combo["values"] = filtered_card_options if related_type == "Card" else card_options
             if related_type == "Sheet":
                 sheet_combo.configure(state="readonly")
                 card_combo.configure(state="disabled")
@@ -3652,10 +3719,17 @@ class CardPipelineApp(tk.Tk):
                 if sheet_var.get() not in sheet_options:
                     sheet_var.set(sheet_options[0] if sheet_options else "")
             elif related_type == "Card":
-                sheet_combo.configure(state="disabled")
+                sheet_combo.configure(state="readonly")
                 card_combo.configure(state="readonly")
-                if card_var.get() not in card_options:
-                    card_var.set(card_options[0] if card_options else "")
+                if sheet_var.get() not in sheet_options:
+                    sheet_var.set(sheet_options[0] if sheet_options else "")
+                filtered_card_options = [
+                    option for option in card_options
+                    if not sheet_var.get().strip() or card_lookup.get(option, {}).get("source_sheet") == sheet_var.get().strip()
+                ]
+                card_combo["values"] = filtered_card_options
+                if card_var.get() not in filtered_card_options:
+                    card_var.set(filtered_card_options[0] if filtered_card_options else "")
                 selection = card_lookup.get(card_var.get(), {})
                 sheet_var.set(selection.get("source_sheet", ""))
                 cert_var.set(selection.get("cert_number", ""))
@@ -3671,9 +3745,14 @@ class CardPipelineApp(tk.Tk):
             sheet_var.set(selection.get("source_sheet", ""))
             cert_var.set(selection.get("cert_number", ""))
 
+        def refresh_cards_for_sheet(*_args) -> None:
+            if link_var.get().strip() == "Card":
+                refresh_link_options()
+
         link_combo.bind("<<ComboboxSelected>>", refresh_link_options, add="+")
         person_combo.bind("<<ComboboxSelected>>", refresh_link_options, add="+")
         person_var.trace_add("write", refresh_link_options)
+        sheet_combo.bind("<<ComboboxSelected>>", refresh_cards_for_sheet, add="+")
         card_combo.bind("<<ComboboxSelected>>", apply_card_selection, add="+")
         card_var.trace_add("write", apply_card_selection)
         refresh_link_options()
