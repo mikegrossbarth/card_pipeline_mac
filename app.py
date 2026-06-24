@@ -672,6 +672,7 @@ class CardPipelineApp(tk.Tk):
             "danger": "#5a1f1f",
         }
         self.app_palette = palette
+        self.colors = palette
         self.configure(bg=palette["bg"])
         self.option_add("*TCombobox*Listbox.background", palette["field"])
         self.option_add("*TCombobox*Listbox.foreground", palette["text"])
