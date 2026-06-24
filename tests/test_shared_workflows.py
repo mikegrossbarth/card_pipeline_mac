@@ -714,6 +714,45 @@ class GoogleSheetCacheTests(unittest.TestCase):
             self.assertIsNotNone(source)
             self.assertEqual(Path(source["path"]).parent, output_dir)
 
+    def test_sync_google_keep_notes_opens_saved_sources(self) -> None:
+        class Status:
+            value = ""
+
+            def set(self, value: str) -> None:
+                self.value = value
+
+        class Dummy:
+            def __init__(self) -> None:
+                self.assignment_config_status = Status()
+                self.refreshed = False
+                self.opened: list[str] = []
+
+            def _refresh_keep_source_registry(self) -> None:
+                self.refreshed = True
+
+            def _saved_google_keep_sources(self) -> list[dict[str, object]]:
+                return [
+                    {"url": "https://keep.google.com/u/0/#NOTE/abc123", "path": "rules.txt"},
+                    {"url": "https://keep.google.com/u/0/#NOTE/def456", "path": "payouts.txt"},
+                ]
+
+            def _open_google_keep_source_url(self, url: str) -> bool:
+                self.opened.append(url)
+                return True
+
+        dummy = Dummy()
+        app.CardPipelineApp.sync_google_keep_notes(dummy)
+
+        self.assertTrue(dummy.refreshed)
+        self.assertEqual(
+            dummy.opened,
+            [
+                "https://keep.google.com/u/0/#NOTE/abc123",
+                "https://keep.google.com/u/0/#NOTE/def456",
+            ],
+        )
+        self.assertIn("Opened 2 Google Keep notes", dummy.assignment_config_status.value)
+
     def test_bridge_replaces_matching_google_keep_cache(self) -> None:
         with TemporaryDirectory() as tmp:
             cache_path = Path(tmp) / "rules.txt"

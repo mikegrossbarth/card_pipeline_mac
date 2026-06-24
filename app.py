@@ -10,6 +10,7 @@ import re
 import secrets
 import shutil
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -996,10 +997,11 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(review_controls, text="Load", command=self.load_selected_received_sheet_for_review, style="Primary.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
         ttk.Button(review_controls, text="Refresh Received Sheets", command=self.refresh_received_sheets, style="Soft.TButton").grid(row=0, column=3, sticky="w")
         ttk.Button(review_controls, text="Assignment Rules", command=self.open_assignment_rules, style="Soft.TButton").grid(row=0, column=4, sticky="w", padx=(8, 0))
-        ttk.Button(review_controls, text="Unassigned Players", command=self.open_unassigned_players_dialog, style="Soft.TButton").grid(row=0, column=5, sticky="w", padx=(8, 0))
+        ttk.Button(review_controls, text="Sync Google Keep", command=self.sync_google_keep_notes, style="Soft.TButton").grid(row=0, column=5, sticky="w", padx=(8, 0))
+        ttk.Button(review_controls, text="Unassigned Players", command=self.open_unassigned_players_dialog, style="Soft.TButton").grid(row=0, column=6, sticky="w", padx=(8, 0))
         review_controls.columnconfigure(1, weight=1)
-        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=6, sticky="w", pady=(10, 0))
-        ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 0))
+        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=7, sticky="w", pady=(10, 0))
+        ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
         self.assignment_progress = ttk.Progressbar(
             review_controls,
             style="Assignment.Horizontal.TProgressbar",
@@ -1007,7 +1009,7 @@ class CardPipelineApp(tk.Tk):
             maximum=100,
             mode="determinate",
         )
-        self.assignment_progress.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(8, 0))
+        self.assignment_progress.grid(row=3, column=0, columnspan=7, sticky="ew", pady=(8, 0))
         self.review_tree = self._build_table(self.review_tab, editable=True, columns=REVIEW_COLUMNS)
         review_bottom = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
         review_bottom.pack(fill=tk.X, pady=(10, 0))
@@ -5133,6 +5135,43 @@ class CardPipelineApp(tk.Tk):
             self.state.register_keep_note_sources(self._saved_google_keep_sources())
         except Exception:
             return
+
+    def sync_google_keep_notes(self) -> None:
+        self._refresh_keep_source_registry()
+        sources = self._saved_google_keep_sources()
+        if not sources:
+            messagebox.showinfo("Google Keep Sync", "No Google Keep note sources are saved in Assignment Rules.")
+            self.assignment_config_status.set("No Google Keep notes are configured in Assignment Rules.")
+            return
+        opened = 0
+        for source in sources:
+            url = str(source.get("url") or "").strip()
+            if url and self._open_google_keep_source_url(url):
+                opened += 1
+        if opened:
+            note_word = "note" if opened == 1 else "notes"
+            self.assignment_config_status.set(
+                f"Opened {opened} Google Keep {note_word}. The Chrome extension will sync each note after it loads."
+            )
+            return
+        messagebox.showinfo("Google Keep Sync", "L.U.C.A.S could not open the saved Google Keep notes.")
+        self.assignment_config_status.set("Could not open the saved Google Keep notes.")
+
+    def _open_google_keep_source_url(self, url: str) -> bool:
+        if sys.platform == "darwin":
+            try:
+                result = subprocess.run(
+                    ["open", "-a", "Google Chrome", url],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode == 0:
+                    return True
+            except Exception:
+                pass
+        return bool(webbrowser.open(url))
 
     def _saved_google_keep_sources(self) -> list[dict[str, object]]:
         try:
