@@ -4960,7 +4960,21 @@ class CardPipelineApp(tk.Tk):
     def choose_pipeline_root(self) -> None:
         self.choose_working_folder()
 
-    def _make_colored_button(self, parent: tk.Widget, text: str, command, variant: str = "soft") -> tk.Button:
+    def _configure_colored_button(
+        self,
+        button: tk.Widget,
+        bg: str,
+        fg: str,
+        hover: str | None = None,
+        pressed: str | None = None,
+    ) -> None:
+        setattr(button, "_lucas_bg", bg)
+        setattr(button, "_lucas_fg", fg)
+        setattr(button, "_lucas_hover", hover or bg)
+        setattr(button, "_lucas_pressed", pressed or hover or bg)
+        button.configure(bg=bg, fg=fg)
+
+    def _make_colored_button(self, parent: tk.Widget, text: str, command, variant: str = "soft") -> tk.Label:
         palette = getattr(self, "app_palette", {})
         if variant == "primary":
             bg = str(palette.get("button") or "#1ed760")
@@ -4972,14 +4986,11 @@ class CardPipelineApp(tk.Tk):
             hover = str(palette.get("soft_button_hover") or "#3a3a3a")
             pressed = str(palette.get("border") or "#333333")
             fg = str(palette.get("text") or "#ffffff")
-        button = tk.Button(
+        button = tk.Label(
             parent,
             text=text,
-            command=command,
             bg=bg,
             fg=fg,
-            activebackground=pressed,
-            activeforeground=fg,
             relief=tk.FLAT,
             borderwidth=0,
             highlightthickness=0,
@@ -4988,8 +4999,11 @@ class CardPipelineApp(tk.Tk):
             font=("Segoe UI Semibold", 10),
             cursor="hand2",
         )
-        button.bind("<Enter>", lambda _event: button.configure(bg=hover), add="+")
-        button.bind("<Leave>", lambda _event: button.configure(bg=bg), add="+")
+        self._configure_colored_button(button, bg, fg, hover, pressed)
+        button.bind("<Enter>", lambda _event: button.configure(bg=getattr(button, "_lucas_hover", bg)), add="+")
+        button.bind("<Leave>", lambda _event: button.configure(bg=getattr(button, "_lucas_bg", bg)), add="+")
+        button.bind("<ButtonPress-1>", lambda _event: button.configure(bg=getattr(button, "_lucas_pressed", pressed)), add="+")
+        button.bind("<ButtonRelease-1>", lambda _event: (button.configure(bg=getattr(button, "_lucas_hover", hover)), command()), add="+")
         return button
 
     def _bind_responsive_button_row(
@@ -5026,16 +5040,13 @@ class CardPipelineApp(tk.Tk):
         parent.bind("<Configure>", relayout, add="+")
         parent.after_idle(relayout)
 
-    def _build_home_tab_button(self, parent: tk.Frame, text: str, command) -> tk.Button:
+    def _build_home_tab_button(self, parent: tk.Frame, text: str, command) -> tk.Label:
         palette = self.home_tab_palette
-        return tk.Button(
+        button = tk.Label(
             parent,
             text=text,
-            command=command,
             bg=palette["soft_button"],
             fg=palette["muted"],
-            activebackground=palette["soft_button_hover"],
-            activeforeground=palette["text"],
             relief=tk.FLAT,
             borderwidth=0,
             highlightthickness=0,
@@ -5044,6 +5055,12 @@ class CardPipelineApp(tk.Tk):
             font=("Segoe UI Semibold", 9),
             cursor="hand2",
         )
+        self._configure_colored_button(button, palette["soft_button"], palette["muted"], palette["soft_button_hover"], palette["border"])
+        button.bind("<Enter>", lambda _event: button.configure(bg=getattr(button, "_lucas_hover", palette["soft_button_hover"])), add="+")
+        button.bind("<Leave>", lambda _event: button.configure(bg=getattr(button, "_lucas_bg", palette["soft_button"])), add="+")
+        button.bind("<ButtonPress-1>", lambda _event: button.configure(bg=getattr(button, "_lucas_pressed", palette["border"])), add="+")
+        button.bind("<ButtonRelease-1>", lambda _event: (button.configure(bg=getattr(button, "_lucas_hover", palette["soft_button_hover"])), command()), add="+")
+        return button
 
     def _set_home_sheet_kind(self, kind: str) -> None:
         self.home_sheet_kind.set(kind)
@@ -5086,12 +5103,21 @@ class CardPipelineApp(tk.Tk):
         active_kind = self.home_sheet_kind.get()
         active = {"bg": palette["button"], "fg": "#000000", "activebackground": palette["button_hover"], "activeforeground": "#000000"}
         inactive = {"bg": palette["soft_button"], "fg": palette["muted"], "activebackground": palette["soft_button_hover"], "activeforeground": palette["text"]}
-        self.home_incoming_tab.configure(**(active if active_kind == "Incoming" else inactive))
-        self.home_working_tab.configure(**(active if active_kind == "Working" else inactive))
+        self._set_home_tab_button_state(self.home_incoming_tab, active if active_kind == "Incoming" else inactive)
+        self._set_home_tab_button_state(self.home_working_tab, active if active_kind == "Working" else inactive)
         if hasattr(self, "home_received_tab"):
-            self.home_received_tab.configure(**(active if active_kind == "Received" else inactive))
+            self._set_home_tab_button_state(self.home_received_tab, active if active_kind == "Received" else inactive)
         if hasattr(self, "home_edit_markers_tab"):
-            self.home_edit_markers_tab.configure(**inactive)
+            self._set_home_tab_button_state(self.home_edit_markers_tab, inactive)
+
+    def _set_home_tab_button_state(self, button: tk.Widget, colors: dict[str, str]) -> None:
+        self._configure_colored_button(
+            button,
+            colors["bg"],
+            colors["fg"],
+            colors.get("activebackground"),
+            colors.get("activebackground"),
+        )
 
     def refresh_home(self) -> None:
         perf_start = time.perf_counter()
