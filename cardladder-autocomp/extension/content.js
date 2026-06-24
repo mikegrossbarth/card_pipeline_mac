@@ -1342,7 +1342,6 @@ function parseCompChunk(chunk, sourceLineMatchResult = null) {
     .replace(/\b(?:Date Sold|Type|Price)\b/ig, " ")
     .replace(/\s+/g, " ")
     .trim();
-  title = title.split(new RegExp(`\\s(?:${COMP_SOURCE_PATTERN_TEXT})\\s`, "i"))[0]?.trim() || title;
   return {
     source: sourceText.replace(/\s+/g, " ").toUpperCase(),
     title: cleanCompTitle(title),
@@ -1354,9 +1353,15 @@ function parseCompChunk(chunk, sourceLineMatchResult = null) {
 
 function currentCompChunkOnly(chunk, sourceText) {
   const afterCurrentSource = chunk.slice(String(sourceText || "").length);
-  const nextSource = afterCurrentSource.match(new RegExp(`\\s(?:${COMP_SOURCE_PATTERN_TEXT})\\b`, "i"));
-  if (!nextSource || nextSource.index == null) return chunk;
-  return chunk.slice(0, String(sourceText || "").length + nextSource.index);
+  const nextSourcePattern = new RegExp(`\\s(?:${COMP_SOURCE_PATTERN_TEXT})\\b`, "ig");
+  const moneyPattern = /\$\s*[\d,]+(?:\.\d{1,2})?/;
+  for (const match of afterCurrentSource.matchAll(nextSourcePattern)) {
+    const index = match.index;
+    if (index == null) continue;
+    const candidate = chunk.slice(0, String(sourceText || "").length + index);
+    if (compDatePattern().test(candidate) && moneyPattern.test(candidate)) return candidate;
+  }
+  return chunk;
 }
 
 function compDatePattern() {
