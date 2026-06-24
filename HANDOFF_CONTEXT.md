@@ -34,6 +34,8 @@ Recommended path:
 
 Important design note: the hard part is not the mobile UI; it is safely exposing shared inventory/profit ledger actions so two people cannot conflict while adding or marking cards sold. Desktop automation should stay desktop/server-side.
 
+Deferred future work, not for the current build: true live-anywhere mobile access would need a small secure cloud backend, real auth/invite tokens, and a cloud queue or database. The preferred low-risk shape is to keep the current mobile/offline queue model, add a hosted queue service such as Supabase later, let the phone write inventory add/sold/expense actions to that queue from anywhere, and let desktop L.U.C.A.S pull/apply those actions through the same ledger-safe queue importer. This is intentionally postponed because it is more setup/security/deployment work than the current local/offline mobile companion needs.
+
 ## Latest Completed Work
 
 - Mac repo was brought forward with the Windows parser/company-sheet/manual-create work while preserving Mac-only CourtYard automation.
