@@ -24,6 +24,7 @@ import app
 import assignment_engine
 import bridge_server
 import google_sheets_import
+import lucas_diagnostics
 from comp_engine.workbook_io import WorkbookRow
 from intake_io import append_company_sheet_rows, ensure_company_weekly_sheets, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
@@ -725,6 +726,26 @@ class GoogleSheetCacheTests(unittest.TestCase):
 
         self.assertEqual(text, "Arena Club rules")
         reader.assert_called_once_with(sheet_url, interactive=True)
+
+
+class DiagnosticsTests(unittest.TestCase):
+    def test_setup_doctor_reports_pipeline_and_google_paths(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("WORKING SHEETS", "INCOMING SHEETS", "RECEIVED SHEETS", "ASSIGNMENT RULES", "COMPANY SHEETS"):
+                (root / name).mkdir(parents=True)
+
+            rows = lucas_diagnostics.setup_doctor_results(
+                root,
+                {"extensionVersion": "0.1.5", "expectedExtensionVersion": "0.1.5"},
+                "Mac",
+            )
+            by_name = {row["name"]: row for row in rows}
+
+            self.assertEqual(by_name["Shared pipeline folders"]["status"], "OK")
+            self.assertEqual(by_name["Card Ladder helper version"]["status"], "OK")
+            self.assertIn("lucas_google_sheets_token.json", by_name["Sheets OAuth token"]["detail"])
+            self.assertIn("LUCAS Mac", lucas_diagnostics.lucas_version_label("Mac"))
 
 
 class AssignmentEngineTests(unittest.TestCase):

@@ -21,6 +21,7 @@ SCOPES = ("https://www.googleapis.com/auth/spreadsheets.readonly",)
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 _ENV_LOADED = False
+LAST_OAUTH_DIAGNOSTICS: dict[str, Any] = {}
 
 
 class GoogleSheetsAuthError(RuntimeError):
@@ -199,7 +200,10 @@ def load_token() -> dict[str, Any]:
 
 
 def save_token(token: dict[str, Any]) -> None:
+    LAST_OAUTH_DIAGNOSTICS["token_save_attempted"] = True
+    LAST_OAUTH_DIAGNOSTICS["token_path"] = str(TOKEN_PATH)
     TOKEN_PATH.write_text(json.dumps(token, indent=2), encoding="utf-8")
+    LAST_OAUTH_DIAGNOSTICS["token_saved"] = True
 
 
 def token_matches_client(token: dict[str, Any], client_id: str) -> bool:
@@ -230,6 +234,17 @@ def refresh_token_if_needed(token: dict[str, Any], client_id: str, client_secret
 
 
 def run_desktop_oauth(client_id: str, client_secret: str) -> dict[str, Any]:
+    LAST_OAUTH_DIAGNOSTICS.clear()
+    LAST_OAUTH_DIAGNOSTICS.update(
+        {
+            "callback_received": False,
+            "authorization_code_received": False,
+            "token_exchange_attempted": False,
+            "token_save_attempted": False,
+            "token_saved": False,
+            "token_path": str(TOKEN_PATH),
+        }
+    )
     state = secrets.token_urlsafe(24)
     server = OAuthCallbackServer(("127.0.0.1", 0), OAuthCallbackHandler)
     server.timeout = 1
@@ -252,11 +267,15 @@ def run_desktop_oauth(client_id: str, client_secret: str) -> dict[str, Any]:
     finally:
         server.server_close()
     if server.error:
+        LAST_OAUTH_DIAGNOSTICS["error"] = server.error
         raise GoogleSheetsAuthError(server.error)
     if not server.code:
+        LAST_OAUTH_DIAGNOSTICS["error"] = "Timed out before approval finished."
         raise GoogleSheetsAuthError(
             "Google Sheets OAuth timed out before approval finished. Try Connect Google again and complete the Allow screen in the browser."
         )
+    LAST_OAUTH_DIAGNOSTICS["callback_received"] = True
+    LAST_OAUTH_DIAGNOSTICS["authorization_code_received"] = True
 
     payload = {
         "client_id": client_id,
@@ -266,6 +285,7 @@ def run_desktop_oauth(client_id: str, client_secret: str) -> dict[str, Any]:
     }
     if client_secret:
         payload["client_secret"] = client_secret
+    LAST_OAUTH_DIAGNOSTICS["token_exchange_attempted"] = True
     token = post_form(TOKEN_URL, payload)
     token["client_id"] = client_id
     token["expires_at"] = time.time() + int(token.get("expires_in") or 3600)
@@ -287,6 +307,7 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
             self.send_response(204)
             self.end_headers()
             return
+        LAST_OAUTH_DIAGNOSTICS["callback_received"] = True
         query = urllib.parse.parse_qs(parsed.query)
         state = query.get("state", [""])[0]
         if state != self.server.expected_state:
@@ -303,6 +324,7 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
             self.send_oauth_response(False)
             return
         self.server.code = query.get("code", [""])[0]
+        LAST_OAUTH_DIAGNOSTICS["authorization_code_received"] = bool(self.server.code)
         if not self.server.code:
             self.server.error = (
                 "Google Sheets OAuth finished without an authorization code. Try Connect Google again, choose the Google account that can open the sheet, and click Allow."
@@ -362,4 +384,5 @@ def post_form(url: str, payload: dict[str, str]) -> dict[str, Any]:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         text = error.read().decode("utf-8", errors="replace")
+        LAST_OAUTH_DIAGNOSTICS["error"] = f"Google OAuth token request failed ({error.code}): {text[:220]}"
         raise GoogleSheetsAuthError(f"Google OAuth token request failed ({error.code}): {text[:220]}") from error

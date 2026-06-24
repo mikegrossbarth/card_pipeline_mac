@@ -51,6 +51,7 @@ from assignment_engine import CONFIG_PATH as ASSIGNMENT_CONFIG_PATH  # noqa: E40
 from assignment_engine import gsheet_shortcut_url, is_google_keep_url, keep_note_cache_path, load_gsheet_shortcut, normalize_source_value, path_from_source_value, safe_filename  # noqa: E402
 from assignment_config_ui import open_assignment_rules_dialog  # noqa: E402
 from google_sheets_import import export_google_sheet_to_xlsx  # noqa: E402
+from lucas_diagnostics import diagnostic_json, lucas_version_label, setup_doctor_results  # noqa: E402
 from shared_state import atomic_write_json, local_identity, shared_lock  # noqa: E402
 
 from intake_io import (  # noqa: E402
@@ -542,6 +543,7 @@ class CardPipelineApp(tk.Tk):
         self.summary_var = tk.StringVar(value="Choose a create mode to begin.")
         self.status_var = tk.StringVar(value="Card Ladder bridge starting...")
         self.bridge_status_var = tk.StringVar(value=self.bridge_status_text)
+        self.version_var = tk.StringVar(value=lucas_version_label("Mac"))
         self.pipeline_root_var = tk.StringVar(value=str(CARD_PIPELINE_DIR))
 
         self.scan_cert = tk.StringVar()
@@ -810,6 +812,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(title_group, text=APP_SUBTITLE, style="HeaderSub.TLabel").pack(anchor=tk.W, pady=(3, 0))
         ttk.Label(header, textvariable=self.bridge_status_var, style="BridgeBadge.TLabel").pack(side=tk.RIGHT, padx=(16, 0))
         ttk.Button(header, text="Working Folder", command=self.choose_working_folder, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
+        ttk.Button(header, text="Setup Check", command=self.open_setup_doctor, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill=tk.BOTH, expand=True, padx=18, pady=(16, 12))
@@ -1001,6 +1004,43 @@ class CardPipelineApp(tk.Tk):
         bottom = ttk.Frame(self, style="App.TFrame", padding=(16, 0, 16, 14))
         bottom.pack(fill=tk.X)
         ttk.Label(bottom, textvariable=self.status_var, style="Status.TLabel").pack(side=tk.LEFT)
+        ttk.Label(bottom, textvariable=self.version_var, style="Muted.TLabel").pack(side=tk.RIGHT)
+
+    def open_setup_doctor(self) -> None:
+        rows = self._setup_doctor_results()
+        dialog = tk.Toplevel(self)
+        dialog.title("LUCAS Setup Check")
+        dialog.geometry("840x520")
+        dialog.transient(self)
+        dialog.configure(bg="#121212")
+        frame = ttk.Frame(dialog, style="App.TFrame", padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Setup Check", style="HeaderTitle.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        tree = ttk.Treeview(frame, columns=("status", "detail"), show="tree headings", height=14)
+        tree.heading("#0", text="Check", anchor=tk.W)
+        tree.heading("status", text="Status", anchor=tk.W)
+        tree.heading("detail", text="Detail", anchor=tk.W)
+        tree.column("#0", width=220, stretch=False)
+        tree.column("status", width=130, stretch=False)
+        tree.column("detail", width=460, stretch=True)
+        tree.pack(fill=tk.BOTH, expand=True)
+        for row in rows:
+            tree.insert("", tk.END, text=row["name"], values=(row["status"], row["detail"]))
+        actions = ttk.Frame(frame, style="App.TFrame")
+        actions.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(actions, text="Copy Details", command=lambda: self._copy_setup_doctor_details(rows), style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(actions, text="Close", command=dialog.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
+        self.status_var.set("Setup check complete.")
+
+    def _setup_doctor_results(self) -> list[dict[str, str]]:
+        snapshot = self.state.snapshot() if hasattr(self, "state") else {}
+        return setup_doctor_results(CARD_PIPELINE_DIR, snapshot, "Mac")
+
+    def _copy_setup_doctor_details(self, rows: list[dict[str, str]]) -> None:
+        payload = {"version": self.version_var.get(), "checks": rows}
+        self.clipboard_clear()
+        self.clipboard_append(diagnostic_json(payload))
+        self.status_var.set("Copied setup check details.")
 
     def _build_table(self, parent: ttk.Frame, editable: bool = False, columns: tuple[str, ...] = DISPLAY_COLUMNS) -> ttk.Treeview:
         content = ttk.Frame(parent, style="Panel.TFrame", padding=(1, 1))

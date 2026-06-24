@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import tkinter as tk
 import urllib.parse
@@ -19,7 +20,8 @@ from assignment_engine import (
     read_source_text,
     safe_filename,
 )
-from google_sheets_import import authorize_google_sheets
+from google_sheets_import import LAST_OAUTH_DIAGNOSTICS, TOKEN_PATH, authorize_google_sheets
+from lucas_diagnostics import diagnostic_json, google_status_lines
 
 
 GRADE_COMPANIES = ("psa", "bgs", "sgc", "cgc")
@@ -84,6 +86,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.payout_source_path = tk.StringVar()
         self.status = tk.StringVar(value="Create or edit a company, then save.")
         self.preview_status = tk.StringVar(value="No source file selected.")
+        self.google_status = tk.StringVar(value="")
         self.rule_materialized_source: dict[str, Any] | None = None
         self.payout_materialized_source: dict[str, Any] | None = None
 
@@ -197,9 +200,10 @@ class AssignmentRulesDialog(tk.Toplevel):
         sources.columnconfigure(1, weight=1)
         self._build_rule_source_panel(sources).grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         self._build_payout_source_panel(sources).grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        self._build_google_status_panel(main).grid(row=2, column=0, sticky="ew", pady=(12, 0))
 
         self.body = ttk.Frame(main, style="Assign.TFrame")
-        self.body.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
+        self.body.grid(row=3, column=0, sticky="nsew", pady=(12, 0))
         self.body.columnconfigure(0, weight=1)
         self.body.columnconfigure(1, weight=1)
         self.body.rowconfigure(0, weight=1)
@@ -273,6 +277,17 @@ class AssignmentRulesDialog(tk.Toplevel):
         )
         self.link_payouts_check.grid(row=5, column=0, sticky=tk.W, pady=(8, 0))
         ttk.Label(frame, textvariable=self.preview_status, style="AssignMuted.TLabel", wraplength=420).grid(row=6, column=0, sticky="ew", pady=(8, 0))
+        return frame
+
+    def _build_google_status_panel(self, parent: ttk.Frame) -> ttk.Frame:
+        frame = ttk.LabelFrame(parent, text="Google Status", style="Assign.TLabelframe", padding=10)
+        frame.columnconfigure(0, weight=1)
+        self.google_status.set("\n".join(google_status_lines()))
+        ttk.Label(frame, textvariable=self.google_status, style="AssignMuted.TLabel", wraplength=940, justify=tk.LEFT).grid(row=0, column=0, columnspan=4, sticky="ew")
+        ttk.Button(frame, text="Refresh Status", command=self._refresh_google_status, style="AssignSoft.TButton").grid(row=1, column=0, sticky="ew", pady=(8, 0), padx=(0, 4))
+        ttk.Button(frame, text="Reconnect Google", command=self._connect_google, style="AssignSoft.TButton").grid(row=1, column=1, sticky="ew", pady=(8, 0), padx=4)
+        ttk.Button(frame, text="Open Token Folder", command=self._open_token_folder, style="AssignSoft.TButton").grid(row=1, column=2, sticky="ew", pady=(8, 0), padx=4)
+        ttk.Button(frame, text="Copy Details", command=self._copy_google_details, style="AssignSoft.TButton").grid(row=1, column=3, sticky="ew", pady=(8, 0), padx=(4, 0))
         return frame
 
     def _build_payout_source_panel(self, parent: ttk.Frame) -> ttk.Frame:
@@ -559,6 +574,7 @@ class AssignmentRulesDialog(tk.Toplevel):
             )
             return
         self.preview_status.set(f"Read {len(lines)} non-empty line(s) from {Path(path).name}.")
+        self._refresh_google_status()
 
     def _set_rule_rows(self, rules: Any) -> None:
         for child in self.rules_frame.winfo_children():
@@ -871,9 +887,70 @@ class AssignmentRulesDialog(tk.Toplevel):
         try:
             authorize_google_sheets(interactive=True)
         except Exception as error:
-            messagebox.showerror("Connect Google", str(error))
+            details = self._google_diagnostic_payload("Connect Google failed", str(error))
+            self.clipboard_clear()
+            self.clipboard_append(diagnostic_json(details))
+            messagebox.showerror("Connect Google", f"{error}\n\nDiagnostic details were copied to the clipboard.")
+            self._refresh_google_status()
             return
         self.preview_status.set("Google Sheets connected. Preview the source to read the live sheet.")
+        self._refresh_google_status()
+
+    def _refresh_google_status(self) -> None:
+        sheet_status = self._selected_sheet_status()
+        keep_status = self._selected_keep_status()
+        self.google_status.set("\n".join(google_status_lines(sheet_status=sheet_status, keep_status=keep_status)))
+
+    def _selected_sheet_status(self) -> str:
+        source = self.rule_materialized_source if isinstance(self.rule_materialized_source, dict) else self.rule_source_path.get().strip()
+        raw = normalize_source_value(source.get("url") if isinstance(source, dict) else source)
+        if not is_google_sheet_url(raw):
+            return "no Google Sheet source selected"
+        try:
+            text = read_source_text(source, self.config_path.parent, interactive_google=False)
+            return f"yes ({len([line for line in text.splitlines() if line.strip()])} non-empty line(s))"
+        except Exception as error:
+            return f"no ({error})"
+
+    def _selected_keep_status(self) -> str:
+        source = self.rule_materialized_source if isinstance(self.rule_materialized_source, dict) else None
+        raw = normalize_source_value((source or {}).get("url") or self.rule_source_path.get().strip())
+        if not is_google_keep_url(raw):
+            return "no Google Keep source selected"
+        path = Path(str((source or {}).get("path") or keep_note_cache_path(raw, self.pipeline_root)))
+        if not path.exists():
+            return f"not synced ({path})"
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return f"cache unreadable ({path})"
+        return f"{Path(path).name} at {__import__('datetime').datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')}"
+
+    def _open_token_folder(self) -> None:
+        folder = TOKEN_PATH.parent
+        try:
+            if os.name == "nt":
+                os.startfile(str(folder))  # type: ignore[attr-defined]
+            else:
+                webbrowser.open(folder.as_uri())
+        except Exception as error:
+            messagebox.showerror("Open Token Folder", str(error))
+
+    def _copy_google_details(self) -> None:
+        details = self._google_diagnostic_payload("Google status", "")
+        self.clipboard_clear()
+        self.clipboard_append(diagnostic_json(details))
+        self.status.set("Copied Google diagnostic details.")
+
+    def _google_diagnostic_payload(self, title: str, error: str) -> dict[str, Any]:
+        return {
+            "title": title,
+            "error": error,
+            "oauth": dict(LAST_OAUTH_DIAGNOSTICS),
+            "google_status": self.google_status.get(),
+            "rule_source": self.rule_materialized_source or self.rule_source_path.get(),
+            "payout_source": self.payout_materialized_source or self.payout_source_path.get(),
+        }
 
     def _open_keep_note(self) -> None:
         path = self.rule_source_path.get().strip()
