@@ -3639,6 +3639,58 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.PROFIT_LEDGER_PATH = old_profit
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_manual_inventory_add_accepts_cert_without_grader(self) -> None:
+        class ManualAddDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            add_raw_inventory_card = app.CardPipelineApp.add_raw_inventory_card
+            refresh_inventory_tab = lambda self: None
+            _append_activity = lambda self, action, summary, details=None: None
+
+            def _raw_inventory_card_dialog(self):
+                return {
+                    "assigned_person": "Kevin Hambone",
+                    "cert_number": "12345678",
+                    "grader": "",
+                    "card_title": "2024 Panini Prizm Test Card",
+                    "purchase_price": 25,
+                }
+
+            def _enrich_inventory_record_assignment(self, record, force=False):
+                return self._normalize_inventory_record(record)
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = ManualAddDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            class Status:
+                def __init__(self):
+                    self.value = ""
+                def set(self, value):
+                    self.value = value
+            dummy.status_var = Status()
+            try:
+                dummy.add_raw_inventory_card()
+                inventory = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(len(inventory), 1)
+                self.assertEqual(inventory[0]["cert_number"], "12345678")
+                self.assertEqual(inventory[0]["grader"], "")
+                self.assertEqual(inventory[0]["item_type"], "Graded")
+                self.assertEqual(inventory[0]["item_id"], "")
+                self.assertEqual(inventory[0]["source_sheet"], "Manual Inventory")
+                self.assertEqual(dummy.status_var.value, "Added inventory card 12345678.")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_raw_inventory_record_uses_item_id_for_sold_profit_and_expense(self) -> None:
         class SoldDummy:
             _money_value = app.CardPipelineApp._money_value

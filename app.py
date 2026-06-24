@@ -1402,7 +1402,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
         action_row = ttk.Frame(controls, style="Panel.TFrame")
         action_row.grid(row=2, column=0, columnspan=11, sticky="w", pady=(10, 0))
-        ttk.Button(action_row, text="Add Raw Card", command=self.add_raw_inventory_card, style="Primary.TButton").pack(side=tk.LEFT)
+        ttk.Button(action_row, text="Add Card", command=self.add_raw_inventory_card, style="Primary.TButton").pack(side=tk.LEFT)
         ttk.Button(action_row, text="Sync Received to Inventory", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Update Best Company/Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Recomp Visible Cards", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
@@ -2670,6 +2670,8 @@ class CardPipelineApp(tk.Tk):
 
     def _raw_inventory_card_dialog(self) -> dict[str, object] | None:
         person_var = tk.StringVar(value=self.inventory_person_var.get().strip() if hasattr(self, "inventory_person_var") else "")
+        cert_var = tk.StringVar()
+        grader_var = tk.StringVar()
         title_var = tk.StringVar()
         purchase_var = tk.StringVar()
         card_ladder_var = tk.StringVar()
@@ -2682,7 +2684,7 @@ class CardPipelineApp(tk.Tk):
         result: dict[str, object] = {}
 
         popup = tk.Toplevel(self)
-        popup.title("Add Raw Card")
+        popup.title("Add Card")
         popup.configure(bg="#1f1f1f")
         popup.transient(self)
         popup.grab_set()
@@ -2690,10 +2692,12 @@ class CardPipelineApp(tk.Tk):
 
         frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
         frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text="Add Raw Card", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 2))
+        ttk.Label(frame, text="Add Card", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 2))
 
         fields = [
             ("Person", person_var, 28),
+            ("Cert", cert_var, 24),
+            ("Grader", grader_var, 18),
             ("Card description", title_var, 52),
             ("Purchase", purchase_var, 18),
             ("Card Ladder", card_ladder_var, 18),
@@ -2709,7 +2713,7 @@ class CardPipelineApp(tk.Tk):
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 10), pady=(0, 8))
             ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=1, columnspan=3, sticky="ew", pady=(0, 8))
 
-        status_var = tk.StringVar(value="Person, card description, and purchase are required.")
+        status_var = tk.StringVar(value="Person, card description, and purchase are required. Cert and grader are optional.")
         status_row = 1 + len(fields)
         ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=status_row, column=0, columnspan=4, sticky="w", pady=(4, 14))
 
@@ -2746,6 +2750,8 @@ class CardPipelineApp(tk.Tk):
             result.update(
                 {
                     "assigned_person": person,
+                    "cert_number": scan_to_cert(cert_var.get()),
+                    "grader": grader_var.get().strip(),
                     "card_title": title,
                     "purchase_price": float(purchase),
                     "card_ladder_value": card_ladder,
@@ -2762,7 +2768,7 @@ class CardPipelineApp(tk.Tk):
         buttons = ttk.Frame(frame, style="Panel.TFrame")
         buttons.grid(row=status_row + 1, column=0, columnspan=4, sticky="e")
         ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(buttons, text="Add Raw Card", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Add Card", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
         frame.columnconfigure(1, weight=1)
         popup.bind("<Return>", lambda _event: submit())
         popup.bind("<Escape>", lambda _event: popup.destroy())
@@ -2779,18 +2785,19 @@ class CardPipelineApp(tk.Tk):
             return
         with shared_lock(CARD_PIPELINE_DIR, "inventory-raw-add", self.lucas_identity):
             existing = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-            item_id = self._next_raw_item_id(existing)
+            cert = scan_to_cert(values.get("cert_number"))
+            item_id = "" if cert else self._next_raw_item_id(existing)
             record = self._normalize_inventory_record(
                 {
                     **values,
                     "date_added": datetime.now().strftime("%Y-%m-%d"),
-                    "item_type": "Raw",
+                    "item_type": "Graded" if cert else "Raw",
                     "item_id": item_id,
                     "sport": CardPipelineApp._inventory_sport_from_value(self, "", values.get("card_title")),
-                    "cert_number": "",
-                    "grader": "",
-                    "source_sheet": "Raw Inventory",
-                    "source": "Manual Raw Card",
+                    "cert_number": cert,
+                    "grader": str(values.get("grader") or "").strip(),
+                    "source_sheet": "Manual Inventory" if cert else "Raw Inventory",
+                    "source": "Manual Card",
                     "status": "Active",
                 }
             )
@@ -2798,8 +2805,9 @@ class CardPipelineApp(tk.Tk):
             existing.append(record)
             self._save_inventory_ledger(existing)
         self.refresh_inventory_tab()
-        self.status_var.set(f"Added raw inventory card {item_id}.")
-        self._append_activity("Inventory Add", f"Added raw inventory card {item_id}.", {"item_id": item_id, "person": record.get("assigned_person"), "card": record.get("card_title")})
+        card_id = record.get("cert_number") or record.get("item_id") or "manual card"
+        self.status_var.set(f"Added inventory card {card_id}.")
+        self._append_activity("Inventory Add", f"Added inventory card {card_id}.", {"item_id": record.get("item_id"), "cert_number": record.get("cert_number"), "person": record.get("assigned_person"), "card": record.get("card_title")})
 
     def _mark_inventory_records_moved_to_company(self, moved_keys: set[str]) -> None:
         if not moved_keys:
