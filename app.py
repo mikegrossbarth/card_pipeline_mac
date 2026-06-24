@@ -621,6 +621,8 @@ class CardPipelineApp(tk.Tk):
         self.inventory_tree_records: dict[str, dict[str, object]] = {}
         self.inventory_recomp_context: dict[str, object] | None = None
         self.inventory_filter_after_id: str | None = None
+        self.inventory_sort_column = "date"
+        self.inventory_sort_descending = True
         self.profit_status_var = tk.StringVar(value="No profit ledger loaded.")
         self.profit_metric_var = tk.StringVar(value="")
         self.profit_person_var = tk.StringVar()
@@ -632,6 +634,8 @@ class CardPipelineApp(tk.Tk):
         self.profit_rows: list[dict[str, object]] = []
         self.filtered_profit_rows: list[dict[str, object]] = []
         self.profit_tree_records: dict[str, dict[str, object]] = {}
+        self.profit_sort_column = "date"
+        self.profit_sort_descending = True
 
         self._build_ui()
         self._show_mode()
@@ -1240,6 +1244,101 @@ class CardPipelineApp(tk.Tk):
             tree.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         return tree
 
+    def _configure_sortable_tree_headings(self, tree: ttk.Treeview, headings: dict[str, str], table: str) -> None:
+        sort_column = self.inventory_sort_column if table == "inventory" else self.profit_sort_column
+        descending = self.inventory_sort_descending if table == "inventory" else self.profit_sort_descending
+        for column in tree["columns"]:
+            label = headings.get(column, column)
+            if column == sort_column:
+                label = f"{label} {'v' if descending else '^'}"
+            command = (lambda col=column: self._sort_inventory_by_column(col)) if table == "inventory" else (lambda col=column: self._sort_profit_by_column(col))
+            tree.heading(column, text=label, anchor=tk.W, command=command)
+
+    def _sort_inventory_by_column(self, column: str) -> None:
+        if column == self.inventory_sort_column:
+            self.inventory_sort_descending = not self.inventory_sort_descending
+        else:
+            self.inventory_sort_column = column
+            self.inventory_sort_descending = False
+        self.refresh_inventory_tab()
+
+    def _sort_profit_by_column(self, column: str) -> None:
+        if column == self.profit_sort_column:
+            self.profit_sort_descending = not self.profit_sort_descending
+        else:
+            self.profit_sort_column = column
+            self.profit_sort_descending = False
+        self.refresh_profit_tab()
+
+    def _record_sort_value(self, record: dict[str, object], column: str, table: str, mode: str = "") -> tuple[bool, object]:
+        money_columns = {"purchase", "sale", "profit", "amount", "payout", "card_ladder", "comps", "cy_estimate"}
+        int_columns = {"cards"}
+        if table == "inventory":
+            field_map = {
+                "date": "date_added",
+                "type": "item_type",
+                "item_id": "item_id",
+                "person": "assigned_person",
+                "sport": "sport",
+                "cert": "cert_number",
+                "grader": "grader",
+                "card": "card_title",
+                "purchase": "purchase_price",
+                "card_ladder": "card_ladder_value",
+                "comps": "card_ladder_comps_average",
+                "cy_estimate": "cy_value",
+                "cy_confidence": "cy_confidence",
+                "company": "best_company",
+                "payout": "estimated_payout",
+                "source": "source_sheet",
+                "status": "status",
+                "notes": "notes",
+            }
+            raw = inventory_display_notes(record) if column == "notes" else record.get(field_map.get(column, column))
+        elif table == "profit_sheet":
+            raw = record.get(column)
+        else:
+            field_map = {
+                "date": "date_added",
+                "person": "assigned_person",
+                "company": "company",
+                "card": "card_title",
+                "cert": "cert_number",
+                "purchase": "purchase_price",
+                "sale": "sale_price",
+                "profit": "profit",
+                "sheet": "source_sheet",
+                "type": "expense_type",
+                "amount": "expense_amount",
+                "related": "source_sheet",
+                "notes": "notes",
+            }
+            if column == "cert":
+                raw = record.get("cert_number") or record.get("item_id")
+            elif column == "sheet":
+                raw = record.get("weekly_sheet_name") or record.get("source_sheet")
+            elif column == "related":
+                raw = self._expense_related_label(record)
+            else:
+                raw = record.get(field_map.get(column, column))
+        if column in money_columns:
+            value = self._money_value(raw)
+            return value is None, value if value is not None else 0.0
+        if column in int_columns:
+            try:
+                return False, int(raw or 0)
+            except (TypeError, ValueError):
+                return True, 0
+        text = str(raw or "").strip()
+        return not bool(text), text.casefold()
+
+    def _sorted_records(self, rows: list[dict[str, object]], column: str, descending: bool, table: str, mode: str = "") -> list[dict[str, object]]:
+        keyed = [(self._record_sort_value(record, column, table, mode), index, record) for index, record in enumerate(rows)]
+        present = [item for item in keyed if not item[0][0]]
+        missing = [item for item in keyed if item[0][0]]
+        present.sort(key=lambda item: (item[0][1], item[1]), reverse=descending)
+        return [item[2] for item in present + missing]
+
     def _build_payouts_tab(self) -> None:
         controls = ttk.Frame(self.payouts_tab, style="Panel.TFrame", padding=(16, 12))
         controls.pack(fill=tk.X, pady=(0, 10))
@@ -1322,6 +1421,7 @@ class CardPipelineApp(tk.Tk):
             scrollbars=True,
         )
         self.inventory_tree.configure(selectmode="extended")
+        self._configure_sortable_tree_headings(self.inventory_tree, INVENTORY_HEADINGS, "inventory")
         self.inventory_tree.bind("<Button-3>", self._show_inventory_context_menu)
         self.inventory_tree.bind("<Button-2>", self._show_inventory_context_menu)
         self.refresh_inventory_tab()
@@ -1413,6 +1513,17 @@ class CardPipelineApp(tk.Tk):
         self.profit_tree.tag_configure("profit_positive", foreground="#d7fbe8")
         self.profit_tree.tag_configure("profit_negative", foreground="#ffd1d1")
         self.profit_tree.tag_configure("total_row", background="#242424", foreground="#ffffff", font=("Segoe UI Semibold", 10))
+        self._configure_sortable_tree_headings(self.profit_tree, {
+            "date": "Date",
+            "person": "Person",
+            "company": "Company",
+            "card": "Card",
+            "cert": "Cert / Item ID",
+            "purchase": "Purchase",
+            "sale": "Sale Price",
+            "profit": "Profit",
+            "sheet": "Company Sheet",
+        }, "profit")
         self.profit_tree.bind("<Button-3>", self._show_profit_context_menu)
         self.profit_tree.bind("<Button-2>", self._show_profit_context_menu)
 
@@ -3371,6 +3482,13 @@ class CardPipelineApp(tk.Tk):
         if enrich and self.inventory_rows != stored_rows:
             self._save_inventory_ledger(self.inventory_rows)
         self.filtered_inventory_rows = self._filtered_inventory_records(self.inventory_rows)
+        if hasattr(self, "_sorted_records"):
+            self.filtered_inventory_rows = self._sorted_records(
+                self.filtered_inventory_rows,
+                getattr(self, "inventory_sort_column", "date"),
+                bool(getattr(self, "inventory_sort_descending", True)),
+                "inventory",
+            )
         if not hasattr(self, "inventory_tree"):
             record_performance_event(
                 "inventory.refresh",
@@ -3379,6 +3497,8 @@ class CardPipelineApp(tk.Tk):
             )
             return
         self._refresh_person_combo_values()
+        if hasattr(self, "_configure_sortable_tree_headings"):
+            self._configure_sortable_tree_headings(self.inventory_tree, INVENTORY_HEADINGS, "inventory")
         self.inventory_tree.delete(*self.inventory_tree.get_children())
         self.inventory_tree_records = {}
         total_purchase = 0.0
@@ -4022,9 +4142,16 @@ class CardPipelineApp(tk.Tk):
             }
             widths = {"date": 95, "person": 135, "company": 140, "card": 390, "cert": 100, "purchase": 105, "sale": 105, "profit": 105, "sheet": 200}
         self.profit_tree.configure(columns=columns)
+        if self.profit_sort_column not in columns:
+            self.profit_sort_column = columns[0]
+            self.profit_sort_descending = self.profit_sort_column in {"date", "last_sale"}
         for column in columns:
-            self.profit_tree.heading(column, text=headings[column], anchor=tk.W)
             self.profit_tree.column(column, width=widths[column], minwidth=45, stretch=False)
+        if hasattr(self, "_configure_sortable_tree_headings"):
+            self._configure_sortable_tree_headings(self.profit_tree, headings, "profit")
+        else:
+            for column in columns:
+                self.profit_tree.heading(column, text=headings[column], anchor=tk.W)
         self.profit_table_title_var.set(mode)
 
     def _expense_related_label(self, record: dict[str, object]) -> str:
@@ -4588,6 +4715,14 @@ class CardPipelineApp(tk.Tk):
         self._refresh_person_combo_values()
         mode = self.profit_view_mode.get()
         self._configure_profit_tree(mode)
+        if mode != "Sold Sheets" and hasattr(self, "_sorted_records"):
+            self.filtered_profit_rows = self._sorted_records(
+                self.filtered_profit_rows,
+                getattr(self, "profit_sort_column", "date"),
+                bool(getattr(self, "profit_sort_descending", True)),
+                "profit",
+                mode,
+            )
         self.profit_tree.delete(*self.profit_tree.get_children())
         self.profit_tree_records = {}
         total_purchase = 0.0
@@ -4649,7 +4784,16 @@ class CardPipelineApp(tk.Tk):
                 )
                 self.profit_tree_records[iid] = record
         if mode == "Sold Sheets":
-            for sheet_row in self._profit_sheet_rows(self.filtered_profit_rows):
+            sheet_rows = self._profit_sheet_rows(self.filtered_profit_rows)
+            if hasattr(self, "_sorted_records"):
+                sheet_rows = self._sorted_records(
+                    sheet_rows,
+                    getattr(self, "profit_sort_column", "last_sale"),
+                    bool(getattr(self, "profit_sort_descending", True)),
+                    "profit_sheet",
+                    mode,
+                )
+            for sheet_row in sheet_rows:
                 profit = self._money_value(sheet_row.get("profit"))
                 tag = "profit_negative" if profit is not None and profit < 0 else "profit_positive"
                 self.profit_tree.insert(

@@ -2459,6 +2459,30 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.inventory_search_var = FieldVar("hidden sold")
         self.assertEqual(dummy._filtered_inventory_records(rows), [])
 
+    def test_table_sorting_handles_money_and_blank_values(self) -> None:
+        class SortDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _expense_related_label = app.CardPipelineApp._expense_related_label
+            _record_sort_value = app.CardPipelineApp._record_sort_value
+            _sorted_records = app.CardPipelineApp._sorted_records
+
+        dummy = SortDummy()
+        inventory_rows = [
+            {"cert_number": "1", "purchase_price": "$9.00"},
+            {"cert_number": "2", "purchase_price": "$100.00"},
+            {"cert_number": "3", "purchase_price": ""},
+        ]
+
+        self.assertEqual([row["cert_number"] for row in dummy._sorted_records(inventory_rows, "purchase", False, "inventory")], ["1", "2", "3"])
+        self.assertEqual([row["cert_number"] for row in dummy._sorted_records(inventory_rows, "purchase", True, "inventory")], ["2", "1", "3"])
+
+        profit_rows = [
+            {"card_title": "A", "profit": "$5.00"},
+            {"card_title": "B", "profit": "$15.00"},
+            {"card_title": "C", "profit": ""},
+        ]
+        self.assertEqual([row["card_title"] for row in dummy._sorted_records(profit_rows, "profit", True, "profit")], ["B", "A", "C"])
+
     def test_inventory_refresh_purges_non_active_rows_from_ledger(self) -> None:
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
