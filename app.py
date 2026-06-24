@@ -1544,6 +1544,8 @@ class CardPipelineApp(tk.Tk):
         normalized = self._normalize_inventory_record(record)
         return {
             "inventory_key": normalized.get("inventory_key"),
+            "item_type": normalized.get("item_type"),
+            "item_id": normalized.get("item_id"),
             "date_added": normalized.get("date_added"),
             "assigned_person": normalized.get("assigned_person"),
             "sport": normalized.get("sport"),
@@ -1577,7 +1579,7 @@ class CardPipelineApp(tk.Tk):
                 continue
             haystack = " ".join(
                 str(record.get(field) or "")
-                for field in ("cert_number", "card_title", "grader", "assigned_person", "sport", "source", "best_company", "notes")
+                for field in ("inventory_key", "item_type", "item_id", "cert_number", "card_title", "grader", "assigned_person", "sport", "source", "best_company", "notes")
             ).lower()
             if query and any(part not in haystack for part in query.split()):
                 continue
@@ -1594,6 +1596,13 @@ class CardPipelineApp(tk.Tk):
         update_existing = bool(payload.get("update_existing"))
         with shared_lock(CARD_PIPELINE_DIR, "mobile-inventory", self.lucas_identity):
             ledger = [self._normalize_inventory_record(item) for item in self._load_inventory_ledger()]
+            if not cert and not str(record.get("item_id") or "").strip():
+                record["item_type"] = "Raw"
+                record["item_id"] = self._next_raw_item_id(ledger)
+                record["source_sheet"] = "Raw Inventory"
+                record["source"] = record.get("source") or "Mobile Raw Card"
+                record.pop("inventory_key", None)
+                record = self._normalize_inventory_record(record)
             existing_index = next(
                 (
                     index
@@ -3762,7 +3771,7 @@ class CardPipelineApp(tk.Tk):
                 "person": "Person",
                 "company": "Company",
                 "card": "Card",
-                "cert": "Cert",
+                "cert": "Cert / Item ID",
                 "purchase": "Purchase",
                 "sale": "Sale Price",
                 "profit": "Profit",
@@ -3778,8 +3787,11 @@ class CardPipelineApp(tk.Tk):
     def _expense_related_label(self, record: dict[str, object]) -> str:
         related_type = str(record.get("related_type") or "General").strip() or "General"
         source_sheet = str(record.get("source_sheet") or "").strip()
+        item_id = str(record.get("item_id") or "").strip()
+        cert = str(record.get("cert_number") or "").strip()
         if related_type == "Card":
-            return source_sheet if source_sheet and source_sheet != "Expenses" else "Card"
+            parts = [part for part in (source_sheet if source_sheet and source_sheet != "Expenses" else "", item_id or cert) if part]
+            return " | ".join(parts) if parts else "Card"
         if related_type == "Sheet":
             return source_sheet if source_sheet and source_sheet != "Expenses" else "Sheet"
         return "General"
@@ -4309,7 +4321,7 @@ class CardPipelineApp(tk.Tk):
                         record.get("assigned_person") or "Unassigned",
                         record.get("company") or "",
                         record.get("card_title") or "",
-                        record.get("cert_number") or "",
+                        record.get("cert_number") or record.get("item_id") or "",
                         format_money(purchase),
                         format_money(sale),
                         format_money(profit),

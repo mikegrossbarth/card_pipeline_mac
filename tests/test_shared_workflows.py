@@ -2229,7 +2229,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(expense_row["company"], "Expense: Shipping")
                 self.assertEqual(expense_row["source_sheet"], "Lot A.xlsx")
                 self.assertEqual(expense_row["cert_number"], "123")
-                self.assertEqual(dummy._expense_related_label(expense_row), "Lot A.xlsx")
+                self.assertEqual(dummy._expense_related_label(expense_row), "Lot A.xlsx | 123")
+                raw_expense_row = dict(expense_row, source_sheet="Raw Inventory", cert_number="", item_id="RAW-20260624-0001")
+                self.assertEqual(dummy._expense_related_label(raw_expense_row), "Raw Inventory | RAW-20260624-0001")
                 sheets, cards, lookup = dummy._expense_link_options("Kevin")
                 self.assertEqual(sheets, ["Lot A.xlsx"])
                 self.assertEqual(len(cards), 1)
@@ -4018,6 +4020,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
             _mobile_inventory_payload_record = app.CardPipelineApp._mobile_inventory_payload_record
             _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
             mobile_inventory_search = app.CardPipelineApp.mobile_inventory_search
             mobile_inventory_add = app.CardPipelineApp.mobile_inventory_add
 
@@ -4079,6 +4082,15 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertTrue(added["ok"])
                 self.assertEqual(added["action"], "added")
                 self.assertEqual(added["record"]["source"], "Show")
+
+                raw_added = dummy.mobile_inventory_add({"card_title": "2024 Panini Prizm Test Raw Card", "purchase_price": "8"})
+                self.assertTrue(raw_added["ok"])
+                self.assertEqual(raw_added["record"]["item_type"], "Raw")
+                self.assertTrue(raw_added["record"]["item_id"].startswith("RAW-"))
+                self.assertEqual(raw_added["record"]["cert_number"], "")
+                raw_search = dummy.mobile_inventory_search({"query": raw_added["record"]["item_id"]})
+                self.assertEqual(raw_search["count"], 1)
+                self.assertEqual(raw_search["items"][0]["item_id"], raw_added["record"]["item_id"])
             finally:
                 app.CARD_PIPELINE_DIR = old_root
                 app.INVENTORY_LEDGER_PATH = old_inventory
