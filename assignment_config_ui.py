@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
@@ -56,6 +57,124 @@ VALUE_SOURCE_LABELS = {
 }
 
 
+def seller_terms_rate(value: object) -> float | None:
+    raw = str(value or "").strip()
+    text = raw.replace("%", "").strip()
+    if not text:
+        return None
+    try:
+        numeric = float(text)
+    except ValueError:
+        return None
+    rate = numeric / 100 if "%" in raw or numeric > 1 else numeric
+    return rate if rate >= 0 else None
+
+
+def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str, Any]]) -> list[str]:
+    active_companies = {
+        str(company.get("name") or "").strip().lower(): str(company.get("name") or "").strip()
+        for company in companies
+        if str(company.get("name") or "").strip() and company.get("active") is not False
+    }
+    inactive_companies = {
+        str(company.get("name") or "").strip().lower(): str(company.get("name") or "").strip()
+        for company in companies
+        if str(company.get("name") or "").strip() and company.get("active") is False
+    }
+    if not seller_terms_path.exists():
+        return [
+            "Seller Terms: not found",
+            f"Path: {seller_terms_path}",
+            "Create seller_terms.csv when Network Mode seller payouts are needed.",
+        ]
+    try:
+        with seller_terms_path.open("r", encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+    except Exception as error:
+        return [
+            "Seller Terms: unreadable",
+            f"Path: {seller_terms_path}",
+            f"Error: {error}",
+        ]
+
+    issues: list[tuple[str, str]] = []
+    parsed: list[str] = []
+    seen: dict[tuple[str, str], int] = {}
+    valid_count = 0
+    for index, row in enumerate(rows, start=2):
+        normalized = {re.sub(r"[^a-z0-9]+", "", str(key or "").lower()): value for key, value in row.items()}
+        seller = str(normalized.get("seller") or normalized.get("person") or normalized.get("name") or "").strip()
+        sheet_type = str(normalized.get("sheettype") or normalized.get("type") or normalized.get("company") or "").strip()
+        rate_raw = normalized.get("sellerrate") or normalized.get("rate") or normalized.get("payout") or normalized.get("percentage")
+        deduction_raw = normalized.get("deduction") or normalized.get("sellerdeduction") or normalized.get("deductionpercent") or normalized.get("deductionpercentage")
+        rate = seller_terms_rate(rate_raw)
+        deduction = seller_terms_rate(deduction_raw)
+        row_errors: list[str] = []
+        row_warnings: list[str] = []
+        if not seller:
+            row_errors.append("missing Seller")
+        if not sheet_type:
+            row_errors.append("missing Sheet Type")
+        if str(rate_raw or "").strip() and rate is None:
+            row_errors.append(f"invalid Seller Rate {rate_raw!r}")
+        if str(deduction_raw or "").strip() and deduction is None:
+            row_errors.append(f"invalid Deduction {deduction_raw!r}")
+        if rate is None and deduction is None:
+            row_errors.append("missing Seller Rate or Deduction")
+        if rate is not None and rate > 1:
+            row_errors.append(f"Seller Rate parses above 100% ({rate:.0%})")
+        if deduction is not None and deduction > 1:
+            row_errors.append(f"Deduction parses above 100% ({deduction:.0%})")
+        type_key = sheet_type.lower()
+        if sheet_type and type_key not in active_companies:
+            if type_key in inactive_companies:
+                row_warnings.append(f"Sheet Type is inactive assignment company {inactive_companies[type_key]!r}")
+            else:
+                row_errors.append(f"Sheet Type {sheet_type!r} is not an assignment company")
+        duplicate_key = (seller.lower(), type_key)
+        if seller and sheet_type:
+            previous_row = seen.get(duplicate_key)
+            if previous_row:
+                row_warnings.append(f"duplicate Seller/Sheet Type also appears on row {previous_row}")
+            else:
+                seen[duplicate_key] = index
+        label = f"row {index}: {seller or '<missing seller>'} / {sheet_type or '<missing sheet type>'}"
+        if row_errors:
+            issues.append(("ERROR", f"{label} - {'; '.join(row_errors)}"))
+            continue
+        if row_warnings:
+            issues.append(("WARN", f"{label} - {'; '.join(row_warnings)}"))
+        valid_count += 1
+        parts = []
+        if rate is not None:
+            parts.append(f"rate {rate:.0%}")
+        if deduction is not None:
+            parts.append(f"deduction {deduction:.0%}")
+        parsed.append(f"{seller} / {sheet_type}: {', '.join(parts)}")
+
+    errors = sum(1 for level, _message in issues if level == "ERROR")
+    warnings = sum(1 for level, _message in issues if level == "WARN")
+    lines = [
+        f"Seller Terms: {valid_count} valid row(s), {warnings} warning(s), {errors} error(s)",
+        f"Path: {seller_terms_path}",
+    ]
+    if not rows:
+        lines.append("seller_terms.csv is empty.")
+    if parsed:
+        lines.append("Parsed terms:")
+        lines.extend(f"- {line}" for line in parsed[:10])
+        if len(parsed) > 10:
+            lines.append(f"- ... {len(parsed) - 10} more")
+    if issues:
+        lines.append("Issues:")
+        lines.extend(f"- {level}: {message}" for level, message in issues[:12])
+        if len(issues) > 12:
+            lines.append(f"- ... {len(issues) - 12} more")
+    elif rows:
+        lines.append("No seller term issues found.")
+    return lines
+
+
 class AssignmentRulesDialog(tk.Toplevel):
     def __init__(self, parent: tk.Tk, pipeline_root: Path, on_saved: Callable[[], None]) -> None:
         super().__init__(parent)
@@ -87,6 +206,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.status = tk.StringVar(value="Create or edit a company, then save.")
         self.preview_status = tk.StringVar(value="No source file selected.")
         self.google_status = tk.StringVar(value="")
+        self.seller_terms_status = tk.StringVar(value="")
         self.rule_materialized_source: dict[str, Any] | None = None
         self.payout_materialized_source: dict[str, Any] | None = None
 
@@ -200,7 +320,12 @@ class AssignmentRulesDialog(tk.Toplevel):
         sources.columnconfigure(1, weight=1)
         self._build_rule_source_panel(sources).grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         self._build_payout_source_panel(sources).grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        self._build_google_status_panel(main).grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        status_panels = ttk.Frame(main, style="Assign.TFrame")
+        status_panels.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        status_panels.columnconfigure(0, weight=1)
+        status_panels.columnconfigure(1, weight=1)
+        self._build_google_status_panel(status_panels).grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        self._build_seller_terms_panel(status_panels).grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
         self.body = ttk.Frame(main, style="Assign.TFrame")
         self.body.grid(row=3, column=0, sticky="nsew", pady=(12, 0))
@@ -283,11 +408,21 @@ class AssignmentRulesDialog(tk.Toplevel):
         frame = ttk.LabelFrame(parent, text="Google Status", style="Assign.TLabelframe", padding=10)
         frame.columnconfigure(0, weight=1)
         self.google_status.set("\n".join(google_status_lines()))
-        ttk.Label(frame, textvariable=self.google_status, style="AssignMuted.TLabel", wraplength=940, justify=tk.LEFT).grid(row=0, column=0, columnspan=4, sticky="ew")
+        ttk.Label(frame, textvariable=self.google_status, style="AssignMuted.TLabel", wraplength=520, justify=tk.LEFT).grid(row=0, column=0, columnspan=4, sticky="ew")
         ttk.Button(frame, text="Refresh Status", command=self._refresh_google_status, style="AssignSoft.TButton").grid(row=1, column=0, sticky="ew", pady=(8, 0), padx=(0, 4))
         ttk.Button(frame, text="Reconnect Google", command=self._connect_google, style="AssignSoft.TButton").grid(row=1, column=1, sticky="ew", pady=(8, 0), padx=4)
         ttk.Button(frame, text="Open Token Folder", command=self._open_token_folder, style="AssignSoft.TButton").grid(row=1, column=2, sticky="ew", pady=(8, 0), padx=4)
         ttk.Button(frame, text="Copy Details", command=self._copy_google_details, style="AssignSoft.TButton").grid(row=1, column=3, sticky="ew", pady=(8, 0), padx=(4, 0))
+        return frame
+
+    def _build_seller_terms_panel(self, parent: ttk.Frame) -> ttk.Frame:
+        frame = ttk.LabelFrame(parent, text="Seller Terms Health", style="Assign.TLabelframe", padding=10)
+        frame.columnconfigure(0, weight=1)
+        self._refresh_seller_terms_status()
+        ttk.Label(frame, textvariable=self.seller_terms_status, style="AssignMuted.TLabel", wraplength=520, justify=tk.LEFT).grid(row=0, column=0, columnspan=3, sticky="ew")
+        ttk.Button(frame, text="Refresh Terms", command=self._refresh_seller_terms_status, style="AssignSoft.TButton").grid(row=1, column=0, sticky="ew", pady=(8, 0), padx=(0, 4))
+        ttk.Button(frame, text="Open Terms Folder", command=self._open_seller_terms_folder, style="AssignSoft.TButton").grid(row=1, column=1, sticky="ew", pady=(8, 0), padx=4)
+        ttk.Button(frame, text="Copy Terms Details", command=self._copy_seller_terms_details, style="AssignSoft.TButton").grid(row=1, column=2, sticky="ew", pady=(8, 0), padx=(4, 0))
         return frame
 
     def _build_payout_source_panel(self, parent: ttk.Frame) -> ttk.Frame:
@@ -450,6 +585,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         company["active"] = not (company.get("active") is not False)
         self._write_config()
         self._refresh_company_list()
+        self._refresh_seller_terms_status()
         state = "active" if company.get("active") is not False else "inactive"
         self.status.set(f"{company.get('name') or 'Company'} is now {state}. Save & Reload to apply in Assignment.")
 
@@ -749,6 +885,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         folder_error = self._ensure_company_sheet_folder(name)
         self._refresh_company_list()
         self._select_company(self.selected_index)
+        self._refresh_seller_terms_status()
         if folder_error:
             self.status.set(f"Saved {name}. Company sheet folder failed: {folder_error}")
         else:
@@ -941,6 +1078,42 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.clipboard_clear()
         self.clipboard_append(diagnostic_json(details))
         self.status.set("Copied Google diagnostic details.")
+
+    def _seller_terms_path(self) -> Path:
+        return self.rules_dir / "seller_terms.csv"
+
+    def _refresh_seller_terms_status(self) -> None:
+        self.seller_terms_status.set("\n".join(seller_terms_health_lines(self._seller_terms_path(), self.companies)))
+
+    def _open_seller_terms_folder(self) -> None:
+        folder = self.rules_dir
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            if os.name == "nt":
+                os.startfile(str(folder))  # type: ignore[attr-defined]
+            else:
+                webbrowser.open(folder.as_uri())
+        except Exception as error:
+            messagebox.showerror("Open Terms Folder", str(error))
+
+    def _copy_seller_terms_details(self) -> None:
+        self._refresh_seller_terms_status()
+        details = {
+            "title": "Seller Terms Health",
+            "seller_terms_path": str(self._seller_terms_path()),
+            "seller_terms_status": self.seller_terms_status.get(),
+            "assignment_companies": [
+                {
+                    "name": str(company.get("name") or ""),
+                    "active": company.get("active") is not False,
+                    "value_source": company.get("value_source") or company.get("valueSource") or "",
+                }
+                for company in self.companies
+            ],
+        }
+        self.clipboard_clear()
+        self.clipboard_append(diagnostic_json(details))
+        self.status.set("Copied seller terms diagnostic details.")
 
     def _google_diagnostic_payload(self, title: str, error: str) -> dict[str, Any]:
         return {
