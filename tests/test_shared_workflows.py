@@ -1212,6 +1212,34 @@ class AssignmentEngineTests(unittest.TestCase):
 
         self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 2760.0)
 
+    def test_date_weighted_normalizes_equivalent_date_formats_before_dedupe(self) -> None:
+        comps = [
+            {"date_sold": "Sept. 4, 2025", "price": "$90.00", "source": "EBAY", "sale_type": "Auction", "title": "Test Card PSA 10 $120.00"},
+            {"date_sold": "Sep 4, 2025", "price": "$120.00", "source": "EBAY", "sale_type": "Auction", "title": "Test Card PSA 10"},
+            {"date_sold": "8/1/25", "price": "$50.00", "source": "EBAY", "sale_type": "Auction", "title": "Older Test Card PSA 10"},
+        ]
+
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 120.0)
+
+    def test_date_weighted_parses_date_embedded_in_ocr_label_text(self) -> None:
+        comps = [
+            {"date_sold": "Date Sold: Jun 1, 2025 Type Auction", "price": "$25.00", "title": "Test Card PSA 10"},
+            {"date_sold": "5/20/25", "price": "$10.00", "title": "Test Card PSA 10"},
+        ]
+
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 25.0)
+
+    def test_date_weighted_excludes_undated_comps_when_dated_comps_are_available(self) -> None:
+        newest = datetime.now() - timedelta(days=2)
+        second = newest - timedelta(days=4)
+        comps = [
+            {"date_sold": newest.strftime("%b %d, %Y"), "price": "$25.00", "title": "Test Card PSA 10"},
+            {"date_sold": second.strftime("%b %d, %Y"), "price": "$15.00", "title": "Test Card PSA 10"},
+            {"date_sold": "May 1", "price": "$500.00", "title": "Test Card PSA 10 missing year"},
+        ]
+
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 20.0)
+
     def test_accepted_company_without_matching_payout_cannot_win(self) -> None:
         row = WorkbookRow(
             excel_row=2,

@@ -1325,9 +1325,11 @@ function parseCompChunk(chunk, sourceLineMatchResult = null) {
   const sourceText = sourceMatch[1] || sourceMatch[0];
   const sourceIndex = chunk.toLowerCase().indexOf(String(sourceText).toLowerCase());
   if (sourceIndex > 0) chunk = chunk.slice(sourceIndex);
+  chunk = currentCompChunkOnly(chunk, sourceText);
   chunk = chunk.replace(/^.*?\b(?:CL|Card\s*Ladder)\s*Value\b.*?(?=\b(?:Date\s+Sold|Type|Price)\b|\$|$)/i, " ");
   const dateMatch = chunk.match(compDatePattern());
-  const priceMatches = [...chunk.matchAll(/\$\s*[\d,]+(?:\.\d{1,2})?/g)];
+  const priceSearchText = dateMatch ? chunk.slice(dateMatch.index || 0) : chunk;
+  const priceMatches = [...priceSearchText.matchAll(/\$\s*[\d,]+(?:\.\d{1,2})?/g)];
   if (!dateMatch || !priceMatches.length) return null;
   const price = priceMatches[priceMatches.length - 1][0].replace(/\s+/g, "");
   const saleType = (chunk.match(/\b(Auction|Best Offer|Buy It Now|Fixed Price|BIN)\b/i) || [""])[0];
@@ -1348,6 +1350,13 @@ function parseCompChunk(chunk, sourceLineMatchResult = null) {
     sale_type: saleType,
     price,
   };
+}
+
+function currentCompChunkOnly(chunk, sourceText) {
+  const afterCurrentSource = chunk.slice(String(sourceText || "").length);
+  const nextSource = afterCurrentSource.match(new RegExp(`\\s(?:${COMP_SOURCE_PATTERN_TEXT})\\b`, "i"));
+  if (!nextSource || nextSource.index == null) return chunk;
+  return chunk.slice(0, String(sourceText || "").length + nextSource.index);
 }
 
 function compDatePattern() {
@@ -1379,12 +1388,13 @@ function dedupeComps(comps) {
     const source = cleanCompSource(comp.source).toLowerCase();
     const existingIndex = ordered.findIndex((existing) => {
       const existingPrice = String(existing.price || "").replace(/[$,\s]/g, "");
-      if (existingPrice !== price) return false;
       const existingSaleType = String(existing.sale_type || "").replace(/\s+/g, " ").trim().toLowerCase();
       const existingTitleKey = compactCompTitle(existing.title).slice(0, 80);
       const sameSource = cleanCompSource(existing.source).toLowerCase() === source;
       const similarTitle = Boolean(titleKey && existingTitleKey && (titleKey.includes(existingTitleKey) || existingTitleKey.includes(titleKey)));
       const sameDate = normalizeDateText(existing.date_sold) === normalizeDateText(comp.date_sold);
+      if (sameDate && sameSource && similarTitle) return true;
+      if (existingPrice !== price) return false;
       return (sameDate && (sameSource || similarTitle)) || (sameSaleTypeOrBlank(existingSaleType, saleType) && sameSource && similarTitle);
     });
 
@@ -1434,8 +1444,26 @@ function compQuality(comp) {
   let score = Math.min(title.length, 160);
   if (/\b\d{4}\b/.test(title)) score += 20;
   if (/#\s*[A-Za-z0-9-]+|\b[A-Za-z]{1,5}\d{1,4}\b/.test(title)) score += 10;
+  if (compPriceConflictsWithTitle(comp)) score -= 120;
+  else if (/\$\s*[\d,]+(?:\.\d{1,2})?/.test(title)) score -= 40;
   if (isJunkCompTitle(title)) score -= 200;
   return score;
+}
+
+function compPriceConflictsWithTitle(comp) {
+  const price = parseMoneyValue(comp?.price);
+  if (price == null) return false;
+  const titleValues = [...cleanCompTitle(comp?.title).matchAll(/\$\s*[\d,]+(?:\.\d{1,2})?/g)]
+    .map((match) => parseMoneyValue(match[0]))
+    .filter((value) => value != null);
+  return Boolean(titleValues.length && titleValues.every((value) => Math.abs(value - price) > 0.01));
+}
+
+function parseMoneyValue(value) {
+  const text = String(value || "").replace(/[$,\s]/g, "");
+  if (!text) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function sameSaleTypeOrBlank(a, b) {
@@ -1443,11 +1471,16 @@ function sameSaleTypeOrBlank(a, b) {
 }
 
 function normalizeDateText(value) {
+  const parsed = parseCompDate(value);
+  if (parsed) return parsed.toISOString().slice(0, 10);
   return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function parseCompDate(value) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
+  let text = String(value || "").replace(/\s+/g, " ").trim();
+  const match = text.match(compDatePattern());
+  if (match) text = match[0];
+  text = text.replace(/\bSept\.?\b/ig, "Sep").replace(/\b([A-Za-z]{3,9})\./g, "$1");
   const parsed = Date.parse(text);
   return Number.isNaN(parsed) ? null : new Date(parsed);
 }

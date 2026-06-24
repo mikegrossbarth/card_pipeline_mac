@@ -688,7 +688,7 @@ def dedupe_comps(comps: list[dict]) -> list[dict]:
     best_by_key: dict[tuple[str, str, str, str], dict] = {}
     order: list[tuple[str, str, str, str]] = []
     for comp in cleaned:
-        date = re.sub(r"\s+", " ", str(comp.get("date_sold") or "")).strip().lower()
+        date = normalized_comp_date_key(comp.get("date_sold"))
         price = str(comp.get("price") or "").replace("$", "").replace(",", "").strip()
         sale_type = re.sub(r"\s+", " ", str(comp.get("sale_type") or "")).strip().lower()
         key_base = (date, price, sale_type)
@@ -842,7 +842,8 @@ def stale_newest_else_average(comps: list[dict], values: list[float]) -> float |
         return best_value_for_comp_date(comps, dated_values[0][0])
     if len(dated_values) >= 2 and (dated_values[0][0] - dated_values[1][0]).days > 7:
         return best_value_for_comp_date(comps, dated_values[0][0])
-    return round(sum(values) / len(values), 2)
+    average_values = [value for _sold_date, value in dated_values] if dated_values else values
+    return round(sum(average_values) / len(average_values), 2)
 
 
 def best_value_for_comp_date(comps: list[dict], sold_date: datetime) -> float | None:
@@ -860,10 +861,30 @@ def best_value_for_comp_date(comps: list[dict], sold_date: datetime) -> float | 
     return parse_value(best.get("price"))
 
 
+def normalized_comp_date_key(value) -> str:
+    parsed = parse_comp_date(value)
+    if parsed:
+        return parsed.strftime("%Y-%m-%d")
+    return re.sub(r"\s+", " ", str(value or "")).strip().lower()
+
+
 def parse_comp_date(value) -> datetime | None:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     text = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", text, flags=re.I)
-    for fmt in ("%b %d, %Y", "%B %d, %Y", "%m/%d/%Y", "%Y-%m-%d"):
+    text = re.sub(r"\bSept\.?\b", "Sep", text, flags=re.I)
+    text = re.sub(r"\b([A-Za-z]{3,9})\.", r"\1", text)
+    date_match = re.search(
+        r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b"
+        r"|\b\d{1,2}/\d{1,2}/\d{2,4}\b"
+        r"|\b\d{4}-\d{1,2}-\d{1,2}\b",
+        text,
+        flags=re.I,
+    )
+    if date_match:
+        text = date_match.group(0)
+    text = re.sub(r"\bSept\.?\b", "Sep", text, flags=re.I)
+    text = re.sub(r"\b([A-Za-z]{3,9})\.", r"\1", text)
+    for fmt in ("%b %d, %Y", "%B %d, %Y", "%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d"):
         try:
             return datetime.strptime(text, fmt)
         except ValueError:
