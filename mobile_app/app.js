@@ -1,23 +1,82 @@
 const state = {
   pin: localStorage.getItem("lucasMobilePin") || "",
+  clientId: localStorage.getItem("lucasMobileClientId") || "",
+  queue: [],
   lastDuplicate: null,
   sellRecord: null,
   people: [],
 };
+if (!state.clientId) {
+  state.clientId = `mobile-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem("lucasMobileClientId", state.clientId);
+}
 
 const $ = (id) => document.getElementById(id);
+const QUEUE_KEY = "lucasMobileQueue";
 
 function setUnlocked(unlocked) {
   $("authPanel").classList.toggle("hidden", unlocked);
   $("appPanel").classList.toggle("hidden", !unlocked);
 }
 
-function api(path, body) {
-  return fetch(path, {
+async function api(path, body) {
+  const response = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ...body, pin: state.pin }),
-  }).then((response) => response.json());
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error || `Request failed with ${response.status}`);
+  }
+  return result;
+}
+
+function loadQueue() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]");
+    state.queue = Array.isArray(raw) ? raw.filter((item) => item && item.id && item.type) : [];
+  } catch (_error) {
+    state.queue = [];
+  }
+}
+
+function saveQueue() {
+  localStorage.setItem(QUEUE_KEY, JSON.stringify(state.queue));
+  renderQueue();
+}
+
+function queueAction(type, payload) {
+  const id = `${state.clientId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const action = {
+    id,
+    type,
+    client_id: state.clientId,
+    created_at: new Date().toISOString(),
+    payload: { ...payload },
+  };
+  delete action.payload.pin;
+  state.queue.push(action);
+  saveQueue();
+  return action;
+}
+
+async function mutationApi(type, path, body) {
+  try {
+    return await api(path, body);
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error || "");
+    if (/pin/i.test(message)) {
+      return { ok: false, error: message || "Invalid mobile PIN." };
+    }
+    const action = queueAction(type, body);
+    return {
+      ok: true,
+      queued: true,
+      action_id: action.id,
+      error: message,
+    };
+  }
 }
 
 function money(value, fallback = "") {
@@ -46,6 +105,92 @@ function updatePeople(people) {
   ["personFilter", "profitPerson", "payoutPerson"].forEach((id) => fillSelect($(id), state.people));
 }
 
+function queueTitle(action) {
+  const payload = action.payload || {};
+  if (action.type === "inventory.add") {
+    return payload.cert_number || payload.card_title || "Inventory add";
+  }
+  if (action.type === "inventory.sold") {
+    return payload.inventory_key || payload.company || "Inventory sale";
+  }
+  if (action.type === "expense.add") {
+    return `${payload.person || payload.assigned_person || "Expense"} ${money(payload.amount || payload.expense_amount, "")}`.trim();
+  }
+  return action.type || "Queued action";
+}
+
+function renderQueue() {
+  const badge = $("queueBadge");
+  if (badge) badge.textContent = String(state.queue.length);
+  const host = $("queueList");
+  if (!host) return;
+  if (!state.queue.length) {
+    host.innerHTML = '<div class="hint">No queued mobile actions.</div>';
+    return;
+  }
+  host.innerHTML = state.queue.map((action) => `
+    <article class="result">
+      <div class="queueType">${escapeHtml(action.type)}</div>
+      <h2>${escapeHtml(queueTitle(action))}</h2>
+      <div class="meta">
+        <div><strong>Created</strong>${escapeHtml(String(action.created_at || "").replace("T", " ").slice(0, 19))}</div>
+        <div><strong>Action ID</strong>${escapeHtml(action.id)}</div>
+      </div>
+    </article>
+  `).join("");
+}
+
+async function syncQueuedActions() {
+  if (!state.queue.length) {
+    $("syncStatus").textContent = "No queued actions to sync.";
+    renderQueue();
+    return;
+  }
+  $("syncStatus").textContent = "Syncing queued actions...";
+  try {
+    const result = await api("/mobile/api/sync/queue", {
+      client_id: state.clientId,
+      actions: state.queue,
+    });
+    const completed = new Set(
+      (result.results || [])
+        .filter((item) => item && item.ok && ["applied", "already_applied"].includes(item.status))
+        .map((item) => item.id)
+    );
+    state.queue = state.queue.filter((action) => !completed.has(action.id));
+    saveQueue();
+    $("syncStatus").textContent = `Applied ${result.applied || 0}, skipped ${result.skipped || 0}, failed ${result.failed || 0}.`;
+    if (completed.size) {
+      searchInventory();
+      loadProfit();
+      loadPayouts();
+    }
+  } catch (error) {
+    $("syncStatus").textContent = `Desktop not reachable. Export the queue or try again later. ${error.message || error}`;
+    renderQueue();
+  }
+}
+
+function exportQueue() {
+  const payload = {
+    version: 1,
+    service: "lucas-mobile-offline-queue",
+    client_id: state.clientId,
+    exported_at: new Date().toISOString(),
+    actions: state.queue,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `lucas-mobile-queue-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  $("syncStatus").textContent = `Exported ${state.queue.length} queued action(s).`;
+}
+
 function syncPersonInputs(person) {
   const value = person || $("personFilter").value || $("profitPerson").value || $("payoutPerson").value || "";
   if (value && !$("assignedPerson").value) $("assignedPerson").value = value;
@@ -63,6 +208,7 @@ function renderResults(items) {
       <h2>${escapeHtml(item.card_title || item.cert_number || "Untitled card")}</h2>
       <div class="meta">
         <div><strong>Cert</strong>${escapeHtml(item.cert_number || "")}</div>
+        <div><strong>Item ID</strong>${escapeHtml(item.item_id || "")}</div>
         <div><strong>Grader</strong>${escapeHtml(item.grader || "")}</div>
         <div><strong>Paid</strong>${escapeHtml(item.purchase_price_display || money(item.purchase_price, "-"))}</div>
         <div><strong>Value</strong>${escapeHtml(item.inventory_value_display || money(item.inventory_value, "-"))}</div>
@@ -90,11 +236,17 @@ function escapeHtml(value) {
 }
 
 async function searchInventory() {
-  const result = await api("/mobile/api/inventory/search", {
-    query: $("searchInput").value,
-    person: $("personFilter").value,
-    include_sold: $("includeSold").checked,
-  });
+  let result;
+  try {
+    result = await api("/mobile/api/inventory/search", {
+      query: $("searchInput").value,
+      person: $("personFilter").value,
+      include_sold: $("includeSold").checked,
+    });
+  } catch (error) {
+    $("results").innerHTML = `<div class="hint">Desktop not reachable. Add/sell/expense actions can still queue from forms already open. ${escapeHtml(error.message || error)}</div>`;
+    return;
+  }
   if (!result.ok) {
     if (/pin/i.test(result.error || "")) setUnlocked(false);
     $("results").innerHTML = `<div class="hint">${escapeHtml(result.error || "Search failed.")}</div>`;
@@ -121,7 +273,11 @@ function addPayload(updateExisting = false) {
 async function addInventory(updateExisting = false) {
   $("addStatus").textContent = "Saving...";
   $("updateDuplicate").classList.add("hidden");
-  const result = await api("/mobile/api/inventory/add", addPayload(updateExisting));
+  const result = await mutationApi("inventory.add", "/mobile/api/inventory/add", addPayload(updateExisting));
+  if (result.queued) {
+    $("addStatus").textContent = `Desktop not reachable. Queued inventory add ${result.action_id}.`;
+    return;
+  }
   if (result.duplicate) {
     state.lastDuplicate = result.record;
     $("addStatus").textContent = result.error || "Duplicate cert found.";
@@ -160,13 +316,18 @@ function cancelSell() {
 async function confirmSell() {
   if (!state.sellRecord) return;
   $("sellStatus").textContent = "Saving sale...";
-  const result = await api("/mobile/api/inventory/sold", {
+  const result = await mutationApi("inventory.sold", "/mobile/api/inventory/sold", {
     inventory_key: state.sellRecord.inventory_key,
     sale_price: $("sellPrice").value,
     sale_date: $("sellDate").value,
     sale_method: $("sellMethod").value,
     company: $("sellCompany").value,
   });
+  if (result.queued) {
+    $("sellStatus").textContent = `Desktop not reachable. Queued sale ${result.action_id}.`;
+    cancelSell();
+    return;
+  }
   if (!result.ok) {
     if (/pin/i.test(result.error || "")) setUnlocked(false);
     $("sellStatus").textContent = result.error || "Could not mark sold.";
@@ -195,7 +356,14 @@ function expensePayload() {
 
 async function addExpense() {
   $("expenseStatus").textContent = "Saving...";
-  const result = await api("/mobile/api/expenses/add", expensePayload());
+  const result = await mutationApi("expense.add", "/mobile/api/expenses/add", expensePayload());
+  if (result.queued) {
+    $("expenseStatus").textContent = `Desktop not reachable. Queued expense ${result.action_id}.`;
+    $("expenseAmount").value = "";
+    $("expenseSheet").value = "";
+    $("expenseNotes").value = "";
+    return;
+  }
   if (!result.ok) {
     if (/pin/i.test(result.error || "")) setUnlocked(false);
     $("expenseStatus").textContent = result.error || "Expense add failed.";
@@ -249,11 +417,17 @@ function drawChart(chart) {
 }
 
 async function loadProfit() {
-  const result = await api("/mobile/api/profit/summary", {
-    person: $("profitPerson").value,
-    period: $("profitPeriod").value,
-    graph: $("profitGraph").value,
-  });
+  let result;
+  try {
+    result = await api("/mobile/api/profit/summary", {
+      person: $("profitPerson").value,
+      period: $("profitPeriod").value,
+      graph: $("profitGraph").value,
+    });
+  } catch (error) {
+    $("profitRecent").innerHTML = `<div class="hint">Desktop not reachable. ${escapeHtml(error.message || error)}</div>`;
+    return;
+  }
   if (!result.ok) {
     if (/pin/i.test(result.error || "")) setUnlocked(false);
     $("profitRecent").innerHTML = `<div class="hint">${escapeHtml(result.error || "Profit load failed.")}</div>`;
@@ -285,7 +459,13 @@ async function loadProfit() {
 }
 
 async function loadPayouts() {
-  const result = await api("/mobile/api/payouts", { person: $("payoutPerson").value });
+  let result;
+  try {
+    result = await api("/mobile/api/payouts", { person: $("payoutPerson").value });
+  } catch (error) {
+    $("payoutSummary").innerHTML = `<div class="hint">Desktop not reachable. ${escapeHtml(error.message || error)}</div>`;
+    return;
+  }
   if (!result.ok) {
     if (/pin/i.test(result.error || "")) setUnlocked(false);
     $("payoutSummary").innerHTML = `<div class="hint">${escapeHtml(result.error || "Payout load failed.")}</div>`;
@@ -374,6 +554,7 @@ function bindPhotoInput(inputId, targetId) {
 }
 
 function bind() {
+  loadQueue();
   $("pin").value = state.pin;
   $("expenseDate").value = new Date().toISOString().slice(0, 10);
   $("sellDate").value = new Date().toISOString().slice(0, 10);
@@ -383,6 +564,7 @@ function bind() {
   fillSelect($("profitPeriod"), ["Total", "Year", "Month", "Week", "5 Days"], { includeAll: false });
   fillSelect($("profitGraph"), ["Daily Trend", "Overall Profit"], { includeAll: false });
   updatePeople([]);
+  renderQueue();
   setUnlocked(Boolean(state.pin));
   $("savePin").addEventListener("click", () => {
     state.pin = $("pin").value.trim();
@@ -394,11 +576,12 @@ function bind() {
     button.addEventListener("click", () => {
       document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
-      ["search", "add", "expense", "profit", "payout"].forEach((view) => {
+      ["search", "add", "expense", "profit", "payout", "sync"].forEach((view) => {
         $(`${view}View`).classList.toggle("hidden", button.dataset.view !== view);
       });
       if (button.dataset.view === "profit") loadProfit();
       if (button.dataset.view === "payout") loadPayouts();
+      if (button.dataset.view === "sync") renderQueue();
     });
   });
   $("searchInput").addEventListener("input", () => searchInventory());
@@ -413,6 +596,21 @@ function bind() {
   $("profitPeriod").addEventListener("change", () => loadProfit());
   $("profitGraph").addEventListener("change", () => loadProfit());
   $("payoutPerson").addEventListener("change", () => loadPayouts());
+  $("syncQueue").addEventListener("click", () => syncQueuedActions());
+  $("exportQueue").addEventListener("click", () => exportQueue());
+  $("clearAppliedQueue").addEventListener("click", () => {
+    if (state.queue.length) {
+      $("syncStatus").textContent = "Queue still has pending actions. Sync or export it first.";
+      return;
+    }
+    localStorage.removeItem(QUEUE_KEY);
+    loadQueue();
+    renderQueue();
+    $("syncStatus").textContent = "Queue is empty.";
+  });
+  window.addEventListener("online", () => {
+    if (state.pin && state.queue.length) syncQueuedActions();
+  });
   bindPhotoInput("photoSearchInput", "searchInput");
   bindPhotoInput("photoAddInput", "certNumber");
   $("addInventory").addEventListener("click", () => addInventory(false));
@@ -420,6 +618,9 @@ function bind() {
   $("addExpense").addEventListener("click", () => addExpense());
   $("installHelp").addEventListener("click", () => alert("On iPhone: Share -> Add to Home Screen."));
   if (state.pin) searchInventory();
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/mobile/sw.js").catch(() => {});
+  }
 }
 
 bind();

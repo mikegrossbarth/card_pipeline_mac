@@ -67,6 +67,7 @@ class BridgeState:
         self.mobile_profit_summary: Callable[[dict], dict] | None = None
         self.mobile_expense_add: Callable[[dict], dict] | None = None
         self.mobile_payouts: Callable[[dict], dict] | None = None
+        self.mobile_queue_sync: Callable[[dict], dict] | None = None
         self.keep_note_sources: list[dict[str, str]] = []
         self.last_keep_sync: dict[str, str] = {}
         self.cy_lookup_inflight: set[int] = set()
@@ -188,6 +189,13 @@ class BridgeState:
         if not self.mobile_payouts:
             return {"ok": False, "error": "Payout view is not available."}
         return self.mobile_payouts(payload)
+
+    def sync_mobile_queue(self, payload: dict) -> dict:
+        if not self.mobile_auth_ok(payload):
+            return {"ok": False, "error": "Invalid mobile PIN."}
+        if not self.mobile_queue_sync:
+            return {"ok": False, "error": "Mobile queue sync is not available."}
+        return self.mobile_queue_sync(payload)
 
     def start_all_comps(self, requery_all: bool = False) -> int:
         with self.lock:
@@ -1110,6 +1118,9 @@ class BridgeServer:
                     return
                 if self.path.startswith("/mobile/api/payouts"):
                     self._send_json(state.get_mobile_payouts(payload))
+                    return
+                if self.path.startswith("/mobile/api/sync/queue"):
+                    self._send_json(state.sync_mobile_queue(payload))
                     return
                 if self.path.startswith("/ack"):
                     state.acknowledge_command(int(payload.get("id") or 0))

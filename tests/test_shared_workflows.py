@@ -4199,6 +4199,97 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.PROFIT_LEDGER_PATH = old_profit
 
+    def test_mobile_queue_sync_applies_actions_once(self) -> None:
+        class MobileQueueDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _mobile_inventory_payload_record = app.CardPipelineApp._mobile_inventory_payload_record
+            _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            mobile_inventory_add = app.CardPipelineApp.mobile_inventory_add
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _append_profit_records = app.CardPipelineApp._append_profit_records
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            mobile_expense_add = app.CardPipelineApp.mobile_expense_add
+            _load_mobile_action_log = app.CardPipelineApp._load_mobile_action_log
+            _save_mobile_action_log = app.CardPipelineApp._save_mobile_action_log
+            _apply_mobile_queue_action = app.CardPipelineApp._apply_mobile_queue_action
+            mobile_queue_sync = app.CardPipelineApp.mobile_queue_sync
+
+            def __init__(self):
+                self.events = queue.Queue()
+                self.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+                self.home_sheet_markers = {}
+
+            def _known_people(self):
+                return ["Kevin Hambone"]
+
+            def _enrich_inventory_record_assignment(self, record, force=False):
+                return self._normalize_inventory_record(record)
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_mobile_log = app.MOBILE_ACTION_LOG_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            app.MOBILE_ACTION_LOG_PATH = Path(tmp) / "mobile_action_log.json"
+            try:
+                dummy = MobileQueueDummy()
+                payload = {
+                    "client_id": "phone-1",
+                    "actions": [
+                        {
+                            "id": "phone-1-add-1",
+                            "type": "inventory.add",
+                            "payload": {
+                                "cert_number": "777888",
+                                "grader": "PSA",
+                                "card_title": "Queued Mobile Card",
+                                "purchase_price": "12.50",
+                                "assigned_person": "Kevin Hambone",
+                            },
+                        },
+                        {
+                            "id": "phone-1-expense-1",
+                            "type": "expense.add",
+                            "payload": {
+                                "person": "Kevin Hambone",
+                                "date": "2026-06-22",
+                                "expense_type": "Shipping",
+                                "amount": "5",
+                            },
+                        },
+                    ],
+                }
+                first = dummy.mobile_queue_sync(payload)
+                self.assertTrue(first["ok"])
+                self.assertEqual(first["applied"], 2)
+                self.assertEqual(first["skipped"], 0)
+                self.assertEqual(len(dummy._load_inventory_ledger()), 1)
+                self.assertEqual(len(dummy._load_profit_ledger()), 1)
+
+                second = dummy.mobile_queue_sync(payload)
+                self.assertTrue(second["ok"])
+                self.assertEqual(second["applied"], 0)
+                self.assertEqual(second["skipped"], 2)
+                self.assertEqual(len(dummy._load_inventory_ledger()), 1)
+                self.assertEqual(len(dummy._load_profit_ledger()), 1)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.MOBILE_ACTION_LOG_PATH = old_mobile_log
+
     def test_mobile_card_identify_returns_search_query_from_photo_ocr(self) -> None:
         class MobilePhotoDummy:
             _photo_card_to_row = app.CardPipelineApp._photo_card_to_row

@@ -2,8 +2,10 @@
   "name": "LUCAS Inventory",
   "short_name": "LUCAS",
   "start_url": "/mobile",
+  "scope": "/mobile/",
   "display": "standalone",
   "background_color": "#101820",
   "theme_color": "#101820",
+  "description": "Offline-capable LUCAS inventory companion for add, sold, expense, and queue sync workflows.",
   "icons": []
 }

@@ -73,6 +73,7 @@ Important design note: the hard part is not the mobile UI; it is safely exposing
 - Profit rows can be refunded individually from the `Profit` tab. Refunds remove the sold-card profit/company-sheet row and return that card to active inventory.
 - `Profit` has `Add Expense` for person-level expenses. Expense categories are `Travel`, `Supplies`, `Travel Meal`, `Fees`, and `Shipping`; expenses record a date and deduct from that person's month/year/YTD/overall profit and charts. Expenses can be general, tied to a sold sheet, or tied to an individual sold card through dropdowns built from sold profit rows. Cert is not shown as an expense field, though card-tied expenses may keep it internally for exact matching. `Profit` also has an `Expenses` view, and the profit metric shows sales, gross profit, expenses, and net profit. Expense rows are profit-only adjustments and cannot be refunded to inventory, but selected expense rows can be deleted from the profit ledger.
 - Inventory `Mark Sold` can now add an optional card-linked expense in the same popup using expense category, amount, and notes. `Profit` -> `Add Expense` keeps Sheet active when tying to `Card`, and the Card dropdown filters to the selected sold sheet so card/sheet expenses can be selected reliably.
+- Mac `mobile_app` is now offline-capable for write capture. If the phone cannot reach the desktop bridge, inventory add, mark-sold, and expense actions are stored in a local Sync queue. The phone can later `Sync Now` to `/mobile/api/sync/queue` or `Export Queue` as JSON. Desktop Mac L.U.C.A.S has `Inventory` -> `Import Mobile Queue`, applies queued actions through the existing mobile add/sold/expense methods, and records applied action IDs in `CARD_PIPELINE/mobile_action_log.json` so re-importing the same queue does not duplicate ledger writes. Search/profit/payout mobile views still require a live desktop bridge.
 - `Profit` normal `Refresh` is now a fast ledger-only refresh. Use `Deep Sync` when company sheets need to be scanned/backfilled into `profit_ledger.json`; this preserves the recovery path without making every filter/search refresh reread every company workbook.
 - Home/startup workbook summaries are cached in memory by file modified time and size for the current app session, so repeat Home refreshes reuse unchanged summaries and only reread changed/new sheets.
 - Google Sheets OAuth callback handling now waits for the real `/oauth2callback` success/error response, ignores unrelated local browser requests such as favicon probes, and reports clearer timeout/denial messages. This fixes cases where the browser said Google Sheets connected but L.U.C.A.S still popped `OAuth did not return an authorization code`.
@@ -159,6 +160,7 @@ CARD_PIPELINE
   weekly_company_sheets.json
   profit_ledger.json
   inventory_ledger.json
+  mobile_action_log.json
   unassigned_players.json
   assignment_player_overrides.json
   .locks
@@ -184,6 +186,7 @@ Do not commit:
 - `assignment_companies.json`
 - generated debug screenshots/logs
 - generated `work/` or `outputs/` content
+- generated `mobile_action_log.json` in the shared pipeline folder
 
 ## Workflow Notes
 

@@ -97,6 +97,8 @@ http://192.168.1.x:8765/mobile
 
 Open that URL from a phone on the same Wi-Fi network, enter the PIN, then use `Search` to check current inventory or `Add` to scan/type a cert and add active inventory with purchase price, person, seller/source, value, and notes. On iPhone, use Safari's share menu and choose `Add to Home Screen` for app-style access.
 
+The installed mobile app is offline-capable for write capture. If the phone cannot reach desktop L.U.C.A.S, `Add`, `Mark Sold`, and `Expense` actions are saved in the phone's `Sync` queue instead of being lost. Later you can either tap `Sync Now` when desktop L.U.C.A.S is reachable again, or tap `Export Queue` and import that JSON file from desktop L.U.C.A.S using `Inventory` -> `Import Mobile Queue`. Search, profit, and payouts still require a live desktop connection because those views read current ledgers.
+
 ## Input Modes
 
 Use the `Create` tab for all card entry.

@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -115,6 +115,7 @@ SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
 PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
 INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
+MOBILE_ACTION_LOG_PATH = CARD_PIPELINE_DIR / "mobile_action_log.json"
 UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
 PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
@@ -240,7 +241,7 @@ def is_google_sheet_url(value: object) -> bool:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, MOBILE_ACTION_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -251,6 +252,7 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
     PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
     INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
+    MOBILE_ACTION_LOG_PATH = CARD_PIPELINE_DIR / "mobile_action_log.json"
     UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
     PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
     SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
@@ -524,6 +526,7 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_profit_summary = self.mobile_profit_summary
         self.state.mobile_expense_add = self.mobile_expense_add
         self.state.mobile_payouts = self.mobile_payouts
+        self.state.mobile_queue_sync = self.mobile_queue_sync
         self.bridge = BridgeServer(self.state)
         self.bridge.start()
         self._refresh_keep_source_registry()
@@ -1254,6 +1257,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(action_row, text="Update Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Recomp", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Import Mobile Queue", command=self.import_mobile_queue_file, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var):
             var.trace_add("write", lambda *_args: self._schedule_inventory_filter_refresh())
@@ -1822,6 +1826,127 @@ class CardPipelineApp(tk.Tk):
             return {"ok": False, "error": "That expense already exists in the profit ledger."}
         self.events.put(("profit_refresh", f"Added {expense_type} expense for {person}: {format_money(amount)}."))
         return {"ok": True, "record": self._normalize_profit_record(record), "people": self._known_people()}
+
+    def _load_mobile_action_log(self) -> dict[str, dict[str, object]]:
+        if not MOBILE_ACTION_LOG_PATH.exists():
+            return {}
+        try:
+            raw = json.loads(MOBILE_ACTION_LOG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if isinstance(raw, dict) and isinstance(raw.get("applied"), dict):
+            return {str(key): value for key, value in raw["applied"].items() if isinstance(value, dict)}
+        if isinstance(raw, dict) and isinstance(raw.get("applied"), list):
+            return {str(item): {"applied_at": ""} for item in raw["applied"]}
+        return {}
+
+    def _save_mobile_action_log(self, applied: dict[str, dict[str, object]]) -> None:
+        MOBILE_ACTION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        items = sorted(
+            applied.items(),
+            key=lambda pair: str(pair[1].get("applied_at") or ""),
+            reverse=True,
+        )[:2000]
+        atomic_write_json(
+            MOBILE_ACTION_LOG_PATH,
+            {
+                "version": 1,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "applied": dict(items),
+            },
+        )
+
+    def _apply_mobile_queue_action(self, action: dict[str, object]) -> dict:
+        action_type = str(action.get("type") or action.get("action") or "").strip().lower()
+        payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
+        if action_type in {"inventory.add", "inventory_add", "add_inventory"}:
+            return self.mobile_inventory_add(dict(payload))
+        if action_type in {"inventory.sold", "inventory.mark_sold", "inventory_sold", "mark_sold"}:
+            return self.mobile_inventory_mark_sold(dict(payload))
+        if action_type in {"expense.add", "expense_add", "add_expense"}:
+            return self.mobile_expense_add(dict(payload))
+        return {"ok": False, "error": f"Unsupported mobile queue action type: {action_type or 'blank'}."}
+
+    def mobile_queue_sync(self, payload: dict) -> dict:
+        raw_actions = payload.get("actions")
+        if not isinstance(raw_actions, list):
+            return {"ok": False, "error": "Mobile queue payload must include an actions list."}
+        applied = self._load_mobile_action_log()
+        results: list[dict[str, object]] = []
+        applied_count = 0
+        skipped_count = 0
+        failed_count = 0
+        changed = False
+        for index, raw_action in enumerate(raw_actions, start=1):
+            if not isinstance(raw_action, dict):
+                failed_count += 1
+                results.append({"ok": False, "index": index, "error": "Queue action was not an object."})
+                continue
+            action_id = str(raw_action.get("id") or raw_action.get("action_id") or "").strip()
+            action_type = str(raw_action.get("type") or raw_action.get("action") or "").strip()
+            if not action_id:
+                failed_count += 1
+                results.append({"ok": False, "index": index, "type": action_type, "error": "Queue action is missing an id."})
+                continue
+            if action_id in applied:
+                skipped_count += 1
+                results.append({"ok": True, "id": action_id, "type": action_type, "status": "already_applied"})
+                continue
+            try:
+                result = self._apply_mobile_queue_action(raw_action)
+            except Exception as error:
+                result = {"ok": False, "error": str(error)}
+            if result.get("ok"):
+                applied_count += 1
+                changed = True
+                applied[action_id] = {
+                    "type": action_type,
+                    "applied_at": datetime.now(timezone.utc).isoformat(),
+                    "client_id": str(payload.get("client_id") or raw_action.get("client_id") or ""),
+                }
+                results.append({"ok": True, "id": action_id, "type": action_type, "status": "applied", "result": result})
+            else:
+                failed_count += 1
+                results.append({"ok": False, "id": action_id, "type": action_type, "status": "failed", "error": result.get("error") or "Action failed.", "result": result})
+        if changed:
+            self._save_mobile_action_log(applied)
+            self.events.put(("inventory_refresh", f"Applied {applied_count} mobile queued action(s)."))
+            self.events.put(("profit_refresh", f"Applied {applied_count} mobile queued action(s)."))
+        return {
+            "ok": failed_count == 0,
+            "applied": applied_count,
+            "skipped": skipped_count,
+            "failed": failed_count,
+            "results": results,
+            "people": self._known_people(),
+        }
+
+    def import_mobile_queue_file(self) -> None:
+        path_text = filedialog.askopenfilename(
+            title="Import Mobile Queue",
+            filetypes=[("LUCAS mobile queue", "*.json"), ("All files", "*.*")],
+        )
+        if not path_text:
+            return
+        path = Path(path_text)
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as error:
+            messagebox.showerror("Import Mobile Queue", f"Could not read queue file: {error}")
+            return
+        payload = raw if isinstance(raw, dict) else {"actions": raw}
+        result = self.mobile_queue_sync(payload)
+        applied = int(result.get("applied") or 0)
+        skipped = int(result.get("skipped") or 0)
+        failed = int(result.get("failed") or 0)
+        self.refresh_inventory_tab()
+        self.refresh_profit_tab()
+        self.inventory_status_var.set(f"Imported mobile queue: applied {applied}, skipped {skipped}, failed {failed}.")
+        if failed:
+            errors = [str(item.get("error") or item.get("status") or "Unknown error") for item in result.get("results", []) if isinstance(item, dict) and not item.get("ok")]
+            messagebox.showwarning("Import Mobile Queue", "\n".join([f"Applied: {applied}", f"Skipped: {skipped}", f"Failed: {failed}", "", *errors[:8]]))
+        else:
+            messagebox.showinfo("Import Mobile Queue", f"Applied {applied} queued mobile action(s). Skipped {skipped} already-applied action(s).")
 
     def mobile_payouts(self, payload: dict) -> dict:
         needle = str(payload.get("person") or "").strip().lower()

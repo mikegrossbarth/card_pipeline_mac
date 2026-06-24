@@ -64,7 +64,7 @@ main {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   max-width: 720px;
   margin: 0 auto 14px;
@@ -99,6 +99,21 @@ button,
 .primary {
   background: #1f7a68;
   border-color: #2bb898;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  min-height: 18px;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #eef5f6;
+  color: #101820;
+  font-size: 11px;
+  line-height: 1;
 }
 
 .secondary {
@@ -257,6 +272,20 @@ textarea {
   margin-top: 10px;
 }
 
+.queueType {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-bottom: 8px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #203240;
+  color: #82d7bd;
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
 .meta {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -292,7 +321,7 @@ textarea {
   .tab {
     min-height: 40px;
     padding: 0 5px;
-    font-size: 12px;
+    font-size: 11px;
   }
 }
 

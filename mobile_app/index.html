@@ -36,6 +36,7 @@
           <button class="tab" data-view="expense" type="button">Expense</button>
           <button class="tab" data-view="profit" type="button">Profit</button>
           <button class="tab" data-view="payout" type="button">Payouts</button>
+          <button class="tab" data-view="sync" type="button">Sync <span id="queueBadge" class="badge">0</span></button>
         </nav>
 
         <section id="searchView" class="view">
@@ -117,6 +118,20 @@
           <div id="payoutCards" class="metricGrid"></div>
           <div id="payoutSummary" class="results"></div>
           <div id="payoutDetails" class="results compact"></div>
+        </section>
+
+        <section id="syncView" class="view hidden">
+          <section class="panel inlinePanel">
+            <h2>Offline Queue</h2>
+            <p class="hint">Queued adds, sales, and expenses can sync when desktop LUCAS is reachable, or export this queue and import it from Inventory on desktop.</p>
+            <div class="buttonRow">
+              <button id="syncQueue" class="primary" type="button">Sync Now</button>
+              <button id="exportQueue" class="secondary" type="button">Export Queue</button>
+            </div>
+            <button id="clearAppliedQueue" class="secondary" type="button">Clear Empty Queue</button>
+            <div id="syncStatus" class="status"></div>
+          </section>
+          <div id="queueList" class="results"></div>
         </section>
       </section>
     </main>
