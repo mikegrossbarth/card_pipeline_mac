@@ -57,6 +57,7 @@ class BridgeState:
         self.cardladder_running = False
         self.cancel_requested = False
         self.comp_strategy = COMP_STRATEGY_AVERAGE
+        self.updated_row_ids: set[int] = set()
         self.on_update: Callable[[], None] | None = None
         self.mobile_pin_provider: Callable[[], str] | None = None
         self.mobile_inventory_search: Callable[[dict], dict] | None = None
@@ -75,6 +76,7 @@ class BridgeState:
     def set_rows(self, rows: list[WorkbookRow]) -> None:
         with self.lock:
             self.rows = rows
+            self.updated_row_ids = set()
 
     def set_comp_strategy(self, strategy: str) -> None:
         with self.lock:
@@ -311,6 +313,7 @@ class BridgeState:
                 target_row = next((row for row in self.rows if row.cert_number == cert), None)
             if target_row is not None:
                 self._apply_cardladder_result_to_row(target_row, result)
+                self.updated_row_ids.add(id(target_row))
                 cy_lookup = self._queue_or_prepare_cy_lookup(target_row)
                 debug_log(f"cardladder_result row={target_row.excel_row} cert={target_row.cert_number} cy_lookup={bool(cy_lookup)}")
             else:
@@ -361,6 +364,7 @@ class BridgeState:
             self.cy_lookup_inflight.discard(excel_row)
             row = next((candidate for candidate in self.rows if candidate.excel_row == excel_row), None)
             if row is not None and str(row.cert_number or "").strip() == cert_number:
+                self.updated_row_ids.add(id(row))
                 existing_status = str(row.status or "").strip()
                 is_cy_only_status = existing_status in {"CY queued", "CY unavailable", "CY OK"}
                 if value is not None:

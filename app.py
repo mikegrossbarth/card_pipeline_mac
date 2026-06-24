@@ -573,6 +573,8 @@ class CardPipelineApp(tk.Tk):
         self.assignment_recommendation_job = 0
         self.assignment_recommendation_running = False
         self.assignment_recommendation_after_id: str | None = None
+        self.assignment_recommendation_row_ids: set[int] | None = None
+        self.pending_comp_assignment_row_ids: set[int] = set()
         self.assignment_config_status = tk.StringVar(value=self._assignment_config_status())
         self._ensure_company_sheet_folders()
         self._ensure_weekly_company_sheets_due()
@@ -6816,6 +6818,7 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(message)
             return
         self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE))
+        self.pending_comp_assignment_row_ids = {id(row) for row in [*card_ladder_eligible, *cy_eligible]}
         command_id = 0
         card_ladder_command_id = 0
         if card_ladder_eligible:
@@ -6854,6 +6857,7 @@ class CardPipelineApp(tk.Tk):
         )
 
     def stop_comp_run(self) -> None:
+        self.pending_comp_assignment_row_ids = set()
         self.state.request_cancel()
         self.comp_output_saved = False
         self._refresh_table()
@@ -6872,6 +6876,7 @@ class CardPipelineApp(tk.Tk):
         self.state.set_rows([])
         self.row_sources = {}
         self.comp_sheet_sources = {}
+        self.pending_comp_assignment_row_ids = set()
         self.selected_working_sheet.set("")
         self.comp_output_saved = True
         self._cancel_cell_edit()
@@ -7538,11 +7543,14 @@ class CardPipelineApp(tk.Tk):
         assignment_engine.add_player_sport_hint(player, category, display_name=player)
 
     def _queue_assignment_recommendations(self) -> None:
-        rows = [*self.state.rows, *self.review_rows]
+        row_ids = self.assignment_recommendation_row_ids
+        self.assignment_recommendation_row_ids = None
+        self.assignment_recommendation_after_id = None
+        all_rows = [*self.state.rows, *self.review_rows]
+        rows = [row for row in all_rows if id(row) in row_ids] if row_ids is not None else all_rows
         if not rows or not self.assignment_engine.companies:
             self.assignment_progress_value.set(0)
             return
-        self.assignment_recommendation_after_id = None
         self.assignment_recommendation_job += 1
         job_id = self.assignment_recommendation_job
         self.assignment_recommendation_running = True
@@ -7552,10 +7560,16 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set("Calculating assignment recommendations...")
         threading.Thread(target=self._assignment_recommendations_worker, args=(job_id, rows), daemon=True).start()
 
-    def _schedule_assignment_recommendations(self, delay_ms: int = 700) -> None:
+    def _schedule_assignment_recommendations(self, delay_ms: int = 700, row_ids: set[int] | None = None) -> None:
         if not self.assignment_engine.companies:
             self.assignment_progress_value.set(0)
             return
+        if row_ids is None:
+            self.assignment_recommendation_row_ids = None
+        elif self.assignment_recommendation_row_ids is not None:
+            self.assignment_recommendation_row_ids.update(row_ids)
+        elif self.assignment_recommendation_after_id is None:
+            self.assignment_recommendation_row_ids = set(row_ids)
         if self.assignment_recommendation_after_id is not None:
             try:
                 self.after_cancel(self.assignment_recommendation_after_id)
@@ -7618,9 +7632,13 @@ class CardPipelineApp(tk.Tk):
         }
         filled = 0
         comp_rows_updated = False
-        unresolved_rows: list[WorkbookRow] = []
+        review_rows_updated = False
+        unresolved_review_rows: list[WorkbookRow] = []
         state_row_ids = {id(row) for row in self.state.rows}
+        review_row_ids = {id(row) for row in self.review_rows}
         for row in [*self.state.rows, *self.review_rows]:
+            if id(row) not in results:
+                continue
             company, payout = results.get(id(row), ("", None))
             if payout is not None:
                 row.best_company = company
@@ -7628,11 +7646,15 @@ class CardPipelineApp(tk.Tk):
                 filled += 1
                 if id(row) in state_row_ids:
                     comp_rows_updated = True
+                if id(row) in review_row_ids:
+                    review_rows_updated = True
             else:
                 row.best_company = NO_COMPANY_TAKES_LABEL
                 row.estimated_payout = None
-                unresolved_rows.append(row)
-        self._record_unassigned_players(unresolved_rows)
+                if id(row) in review_row_ids:
+                    unresolved_review_rows.append(row)
+                    review_rows_updated = True
+        self._record_unassigned_players(unresolved_review_rows)
         if comp_rows_updated:
             self.comp_output_saved = False
         total = int(payload.get("total") or 0)
@@ -7640,7 +7662,31 @@ class CardPipelineApp(tk.Tk):
         self.assignment_progress_value.set(100 if total else 0)
         self.review_status.set(f"Assignment recommendations complete: {filled}/{total} row(s) populated.")
         self.status_var.set(f"Assignment recommendations complete: {filled}/{total} row(s) populated.")
-        self._refresh_table(schedule_recommendations=False)
+        if comp_rows_updated and not review_rows_updated:
+            self._refresh_comp_table(schedule_recommendations=False)
+        else:
+            self._refresh_table(schedule_recommendations=False)
+
+    def _apply_assignment_to_comp_rows(self, row_ids: set[int]) -> int:
+        if not row_ids or not self.assignment_engine.companies:
+            return 0
+        perf_start = time.perf_counter()
+        updated = 0
+        for row in self.state.rows:
+            if id(row) not in row_ids:
+                continue
+            recommendation = self.assignment_engine.recommend(row, person=getattr(self, "_assignment_person_for_row", lambda _row: "")(row))
+            if recommendation.payout is not None:
+                row.best_company = recommendation.company
+                row.estimated_payout = recommendation.payout
+            else:
+                row.best_company = NO_COMPANY_TAKES_LABEL
+                row.estimated_payout = None
+            updated += 1
+        if updated:
+            self.comp_output_saved = False
+        record_performance_event("assignment.apply_comp_rows", perf_start, f"rows={len(row_ids)} updated={updated}")
+        return updated
 
     def _update_assignment_recommendation_progress(self, payload: dict[str, object]) -> None:
         if int(payload.get("job_id") or 0) != self.assignment_recommendation_job:
@@ -7695,6 +7741,13 @@ class CardPipelineApp(tk.Tk):
         self.summary_var.set(f"{len(self.intake_rows)} create rows | Loaded comp rows: {len(self.state.rows)} | Card Ladder values: {completed}")
         if schedule_recommendations:
             self._schedule_assignment_recommendations()
+
+    def _refresh_comp_table(self, schedule_recommendations: bool = False, recommendation_row_ids: set[int] | None = None) -> None:
+        self._render_rows(self.comp_tree, self.state.rows, self.row_sources, self.comp_sheet_sources)
+        completed = sum(1 for row in self.state.rows if row.card_ladder_value is not None)
+        self.summary_var.set(f"{len(self.intake_rows)} create rows | Loaded comp rows: {len(self.state.rows)} | Card Ladder values: {completed}")
+        if schedule_recommendations:
+            self._schedule_assignment_recommendations(row_ids=recommendation_row_ids)
 
     def _render_rows(self, tree: ttk.Treeview, rows: list[WorkbookRow], sources: dict[int, str], sheet_sources: dict[int, str] | None = None) -> None:
         self._remember_column_widths(tree)
@@ -8074,22 +8127,30 @@ class CardPipelineApp(tk.Tk):
                     self._refresh_table()
                 elif event == "comp_refresh":
                     self.comp_output_saved = False
+                    with self.state.lock:
+                        comp_running = bool(
+                            self.state.cardladder_running
+                            or getattr(self.state, "cy_batch_running", False)
+                            or getattr(self.state, "cy_lookup_inflight", set())
+                            or getattr(self.state, "cy_lookup_pending", set())
+                        )
+                        updated_row_ids = set(getattr(self.state, "updated_row_ids", set()))
+                        self.state.updated_row_ids = set()
                     if self.inventory_recomp_context:
                         changed = self._sync_inventory_recomp_results()
-                        with self.state.lock:
-                            comp_running = bool(
-                                self.state.cardladder_running
-                                or getattr(self.state, "cy_batch_running", False)
-                                or getattr(self.state, "cy_lookup_inflight", set())
-                                or getattr(self.state, "cy_lookup_pending", set())
-                            )
                         if not comp_running:
                             self._finish_inventory_recomp()
                         elif changed:
                             self.refresh_inventory_tab()
                             self.inventory_status_var.set(f"Inventory recomp running; updated {changed} card(s) so far.")
                         continue
-                    self._refresh_table(schedule_recommendations=True)
+                    scoped_row_ids = updated_row_ids & self.pending_comp_assignment_row_ids
+                    assigned = self._apply_assignment_to_comp_rows(scoped_row_ids)
+                    if not comp_running:
+                        self.pending_comp_assignment_row_ids = set()
+                    self._refresh_comp_table(schedule_recommendations=False)
+                    if assigned:
+                        self.status_var.set(f"Updated assignment for {assigned} comped row(s).")
                 elif isinstance(event, tuple):
                     kind, payload = event
                     if kind == "photo_rows":

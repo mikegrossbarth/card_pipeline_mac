@@ -1507,6 +1507,55 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(dummy._assignment_person_for_row(row), "Lucas")
 
+    def test_scoped_assignment_results_leave_unreturned_rows_unchanged(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            _apply_assignment_recommendation_results = app.CardPipelineApp._apply_assignment_recommendation_results
+
+            def __init__(self):
+                self.assignment_recommendation_job = 7
+                self.assignment_recommendation_running = True
+                self.assignment_progress_value = FieldVar()
+                self.review_status = FieldVar()
+                self.status_var = FieldVar()
+                self.comp_output_saved = True
+                self.review_rows = []
+                self.state = types.SimpleNamespace(
+                    rows=[
+                        WorkbookRow(1, "111", "Changed Card", "PSA", best_company="Old A", estimated_payout=1),
+                        WorkbookRow(2, "222", "Untouched Card", "PSA", best_company="Keep Me", estimated_payout=22),
+                    ]
+                )
+                self.refreshed_comp = False
+
+            def _record_unassigned_players(self, rows):
+                self.unassigned_rows = rows
+
+            def _refresh_comp_table(self, schedule_recommendations=False):
+                self.refreshed_comp = True
+
+            def _refresh_table(self, schedule_recommendations=False):
+                raise AssertionError("scoped comp-only results should not refresh every table")
+
+        dummy = Dummy()
+        target = dummy.state.rows[0]
+
+        dummy._apply_assignment_recommendation_results(
+            {"job_id": 7, "total": 1, "results": [(id(target), "Arena Club", 95.0)]}
+        )
+
+        self.assertEqual(dummy.state.rows[0].best_company, "Arena Club")
+        self.assertEqual(dummy.state.rows[0].estimated_payout, 95.0)
+        self.assertEqual(dummy.state.rows[1].best_company, "Keep Me")
+        self.assertEqual(dummy.state.rows[1].estimated_payout, 22)
+        self.assertTrue(dummy.refreshed_comp)
+
     def test_nobody_takes_is_not_an_assignable_company(self) -> None:
         class Dummy:
             _row_has_assignable_company = app.CardPipelineApp._row_has_assignable_company

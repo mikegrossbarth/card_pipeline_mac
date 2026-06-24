@@ -273,9 +273,19 @@ Recent verification:
 ```text
 C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m py_compile app.py
 C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m unittest tests.test_shared_workflows -v
+C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe tests/test_extension_parser.js
 ```
 
-Last full Mac result after recovery in this Windows Codex workspace: `118 tests OK`.
+Latest broad bug-hunt verification:
+
+- Fixed scoped comp/assignment refresh so a result payload only updates rows it actually contains; unrelated comp rows keep their existing best company/payout.
+- Synced Mac with the scoped comp assignment path, including bridge `updated_row_ids`, pending comp assignment ids, and missing `_refresh_comp_table`.
+- Added a regression test for the Card Ladder extension parser so an 8-line chunk containing the next sale row cannot assign row B's price to row A.
+- Confirmed assignment tests still cover unlicensed, DNB-over-threshold, GOAT Bonus 1, sport aliases, seller policies, and team half-profit payouts.
+
+Last full Mac result after recovery in this Windows Codex workspace: `119 tests OK`.
+Last Mac extension parser result: `extension parser regression ok`.
+Last Mac startup smoke: `mac app startup ok`.
 
 On an actual Mac, prefer:
 
