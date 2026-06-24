@@ -108,6 +108,7 @@ CARD_PIPELINE_DIR = Path(os.environ.get("LUCAS_PIPELINE_DIR") or DEFAULT_CARD_PI
 WORKING_SHEETS_DIR = Path(os.environ.get("LUCAS_WORKING_SHEETS_DIR") or CARD_PIPELINE_DIR / "WORKING SHEETS")
 INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
 RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
+ARCHIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "ARCHIVED SHEETS"
 COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
 SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
@@ -238,11 +239,12 @@ def is_google_sheet_url(value: object) -> bool:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
     RECEIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "RECEIVED SHEETS"
+    ARCHIVED_SHEETS_DIR = CARD_PIPELINE_DIR / "ARCHIVED SHEETS"
     COMPANY_SHEETS_DIR = CARD_PIPELINE_DIR / "COMPANY SHEETS"
     SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
     WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
@@ -4291,9 +4293,16 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_summaries = {}
         live_summary_paths: list[Path] = []
         errors: list[str] = []
+        archived_count = 0
         conflict_files = self._shared_conflict_files()
         if conflict_files:
             errors.append(f"Shared conflicts: {', '.join(path.name for path in conflict_files[:3])}")
+        try:
+            archived = self._archive_eligible_received_sheets()
+            if archived:
+                archived_count = len(archived)
+        except Exception as error:
+            errors.append(f"Archive: {error}")
         for kind, directory in (("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR), ("Received", RECEIVED_SHEETS_DIR)):
             try:
                 directory.mkdir(parents=True, exist_ok=True)
@@ -4318,13 +4327,15 @@ class CardPipelineApp(tk.Tk):
         self._update_home_sheet_tabs()
         if errors:
             self.status_var.set(f"Home refreshed with {len(errors)} sheet issue(s).")
+        elif archived_count:
+            self.status_var.set(f"Home metrics refreshed. Archived {archived_count} paid received sheet(s).")
         else:
             self.status_var.set("Home metrics refreshed.")
         total_sheets = sum(len(paths) for paths in self.home_sheet_paths.values())
         record_performance_event(
             "home.refresh",
             perf_start,
-            f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived=0 errors={len(errors)}",
+            f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived={archived_count} errors={len(errors)}",
         )
 
     def _home_summary_cache_key(self, path: Path) -> str:
@@ -5508,6 +5519,8 @@ class CardPipelineApp(tk.Tk):
                 state=tk.DISABLED if target_stage == kind else tk.NORMAL,
             )
         menu.add_cascade(label="Move Sheet", menu=move_menu)
+        menu.add_separator()
+        menu.add_command(label="Delete Sheet", command=self.delete_selected_home_sheet)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -5559,6 +5572,42 @@ class CardPipelineApp(tk.Tk):
                 f"and removed {cleanup.get('profit_rows_removed', 0)} profit ledger row(s)."
             )
         self.status_var.set(f"Moved {name} from {source_stage} to {target_stage}.{cleanup_note}")
+
+    def delete_selected_home_sheet(self) -> None:
+        if not self.home_selected_sheet_key:
+            messagebox.showinfo("Choose sheet", "Choose a sheet on Home before deleting.")
+            return
+        kind, name = self._split_home_sheet_key(self.home_selected_sheet_key)
+        if kind not in {"Incoming", "Working", "Received"} or not name:
+            messagebox.showinfo("Cannot delete", "Only Incoming, Working, and Received sheets can be deleted from Home.")
+            return
+        path = self._sheet_path_for_stage(kind, name)
+        if not self._sheet_path_is_visible_home_sheet(kind, path):
+            messagebox.showerror("Delete blocked", f"Delete is only allowed inside {kind} sheets.")
+            return
+        if not path.exists():
+            messagebox.showerror("Delete failed", f"Sheet not found: {path}")
+            return
+        confirmed = messagebox.askyesno(
+            "Delete sheet?",
+            f"Delete this {kind.lower()} sheet?\n\n{name}\n\nThis removes the .xlsx file from the pipeline folder.",
+            icon="warning",
+        )
+        if not confirmed:
+            return
+        try:
+            with shared_lock(CARD_PIPELINE_DIR, "sheet-delete", self.lucas_identity):
+                path.unlink()
+                inventory_rows_removed = self._remove_inventory_rows_for_source(name)
+                self._delete_sheet_marker(self.home_selected_sheet_key)
+                self._save_sheet_markers()
+        except Exception as error:
+            messagebox.showerror("Delete failed", str(error))
+            return
+        self.home_selected_sheet_key = ""
+        self.refresh_pipeline()
+        self.refresh_home()
+        self.status_var.set(f"Deleted {kind.lower()} sheet: {name}. Removed {inventory_rows_removed} inventory row(s).")
 
     def open_sheet_marker_editor(self) -> None:
         if not self.home_selected_sheet_key:
@@ -5857,6 +5906,65 @@ class CardPipelineApp(tk.Tk):
                 self.home_sheet_markers[new_key] = marker
                 moved.append(path.name)
         return moved
+
+    def _archive_eligible_received_sheets(self) -> list[str]:
+        if not RECEIVED_SHEETS_DIR.exists():
+            return []
+        archived: list[str] = []
+        cutoff = datetime.now() - timedelta(days=14)
+        RECEIVED_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+        ARCHIVED_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+        with shared_lock(CARD_PIPELINE_DIR, "sheet-archive", self.lucas_identity):
+            latest_markers = self._load_sheet_markers()
+            self.home_sheet_markers.update(latest_markers)
+            for path in sorted(RECEIVED_SHEETS_DIR.glob("*.xlsx"), key=lambda item: item.name.lower()):
+                key = self._home_sheet_key("Received", path.name)
+                marker = dict(self.home_sheet_markers.get(key, {}))
+                if not marker.get("paid"):
+                    continue
+                if not self._received_sheet_is_archive_age(path, marker, cutoff):
+                    continue
+                received_at = self._received_at_for_archive(path, marker)
+                destination = self._unique_archive_path(path.name)
+                shutil.move(str(path), str(destination))
+                archived_key = self._home_sheet_key("Archived", destination.name)
+                marker["all_received"] = True
+                marker["paid"] = True
+                marker.setdefault("received_at", received_at.isoformat(timespec="seconds"))
+                marker["archived_at"] = datetime.now().isoformat(timespec="seconds")
+                marker["archived_from"] = path.name
+                self._delete_sheet_marker(key)
+                self.home_sheet_markers[archived_key] = marker
+                archived.append(destination.name)
+            if archived:
+                self._save_sheet_markers()
+        return archived
+
+    def _received_sheet_is_archive_age(self, path: Path, marker: dict[str, object], cutoff: datetime) -> bool:
+        received_at = self._received_at_for_archive(path, marker)
+        return received_at <= cutoff
+
+    def _received_at_for_archive(self, path: Path, marker: dict[str, object]) -> datetime:
+        raw = str(marker.get("received_at") or "").strip()
+        if raw:
+            try:
+                return datetime.fromisoformat(raw)
+            except ValueError:
+                pass
+        try:
+            return datetime.fromtimestamp(path.stat().st_mtime)
+        except OSError:
+            return datetime.now()
+
+    def _unique_archive_path(self, name: str) -> Path:
+        destination = ARCHIVED_SHEETS_DIR / name
+        if not destination.exists():
+            return destination
+        for index in range(2, 1000):
+            candidate = ARCHIVED_SHEETS_DIR / f"{destination.stem}-{index}{destination.suffix}"
+            if not candidate.exists():
+                return candidate
+        return ARCHIVED_SHEETS_DIR / f"{destination.stem}-{datetime.now().strftime('%Y%m%d%H%M%S')}{destination.suffix}"
 
     def _load_sheet_markers(self) -> dict[str, dict[str, object]]:
         try:

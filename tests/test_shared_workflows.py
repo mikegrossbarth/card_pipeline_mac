@@ -1742,6 +1742,72 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers, realized_profit_total=70.0), (35.0, "Team half sold profit"))
         self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 100.0, 80.0, sellers, realized_profit_total=-20.0), (0.0, "Team half sold profit"))
 
+    def test_paid_received_sheets_archive_after_two_weeks_only_when_paid(self) -> None:
+        class ArchiveDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _load_sheet_markers = app.CardPipelineApp._load_sheet_markers
+            _save_sheet_markers = app.CardPipelineApp._save_sheet_markers
+            _delete_sheet_marker = app.CardPipelineApp._delete_sheet_marker
+            _archive_eligible_received_sheets = app.CardPipelineApp._archive_eligible_received_sheets
+            _received_sheet_is_archive_age = app.CardPipelineApp._received_sheet_is_archive_age
+            _received_at_for_archive = app.CardPipelineApp._received_at_for_archive
+            _unique_archive_path = app.CardPipelineApp._unique_archive_path
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            archive_dir = root / "ARCHIVED SHEETS"
+            received_dir.mkdir()
+            paid_old = received_dir / "paid-old.xlsx"
+            unpaid_old = received_dir / "unpaid-old.xlsx"
+            paid_recent = received_dir / "paid-recent.xlsx"
+            for path in (paid_old, unpaid_old, paid_recent):
+                path.write_text("placeholder", encoding="utf-8")
+
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_archive = app.ARCHIVED_SHEETS_DIR
+            old_markers = app.SHEET_MARKERS_PATH
+            app.CARD_PIPELINE_DIR = root
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.ARCHIVED_SHEETS_DIR = archive_dir
+            app.SHEET_MARKERS_PATH = root / "sheet_markers.json"
+            old_date = "2026-05-01T12:00:00"
+            recent_date = datetime.now().isoformat(timespec="seconds")
+            app.SHEET_MARKERS_PATH.write_text(
+                json.dumps(
+                    {
+                        "Received|paid-old.xlsx": {"paid": True, "all_received": True, "received_at": old_date},
+                        "Received|unpaid-old.xlsx": {"paid": False, "all_received": True, "received_at": old_date},
+                        "Received|paid-recent.xlsx": {"paid": True, "all_received": True, "received_at": recent_date},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            dummy = ArchiveDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.home_sheet_markers = dummy._load_sheet_markers()
+            dummy.deleted_sheet_marker_keys = set()
+            try:
+                archived = dummy._archive_eligible_received_sheets()
+                saved = json.loads(app.SHEET_MARKERS_PATH.read_text(encoding="utf-8"))
+
+                self.assertEqual(archived, ["paid-old.xlsx"])
+                self.assertFalse(paid_old.exists())
+                self.assertTrue((archive_dir / "paid-old.xlsx").exists())
+                self.assertTrue(unpaid_old.exists())
+                self.assertTrue(paid_recent.exists())
+                self.assertNotIn("Received|paid-old.xlsx", saved)
+                self.assertIn("Archived|paid-old.xlsx", saved)
+                self.assertIn("Received|unpaid-old.xlsx", saved)
+                self.assertIn("Received|paid-recent.xlsx", saved)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.ARCHIVED_SHEETS_DIR = old_archive
+                app.SHEET_MARKERS_PATH = old_markers
+
     def test_team_payout_uses_sold_profit_not_unsold_estimated_profit(self) -> None:
         class PayoutDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
