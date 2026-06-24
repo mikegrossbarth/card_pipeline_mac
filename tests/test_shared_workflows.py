@@ -853,6 +853,15 @@ class AssignmentEngineTests(unittest.TestCase):
 
         self.assertFalse(assignment_engine.company_accepts(rules, "2019 Panini Prizm Stephen Curry Silver PSA 10", 100, "PSA"))
 
+    def test_grade_bound_rules_reject_rows_with_missing_grade(self) -> None:
+        rules = assignment_engine.CompanyRules(
+            accept_all=True,
+            grade_rules={"psa": assignment_engine.GradeRule(allowed=True, min_grade=10)},
+        )
+
+        self.assertTrue(assignment_engine.company_accepts(rules, "2019 Panini Prizm Stephen Curry Silver PSA 10", 100, "PSA"))
+        self.assertFalse(assignment_engine.company_accepts(rules, "2019 Panini Prizm Stephen Curry Silver", 100, "PSA"))
+
     def test_person_payout_policy_locks_companies_and_overrides_rates(self) -> None:
         row = WorkbookRow(
             excel_row=2,
@@ -1056,6 +1065,56 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertEqual(decisions["CY Buyer"].source_value, 150)
         self.assertEqual(recommendation.company, "CY Buyer")
         self.assertEqual(recommendation.payout, 127.5)
+
+    def test_default_company_value_source_falls_back_to_cy_after_comps_and_card_ladder(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="8",
+            grader="CGC",
+            card_title="2022 Paradigm Trigger Unown VSTAR CGC 10",
+            card_ladder_comps_average=None,
+            card_ladder_value=None,
+            cy_value=150,
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Default Buyer",
+                    assignment_engine.CompanyRules(accept_all=True),
+                    [assignment_engine.PayoutTier(10, 500, 0.8)],
+                    value_source="comps",
+                )
+            ]
+        )
+
+        recommendation = engine.recommend(row)
+        decisions = {decision.company: decision for decision in engine.evaluate(row)}
+
+        self.assertEqual(decisions["Default Buyer"].source_value, 150)
+        self.assertEqual(recommendation.company, "Default Buyer")
+        self.assertEqual(recommendation.payout, 120)
+
+    def test_courtyard_value_source_alias_uses_cy_estimate(self) -> None:
+        company = assignment_engine.load_company(
+            {"name": "CY Alias Buyer", "accept_all": True, "rate": "80%", "value_source": "CourtYard"},
+            Path("."),
+        )
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="9",
+            grader="CGC",
+            card_title="2022 Paradigm Trigger Unown VSTAR CGC 10",
+            card_ladder_comps_average=100,
+            card_ladder_value=110,
+            cy_value=150,
+        )
+        engine = assignment_engine.AssignmentEngine([company])
+
+        recommendation = engine.recommend(row)
+
+        self.assertEqual(company.value_source, "cy_estimate")
+        self.assertEqual(recommendation.company, "CY Alias Buyer")
+        self.assertEqual(recommendation.payout, 120)
 
     def test_cy_estimate_value_source_rejects_company_when_cy_missing(self) -> None:
         row = WorkbookRow(

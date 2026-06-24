@@ -688,7 +688,7 @@ def company_value_source(entry: dict[str, Any]) -> str:
     ).strip().lower()
     if raw in {"card_ladder", "cardladder", "cl", "card ladder", "card_ladder_value"}:
         return "card_ladder"
-    if raw in {"cy", "cy_estimate", "cyestimate", "courtyard", "courtyard_estimate", "estimate"}:
+    if raw in {"cy_estimate", "cyestimate", "cy", "cy value", "cy_value", "cy estimate", "courtyard", "courtyard_estimate", "court yard", "estimate"}:
         return "cy_estimate"
     return "comps"
 
@@ -721,6 +721,8 @@ def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -
     if rules.grade_rules:
         grade_rule = rules.grade_rules.get(clean_text(grade_company))
         if grade_rule is None or not grade_rule.allowed:
+            return False
+        if grade is None and (grade_rule.min_grade is not None or grade_rule.max_grade is not None):
             return False
         if grade is not None and grade_rule.min_grade is not None and grade < grade_rule.min_grade:
             return False

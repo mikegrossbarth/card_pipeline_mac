@@ -46,6 +46,7 @@ Important design note: the hard part is not the mobile UI; it is safely exposing
   - `Comps`
   - `Card Ladder value`
   - `CY Estimate`
+- Assignment audit note: default `Comps` value-source assignment now correctly falls back from comps to Card Ladder value to CY Estimate. `CourtYard`, `court yard`, `CY value`, and similar aliases normalize to `CY Estimate` in both config load and Assignment Rules UI. Grade-bounded rules now reject rows where the grader matches but no numeric grade was parsed.
 - Company sheets now use one workbook per company with weekly tabs:
   - `COMPANY SHEETS/<Company>/<Company>.xlsx`
   - weekly tab name: `Week of YYYY-MM-DD`
@@ -273,7 +274,7 @@ C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\py
 C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m unittest tests.test_shared_workflows -v
 ```
 
-Last full Mac result after recovery in this Windows Codex workspace: `112 tests OK`.
+Last full Mac result after recovery in this Windows Codex workspace: `115 tests OK`.
 
 On an actual Mac, prefer:
 
