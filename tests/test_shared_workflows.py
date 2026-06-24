@@ -2092,6 +2092,38 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_inventory_record_from_row_preserves_manual_sport_for_unknown_title(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _inventory_record_from_row = app.CardPipelineApp._inventory_record_from_row
+
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="0010355805",
+            grader="BGS",
+            card_title="2017 Bowman Chrome Prospect Autographs Gold Shimmer Refractors #CPACF Clint Frazier BGS 9.5",
+            category="baseball",
+            card_ladder_comps_average=432,
+        )
+
+        record = InventoryDummy()._inventory_record_from_row(row, "James Copeland", "JAMES_NASHVILLE_INVENTORY_2.xlsx")
+
+        self.assertEqual(record["sport"], "baseball")
+
+    def test_inventory_record_normalizes_common_sport_aliases(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+
+        dummy = InventoryDummy()
+
+        self.assertEqual(dummy._normalize_inventory_record({"sport": "b-ball"})["sport"], "basketball")
+        self.assertEqual(dummy._normalize_inventory_record({"category": "Poke"})["sport"], "pokemon")
+
     def test_inventory_filter_searches_cert_and_card_title(self) -> None:
         class FieldVar:
             def __init__(self, value=""):
@@ -2667,6 +2699,35 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INCOMING_SHEETS_DIR = old_incoming
                 app.WORKING_SHEETS_DIR = old_working
                 app.COMPANY_SHEETS_DIR = old_company
+
+    def test_received_inventory_candidates_preserve_source_sheet_sport(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manual-baseball.xlsx"
+            write_working_sheet(
+                path,
+                [
+                    WorkbookRow(
+                        excel_row=2,
+                        cert_number="0010355805",
+                        grader="BGS",
+                        card_title="2017 Bowman Chrome Prospect Autographs Gold Shimmer Refractors #CPACF Clint Frazier BGS 9.5",
+                        category="baseball",
+                        card_ladder_comps_average=432,
+                    )
+                ],
+            )
+
+            records = InventoryDummy()._received_inventory_candidate_records_for_sheet("Received", path, "James Copeland", set())
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["sport"], "baseball")
 
     def test_home_all_received_marker_adds_received_sheet_inventory(self) -> None:
         class Status:

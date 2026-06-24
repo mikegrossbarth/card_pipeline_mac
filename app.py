@@ -1347,7 +1347,8 @@ class CardPipelineApp(tk.Tk):
         normalized = dict(record)
         normalized["date_added"] = str(normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"))[:10]
         normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip() or "Unassigned"
-        normalized["sport"] = str(normalized.get("sport") or "").strip()
+        sport = str(normalized.get("sport") or normalized.get("category") or "").strip()
+        normalized["sport"] = assignment_engine.canonical_sport_label(sport) or sport
         normalized["cert_number"] = str(normalized.get("cert_number") or "").strip()
         normalized["grader"] = str(normalized.get("grader") or "").strip()
         normalized["card_title"] = str(normalized.get("card_title") or "").strip()
@@ -1365,9 +1366,18 @@ class CardPipelineApp(tk.Tk):
         normalized["inventory_key"] = str(normalized.get("inventory_key") or self._inventory_record_key(normalized))
         return normalized
 
+    def _inventory_sport_from_value(self, sport_value: object = "", card_title: object = "") -> str:
+        sport = str(sport_value or "").strip()
+        if sport:
+            return assignment_engine.canonical_sport_label(sport) or sport
+        title = str(card_title or "").strip()
+        if not title:
+            return ""
+        return str(assignment_engine.parse_card_for_matching(title).get("sport") or "")
+
     def _inventory_record_from_row(self, row: WorkbookRow, person: str, source_sheet: str = "", source: str = "", status: str = "Active", notes: str = "") -> dict[str, object]:
         card_title = str(row.card_title or "")
-        sport = assignment_engine.parse_card_for_matching(card_title).get("sport") if card_title else ""
+        sport = CardPipelineApp._inventory_sport_from_value(self, getattr(row, "category", ""), card_title)
         return self._normalize_inventory_record(
             {
                 "date_added": datetime.now().strftime("%Y-%m-%d"),
@@ -2005,12 +2015,13 @@ class CardPipelineApp(tk.Tk):
             if (path.name.lower(), cert) in company_keys:
                 continue
             card_title = str(row.get("card_title") or "")
+            sport = CardPipelineApp._inventory_sport_from_value(self, row.get("sport") or row.get("category"), card_title)
             candidates.append(
                 self._normalize_inventory_record(
                     {
                         "date_added": datetime.now().strftime("%Y-%m-%d"),
                         "assigned_person": assigned_person,
-                        "sport": assignment_engine.parse_card_for_matching(card_title).get("sport") if card_title else "",
+                        "sport": sport,
                         "cert_number": cert,
                         "grader": row.get("grader") or "",
                         "card_title": card_title,
@@ -2143,6 +2154,8 @@ class CardPipelineApp(tk.Tk):
                 row = None
         if not row:
             return normalized
+        if not str(normalized.get("sport") or "").strip():
+            normalized["sport"] = CardPipelineApp._inventory_sport_from_value(self, row.get("sport") or row.get("category"), row.get("card_title"))
         for source_field in ("card_ladder_value", "card_ladder_comps_average", "cy_value"):
             if normalized.get(source_field) is None:
                 normalized[source_field] = self._money_value(row.get(source_field))
@@ -3903,7 +3916,7 @@ class CardPipelineApp(tk.Tk):
                         {
                             "date_added": datetime.now().strftime("%Y-%m-%d"),
                             "assigned_person": normalized.get("assigned_person") or self._person_for_profit_record(normalized) or "Unassigned",
-                            "sport": assignment_engine.parse_card_for_matching(str(normalized.get("card_title") or "")).get("sport"),
+                            "sport": CardPipelineApp._inventory_sport_from_value(self, normalized.get("sport") or normalized.get("category"), normalized.get("card_title")),
                             "cert_number": normalized.get("cert_number") or "",
                             "grader": normalized.get("grader") or "",
                             "card_title": normalized.get("card_title") or "",
