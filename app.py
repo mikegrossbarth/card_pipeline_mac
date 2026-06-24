@@ -363,6 +363,8 @@ REVIEW_COLUMNS = DISPLAY_COLUMNS
 
 INVENTORY_TABLE_COLUMNS = (
     "date",
+    "type",
+    "item_id",
     "person",
     "sport",
     "cert",
@@ -436,6 +438,8 @@ COLUMN_WIDTHS = {
 
 INVENTORY_HEADINGS = {
     "date": "Date",
+    "type": "Type",
+    "item_id": "Item ID",
     "person": "Person",
     "sport": "Sport",
     "cert": "Cert",
@@ -455,6 +459,8 @@ INVENTORY_HEADINGS = {
 
 INVENTORY_COLUMN_WIDTHS = {
     "date": 95,
+    "type": 75,
+    "item_id": 150,
     "person": 130,
     "sport": 95,
     "cert": 110,
@@ -1243,7 +1249,8 @@ class CardPipelineApp(tk.Tk):
         ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
         action_row = ttk.Frame(controls, style="Panel.TFrame")
         action_row.grid(row=2, column=0, columnspan=11, sticky="w", pady=(10, 0))
-        ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT)
+        ttk.Button(action_row, text="Add Raw Card", command=self.add_raw_inventory_card, style="Primary.TButton").pack(side=tk.LEFT)
+        ttk.Button(action_row, text="Refresh", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Update Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Recomp", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
@@ -1382,20 +1389,44 @@ class CardPipelineApp(tk.Tk):
         atomic_write_json(INVENTORY_LEDGER_PATH, {"items": rows})
 
     def _inventory_record_key(self, record: dict[str, object]) -> str:
+        item_id = str(record.get("item_id") or "").strip()
+        if item_id:
+            return item_id.lower()
         return "|".join(
             str(record.get(field) or "").strip().lower()
             for field in ("cert_number", "source_sheet", "assigned_person")
         )
 
+    def _next_raw_item_id(self, existing_records: list[dict[str, object]] | None = None) -> str:
+        today = datetime.now().strftime("%Y%m%d")
+        prefix = f"RAW-{today}-"
+        records = existing_records if existing_records is not None else self._load_inventory_ledger()
+        max_sequence = 0
+        for record in records:
+            item_id = str(record.get("item_id") or "").strip().upper()
+            if not item_id.startswith(prefix):
+                continue
+            suffix = item_id[len(prefix):]
+            if suffix.isdigit():
+                max_sequence = max(max_sequence, int(suffix))
+        return f"{prefix}{max_sequence + 1:04d}"
+
     def _normalize_inventory_record(self, record: dict[str, object]) -> dict[str, object]:
         normalized = dict(record)
         normalized["date_added"] = str(normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"))[:10]
+        item_type = str(normalized.get("item_type") or normalized.get("type") or "").strip().title()
+        if item_type not in {"Raw", "Graded"}:
+            item_type = "Raw" if str(normalized.get("item_id") or "").strip().upper().startswith("RAW-") else "Graded"
+        normalized["item_type"] = item_type
+        normalized["item_id"] = str(normalized.get("item_id") or "").strip()
         normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip() or "Unassigned"
         sport = str(normalized.get("sport") or normalized.get("category") or "").strip()
         normalized["sport"] = assignment_engine.canonical_sport_label(sport) or sport
         normalized["cert_number"] = str(normalized.get("cert_number") or "").strip()
         normalized["grader"] = str(normalized.get("grader") or "").strip()
         normalized["card_title"] = str(normalized.get("card_title") or "").strip()
+        if not normalized["sport"] and normalized["card_title"]:
+            normalized["sport"] = CardPipelineApp._inventory_sport_from_value(self, "", normalized["card_title"])
         normalized["purchase_price"] = self._money_value(normalized.get("purchase_price"))
         normalized["card_ladder_value"] = self._money_value(normalized.get("card_ladder_value"))
         normalized["card_ladder_comps_average"] = self._money_value(normalized.get("card_ladder_comps_average") or normalized.get("comps"))
@@ -1425,6 +1456,8 @@ class CardPipelineApp(tk.Tk):
         return self._normalize_inventory_record(
             {
                 "date_added": datetime.now().strftime("%Y-%m-%d"),
+                "item_type": "Graded",
+                "item_id": "",
                 "assigned_person": person or "Unassigned",
                 "sport": sport,
                 "cert_number": row.cert_number,
@@ -2064,6 +2097,8 @@ class CardPipelineApp(tk.Tk):
                 self._normalize_inventory_record(
                     {
                         "date_added": datetime.now().strftime("%Y-%m-%d"),
+                        "item_type": "Graded",
+                        "item_id": "",
                         "assigned_person": assigned_person,
                         "sport": sport,
                         "cert_number": cert,
@@ -2230,6 +2265,138 @@ class CardPipelineApp(tk.Tk):
         normalized["inventory_value"] = getattr(recommendation, "source_value", None) or assignment_engine.assignment_value(row)
         return normalized
 
+    def _raw_inventory_card_dialog(self) -> dict[str, object] | None:
+        person_var = tk.StringVar(value=self.inventory_person_var.get().strip() if hasattr(self, "inventory_person_var") else "")
+        title_var = tk.StringVar()
+        purchase_var = tk.StringVar()
+        card_ladder_var = tk.StringVar()
+        comps_var = tk.StringVar()
+        cy_var = tk.StringVar()
+        cy_confidence_var = tk.StringVar()
+        best_company_var = tk.StringVar()
+        payout_var = tk.StringVar()
+        notes_var = tk.StringVar()
+        result: dict[str, object] = {}
+
+        popup = tk.Toplevel(self)
+        popup.title("Add Raw Card")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.grab_set()
+        popup.resizable(False, False)
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Add Raw Card", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 2))
+
+        fields = [
+            ("Person", person_var, 28),
+            ("Card description", title_var, 52),
+            ("Purchase", purchase_var, 18),
+            ("Card Ladder", card_ladder_var, 18),
+            ("Comps", comps_var, 18),
+            ("CY Estimate", cy_var, 18),
+            ("CY Confidence", cy_confidence_var, 18),
+            ("Best Company", best_company_var, 28),
+            ("Est. Payout", payout_var, 18),
+            ("Notes", notes_var, 52),
+        ]
+        for index, (label, var, width) in enumerate(fields):
+            row = 1 + index
+            ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 10), pady=(0, 8))
+            ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=1, columnspan=3, sticky="ew", pady=(0, 8))
+
+        status_var = tk.StringVar(value="Person, card description, and purchase are required.")
+        status_row = 1 + len(fields)
+        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=status_row, column=0, columnspan=4, sticky="w", pady=(4, 14))
+
+        def optional_money(var: tk.StringVar, label: str) -> float | None:
+            text = var.get().strip()
+            if not text:
+                return None
+            value = self._money_value(text)
+            if value is None or value < 0:
+                raise ValueError(label)
+            return float(value)
+
+        def submit() -> None:
+            person = person_var.get().strip()
+            title = title_var.get().strip()
+            purchase = self._money_value(purchase_var.get())
+            if not person:
+                status_var.set("Enter a person.")
+                return
+            if not title:
+                status_var.set("Enter a card description.")
+                return
+            if purchase is None or purchase < 0:
+                status_var.set("Enter a valid purchase price.")
+                return
+            try:
+                card_ladder = optional_money(card_ladder_var, "Card Ladder")
+                comps = optional_money(comps_var, "Comps")
+                cy_value = optional_money(cy_var, "CY Estimate")
+                payout = optional_money(payout_var, "Est. Payout")
+            except ValueError as error:
+                status_var.set(f"Enter a valid value for {error}.")
+                return
+            result.update(
+                {
+                    "assigned_person": person,
+                    "card_title": title,
+                    "purchase_price": float(purchase),
+                    "card_ladder_value": card_ladder,
+                    "card_ladder_comps_average": comps,
+                    "cy_value": cy_value,
+                    "cy_confidence": cy_confidence_var.get().strip(),
+                    "best_company": best_company_var.get().strip(),
+                    "estimated_payout": payout,
+                    "notes": notes_var.get().strip(),
+                }
+            )
+            popup.destroy()
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=status_row + 1, column=0, columnspan=4, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(buttons, text="Add Raw Card", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
+        frame.columnconfigure(1, weight=1)
+        popup.bind("<Return>", lambda _event: submit())
+        popup.bind("<Escape>", lambda _event: popup.destroy())
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        self.wait_window(popup)
+        return result or None
+
+    def add_raw_inventory_card(self) -> None:
+        values = self._raw_inventory_card_dialog()
+        if values is None:
+            return
+        with shared_lock(CARD_PIPELINE_DIR, "inventory-raw-add", self.lucas_identity):
+            existing = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+            item_id = self._next_raw_item_id(existing)
+            record = self._normalize_inventory_record(
+                {
+                    **values,
+                    "date_added": datetime.now().strftime("%Y-%m-%d"),
+                    "item_type": "Raw",
+                    "item_id": item_id,
+                    "sport": CardPipelineApp._inventory_sport_from_value(self, "", values.get("card_title")),
+                    "cert_number": "",
+                    "grader": "",
+                    "source_sheet": "Raw Inventory",
+                    "source": "Manual Raw Card",
+                    "status": "Active",
+                }
+            )
+            record = self._enrich_inventory_record_assignment(record)
+            existing.append(record)
+            self._save_inventory_ledger(existing)
+        self.refresh_inventory_tab()
+        self.status_var.set(f"Added raw inventory card {item_id}.")
+
     def _mark_inventory_records_moved_to_company(self, moved_keys: set[str]) -> None:
         if not moved_keys:
             return
@@ -2280,6 +2447,8 @@ class CardPipelineApp(tk.Tk):
                 "weekly_sheet_name": "Inventory Sale",
                 "source_sheet": source_sheet,
                 "source": normalized.get("source") or "Inventory",
+                "item_type": normalized.get("item_type") or "",
+                "item_id": normalized.get("item_id") or "",
                 "cert_number": normalized.get("cert_number") or "",
                 "grader": normalized.get("grader") or "",
                 "card_title": normalized.get("card_title") or "",
@@ -2312,6 +2481,7 @@ class CardPipelineApp(tk.Tk):
                 "expense_amount": expense_amount,
                 "related_type": "Card",
                 "source_sheet": sale_record.get("source_sheet") or "",
+                "item_id": sale_record.get("item_id") or "",
                 "cert_number": sale_record.get("cert_number") or "",
                 "notes": str(notes or "").strip(),
             }
@@ -2561,6 +2731,8 @@ class CardPipelineApp(tk.Tk):
         result: dict[str, object] = {}
         fields = [
             ("date_added", "Date"),
+            ("item_type", "Type"),
+            ("item_id", "Item ID"),
             ("assigned_person", "Person"),
             ("sport", "Sport"),
             ("cert_number", "Cert"),
@@ -2600,6 +2772,9 @@ class CardPipelineApp(tk.Tk):
             updates: dict[str, object] = {}
             for field, _label in fields:
                 raw = vars_by_field[field].get().strip()
+                if field in {"item_type", "item_id"}:
+                    updates[field] = normalized.get(field) or raw
+                    continue
                 if field in money_fields:
                     if not raw:
                         updates[field] = None
@@ -2825,6 +3000,8 @@ class CardPipelineApp(tk.Tk):
     def _inventory_record_can_move_to_company_sheet(self, record: dict[str, object] | None) -> bool:
         if not record or str(record.get("status") or "").lower() != "active":
             return False
+        if str(record.get("item_type") or "").strip().lower() == "raw":
+            return False
         best_company = str(record.get("best_company") or "").strip()
         return bool(best_company) and best_company.upper() != NO_COMPANY_TAKES_LABEL
 
@@ -2971,6 +3148,8 @@ class CardPipelineApp(tk.Tk):
                 tk.END,
                 values=(
                     record.get("date_added") or "",
+                    record.get("item_type") or "",
+                    record.get("item_id") or "",
                     record.get("assigned_person") or "Unassigned",
                     record.get("sport") or "",
                     record.get("cert_number") or "",
@@ -3286,7 +3465,7 @@ class CardPipelineApp(tk.Tk):
             if sport and sport not in str(record.get("sport") or "").lower():
                 continue
             if search:
-                searchable = f"{record.get('cert_number') or ''} {record.get('card_title') or ''}".lower()
+                searchable = f"{record.get('item_id') or ''} {record.get('cert_number') or ''} {record.get('card_title') or ''}".lower()
                 if any(part not in searchable for part in search.split()):
                     continue
             value = self._money_value(record.get("inventory_value") or record.get("purchase_price")) or 0.0
@@ -3313,11 +3492,13 @@ class CardPipelineApp(tk.Tk):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Inventory"
-        headers = ["Date Added", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Source Sheet", "Source", "Status", "Notes"]
+        headers = ["Date Added", "Type", "Item ID", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Source Sheet", "Source", "Status", "Notes"]
         sheet.append(headers)
         for record in rows:
             sheet.append([
                 record.get("date_added") or "",
+                record.get("item_type") or "",
+                record.get("item_id") or "",
                 record.get("assigned_person") or "",
                 record.get("sport") or "",
                 record.get("cert_number") or "",
@@ -3337,7 +3518,7 @@ class CardPipelineApp(tk.Tk):
             ])
         sheet.auto_filter.ref = sheet.dimensions
         sheet.freeze_panes = "A2"
-        for index, width in enumerate([14, 18, 14, 22, 12, 60, 16, 16, 16, 16, 14, 20, 16, 28, 24, 14, 36], start=1):
+        for index, width in enumerate([14, 12, 22, 18, 14, 22, 12, 60, 16, 16, 16, 16, 14, 20, 16, 28, 24, 14, 36], start=1):
             sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
         workbook.save(path)
         self.status_var.set(f"Exported inventory: {path}")
@@ -3347,7 +3528,13 @@ class CardPipelineApp(tk.Tk):
         if record_type == "expense":
             return "|".join(
                 str(record.get(field) or "").strip().lower()
-                for field in ("record_type", "expense_id", "assigned_person", "date_added", "expense_type", "expense_amount", "related_type", "source_sheet", "cert_number", "notes")
+                for field in ("record_type", "expense_id", "assigned_person", "date_added", "expense_type", "expense_amount", "related_type", "source_sheet", "item_id", "cert_number", "notes")
+            )
+        item_id = str(record.get("item_id") or "").strip()
+        if item_id:
+            return "|".join(
+                str(record.get(field) or "").strip().lower()
+                for field in ("item_id", "company", "date_added", "weekly_sheet_name", "source_sheet")
             )
         return "|".join(
             str(record.get(field) or "").strip().lower()
@@ -3386,6 +3573,7 @@ class CardPipelineApp(tk.Tk):
             if related_type not in EXPENSE_LINK_OPTIONS:
                 related_type = "General"
             related_sheet = str(normalized.get("source_sheet") or normalized.get("related_sheet") or "").strip()
+            related_item_id = str(normalized.get("item_id") or normalized.get("related_item_id") or "").strip()
             related_cert = str(normalized.get("cert_number") or normalized.get("related_cert") or "").strip()
             normalized["record_type"] = "expense"
             normalized["expense_id"] = str(normalized.get("expense_id") or "").strip()
@@ -3398,6 +3586,7 @@ class CardPipelineApp(tk.Tk):
             normalized["date_added"] = str(normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"))[:10]
             normalized["company"] = f"Expense: {expense_type}"
             normalized["card_title"] = notes or expense_type
+            normalized["item_id"] = related_item_id if related_type == "Card" else ""
             normalized["cert_number"] = related_cert if related_type == "Card" else ""
             normalized["weekly_sheet_name"] = ""
             normalized["source_sheet"] = related_sheet if related_type in {"Card", "Sheet"} and related_sheet else "Expenses"
@@ -3412,6 +3601,8 @@ class CardPipelineApp(tk.Tk):
         normalized["profit"] = round(sale - purchase, 2) if sale is not None and purchase is not None else None
         normalized["date_added"] = str(normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"))
         normalized["company"] = str(normalized.get("company") or normalized.get("best_company") or "").strip()
+        normalized["item_type"] = str(normalized.get("item_type") or normalized.get("type") or "").strip()
+        normalized["item_id"] = str(normalized.get("item_id") or "").strip()
         normalized["card_title"] = str(normalized.get("card_title") or "").strip()
         normalized["cert_number"] = str(normalized.get("cert_number") or "").strip()
         normalized["weekly_sheet_name"] = str(normalized.get("weekly_sheet_name") or "").strip()
@@ -3460,7 +3651,7 @@ class CardPipelineApp(tk.Tk):
             if search:
                 searchable = " ".join(
                     str(record.get(field) or "")
-                    for field in ("cert_number", "card_title", "company", "source_sheet", "weekly_sheet_name", "assigned_person")
+                    for field in ("item_id", "cert_number", "card_title", "company", "source_sheet", "weekly_sheet_name", "assigned_person")
                 ).lower()
                 if any(part not in searchable for part in search.split()):
                     continue
@@ -3614,14 +3805,17 @@ class CardPipelineApp(tk.Tk):
             if not source_sheet:
                 continue
             sheets.add(source_sheet)
+            item_id = str(record.get("item_id") or "").strip()
             cert = str(record.get("cert_number") or "").strip()
             card_title = str(record.get("card_title") or "").strip()
-            card_key = (source_sheet.lower(), cert.lower(), card_title.lower())
+            card_key = (source_sheet.lower(), item_id.lower(), cert.lower(), card_title.lower())
             if card_key in seen_cards:
                 continue
             seen_cards.add(card_key)
             sale = self._money_value(record.get("sale_price"))
             label_parts = [source_sheet]
+            if item_id:
+                label_parts.append(item_id)
             if card_title:
                 label_parts.append(card_title)
             if sale is not None:
@@ -3630,6 +3824,7 @@ class CardPipelineApp(tk.Tk):
             card_options.append(label)
             card_lookup[label] = {
                 "source_sheet": source_sheet,
+                "item_id": item_id,
                 "cert_number": cert,
             }
         return sorted(sheets, key=str.lower), sorted(card_options, key=str.lower), card_lookup
@@ -3712,6 +3907,7 @@ class CardPipelineApp(tk.Tk):
         amount_var = tk.StringVar()
         link_var = tk.StringVar(value=EXPENSE_LINK_OPTIONS[0])
         sheet_var = tk.StringVar()
+        item_id_var = tk.StringVar()
         cert_var = tk.StringVar()
         card_var = tk.StringVar()
         notes_var = tk.StringVar()
@@ -3753,7 +3949,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(
             buttons,
             text="Save",
-            command=lambda: self._save_expense_from_popup(person_var, date_var, type_var, amount_var, link_var, sheet_var, cert_var, notes_var, popup),
+            command=lambda: self._save_expense_from_popup(person_var, date_var, type_var, amount_var, link_var, sheet_var, item_id_var, cert_var, notes_var, popup),
             style="Primary.TButton",
         ).pack(side=tk.LEFT)
         card_lookup: dict[str, dict[str, str]] = {}
@@ -3772,6 +3968,7 @@ class CardPipelineApp(tk.Tk):
                 sheet_combo.configure(state="readonly")
                 card_combo.configure(state="disabled")
                 card_var.set("")
+                item_id_var.set("")
                 cert_var.set("")
                 if sheet_var.get() not in sheet_options:
                     sheet_var.set(sheet_options[0] if sheet_options else "")
@@ -3789,17 +3986,20 @@ class CardPipelineApp(tk.Tk):
                     card_var.set(filtered_card_options[0] if filtered_card_options else "")
                 selection = card_lookup.get(card_var.get(), {})
                 sheet_var.set(selection.get("source_sheet", ""))
+                item_id_var.set(selection.get("item_id", ""))
                 cert_var.set(selection.get("cert_number", ""))
             else:
                 sheet_combo.configure(state="disabled")
                 card_combo.configure(state="disabled")
                 sheet_var.set("")
+                item_id_var.set("")
                 cert_var.set("")
                 card_var.set("")
 
         def apply_card_selection(*_args) -> None:
             selection = card_lookup.get(card_var.get(), {})
             sheet_var.set(selection.get("source_sheet", ""))
+            item_id_var.set(selection.get("item_id", ""))
             cert_var.set(selection.get("cert_number", ""))
 
         def refresh_cards_for_sheet(*_args) -> None:
@@ -3827,6 +4027,7 @@ class CardPipelineApp(tk.Tk):
         amount_var: tk.StringVar,
         link_var: tk.StringVar,
         sheet_var: tk.StringVar,
+        item_id_var: tk.StringVar,
         cert_var: tk.StringVar,
         notes_var: tk.StringVar,
         popup: tk.Toplevel,
@@ -3850,11 +4051,12 @@ class CardPipelineApp(tk.Tk):
         if related_type not in EXPENSE_LINK_OPTIONS:
             related_type = "General"
         related_sheet = sheet_var.get().strip()
+        related_item_id = item_id_var.get().strip()
         related_cert = cert_var.get().strip()
         if related_type == "Sheet" and not related_sheet:
             messagebox.showinfo("Sheet required", "Choose the sold sheet this expense belongs to.")
             return
-        if related_type == "Card" and not (related_sheet or related_cert):
+        if related_type == "Card" and not (related_sheet or related_item_id or related_cert):
             messagebox.showinfo("Card required", "Choose the sold card this expense belongs to.")
             return
         record = {
@@ -3866,6 +4068,7 @@ class CardPipelineApp(tk.Tk):
             "expense_amount": amount,
             "related_type": related_type,
             "source_sheet": related_sheet,
+            "item_id": related_item_id,
             "cert_number": related_cert,
             "notes": notes_var.get().strip(),
         }
@@ -3959,6 +4162,8 @@ class CardPipelineApp(tk.Tk):
                     self._normalize_inventory_record(
                         {
                             "date_added": datetime.now().strftime("%Y-%m-%d"),
+                            "item_type": normalized.get("item_type") or ("Raw" if str(normalized.get("item_id") or "").upper().startswith("RAW-") else "Graded"),
+                            "item_id": normalized.get("item_id") or "",
                             "assigned_person": normalized.get("assigned_person") or self._person_for_profit_record(normalized) or "Unassigned",
                             "sport": CardPipelineApp._inventory_sport_from_value(self, normalized.get("sport") or normalized.get("category"), normalized.get("card_title")),
                             "cert_number": normalized.get("cert_number") or "",
