@@ -1245,7 +1245,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Entry(controls, textvariable=self.inventory_max_var, width=9).grid(row=0, column=8, sticky="w")
         controls.columnconfigure(9, weight=1)
         ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=9, sticky="e", padx=(18, 0))
-        ttk.Label(controls, text="Search Cert/Card", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(controls, text="Search ID/Cert/Card", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
         ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
         action_row = ttk.Frame(controls, style="Panel.TFrame")
         action_row.grid(row=2, column=0, columnspan=11, sticky="w", pady=(10, 0))
@@ -1323,7 +1323,7 @@ class CardPipelineApp(tk.Tk):
 
         search_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 10))
         search_panel.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(search_panel, text="Search Sold Cards", style="Muted.TLabel").pack(side=tk.LEFT)
+        ttk.Label(search_panel, text="Search Profit Rows", style="Muted.TLabel").pack(side=tk.LEFT)
         ttk.Entry(search_panel, textvariable=self.profit_search_var, width=44).pack(side=tk.LEFT, padx=(8, 0))
 
         ledger_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
@@ -2143,15 +2143,6 @@ class CardPipelineApp(tk.Tk):
                 candidates.extend(self._received_inventory_candidate_records_for_sheet(stage, path, person, company_keys))
         return candidates
 
-    def reconcile_received_inventory(self) -> None:
-        added, candidates = self._sync_received_inventory_to_ledger()
-        self.refresh_inventory_tab(enrich=True)
-        self.status_var.set(f"Reconciled received inventory: added {added} active card(s) from {candidates} candidate row(s).")
-        if added:
-            messagebox.showinfo("Inventory reconciled", f"Added {added} received card(s) to active inventory.")
-        else:
-            messagebox.showinfo("Inventory reconciled", "No missing received inventory cards were found.")
-
     def _sync_received_inventory_to_ledger(self, filtered_only: bool = False) -> tuple[int, int]:
         records = self._received_inventory_candidate_records()
         if filtered_only:
@@ -2619,117 +2610,6 @@ class CardPipelineApp(tk.Tk):
             self.refresh_profit_tab()
             self.status_var.set(f"Marked inventory card sold: {record.get('cert_number') or record.get('card_title') or 'card'} for {format_money(sale_price)}.")
 
-    def _inventory_numeric_value_dialog(self, records: list[dict[str, object]], title: str, field: str, note: str = "This updates Inventory only.") -> float | None:
-        normalized_records = [self._normalize_inventory_record(record) for record in records]
-        popup = tk.Toplevel(self)
-        popup.title(title)
-        popup.transient(self)
-        popup.grab_set()
-        popup.configure(bg="#121212")
-        result: dict[str, float] = {}
-        first_value = self._money_value(normalized_records[0].get(field)) if len(normalized_records) == 1 else None
-        value_var = tk.StringVar(value="" if first_value is None else f"{first_value:.2f}")
-
-        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
-        frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text=title, style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
-        if len(normalized_records) == 1:
-            detail = str(normalized_records[0].get("card_title") or normalized_records[0].get("cert_number") or "Inventory card")
-        else:
-            detail = f"{len(normalized_records)} selected inventory cards"
-        ttk.Label(frame, text=detail, style="Muted.TLabel", wraplength=420).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
-        ttk.Label(frame, text=title.replace("Set ", ""), style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 14))
-        value_entry = ttk.Entry(frame, textvariable=value_var, width=34)
-        value_entry.grid(row=2, column=1, sticky="ew", pady=(0, 14))
-        status_var = tk.StringVar(value=note)
-        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 14))
-
-        def submit() -> None:
-            value = self._money_value(value_var.get())
-            if value is None or value < 0:
-                status_var.set("Enter a valid value.")
-                value_entry.focus_set()
-                return
-            result["value"] = float(value)
-            popup.destroy()
-
-        buttons = ttk.Frame(frame, style="Panel.TFrame")
-        buttons.grid(row=4, column=0, columnspan=2, sticky="e")
-        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(buttons, text="Save", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
-        frame.columnconfigure(1, weight=1)
-        popup.bind("<Return>", lambda _event: submit())
-        popup.bind("<Escape>", lambda _event: popup.destroy())
-        popup.update_idletasks()
-        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
-        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
-        popup.geometry(f"+{x}+{y}")
-        value_entry.focus_set()
-        value_entry.select_range(0, tk.END)
-        self.wait_window(popup)
-        return result.get("value")
-
-    def _inventory_purchase_price_dialog(self, records: list[dict[str, object]]) -> float | None:
-        return self._inventory_numeric_value_dialog(records, "Set Purchase Price", "purchase_price")
-
-    def set_selected_inventory_purchase_price(self) -> None:
-        self._set_selected_inventory_numeric_value(
-            field="purchase_price",
-            title="Set Purchase Price",
-            status_label="purchase price",
-        )
-
-    def set_selected_inventory_card_ladder_value(self) -> None:
-        self._set_selected_inventory_numeric_value(
-            field="card_ladder_value",
-            title="Set Card Ladder Value",
-            status_label="Card Ladder value",
-        )
-
-    def set_selected_inventory_comps_value(self) -> None:
-        self._set_selected_inventory_numeric_value(
-            field="card_ladder_comps_average",
-            title="Set Comps",
-            status_label="comps",
-        )
-
-    def _set_selected_inventory_numeric_value(self, field: str, title: str, status_label: str) -> None:
-        if not hasattr(self, "inventory_tree"):
-            return
-        records = [self.inventory_tree_records.get(iid) for iid in self.inventory_tree.selection()]
-        active_records = [record for record in records if record and str(record.get("status") or "").lower() == "active"]
-        if not active_records or len(active_records) != len([record for record in records if record]):
-            messagebox.showinfo("Choose active inventory", "Select one or more active inventory rows to update.")
-            return
-        value = self._inventory_numeric_value_dialog(active_records, title, field)
-        if value is None:
-            return
-        keys = {str(record.get("inventory_key") or "") for record in active_records}
-        keys.discard("")
-        updated = self._set_inventory_numeric_field_by_keys(keys, field, float(value))
-        self.refresh_inventory_tab()
-        self.status_var.set(f"Updated {status_label} to {format_money(value)} for {updated} inventory card(s).")
-
-    def _set_inventory_purchase_price_by_keys(self, keys: set[str], purchase_price: float) -> int:
-        return self._set_inventory_numeric_field_by_keys(keys, "purchase_price", purchase_price)
-
-    def _set_inventory_numeric_field_by_keys(self, keys: set[str], field: str, value: float) -> int:
-        if not keys:
-            return 0
-        allowed_fields = {"purchase_price", "card_ladder_value", "card_ladder_comps_average"}
-        if field not in allowed_fields:
-            return 0
-        with shared_lock(CARD_PIPELINE_DIR, "inventory-value-edit", self.lucas_identity):
-            rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-            updated = 0
-            for record in rows:
-                if str(record.get("inventory_key") or "") in keys and str(record.get("status") or "").lower() == "active":
-                    record[field] = float(value)
-                    updated += 1
-            if updated:
-                self._save_inventory_ledger(rows)
-        return updated
-
     def _inventory_edit_row_dialog(self, record: dict[str, object]) -> dict[str, object] | None:
         normalized = self._normalize_inventory_record(record)
         popup = tk.Toplevel(self)
@@ -3067,7 +2947,7 @@ class CardPipelineApp(tk.Tk):
         if records and all(self._inventory_record_can_move_to_company_sheet(record) for record in records):
             if len(active_records) == 1 and len(records) == 1:
                 menu.add_separator()
-            menu.add_command(label="Move to Company Sheets", command=self.move_selected_inventory_to_company_sheets)
+            menu.add_command(label="Move to Best Company Sheet", command=self.move_selected_inventory_to_company_sheets)
             menu.add_command(label="Move to Specific Company Sheet...", command=self.move_selected_inventory_to_specific_company_sheet)
         if records:
             menu.add_separator()
