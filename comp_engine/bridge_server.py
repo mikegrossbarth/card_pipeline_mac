@@ -425,6 +425,14 @@ class BridgeState:
                 "profile names on no-result pages. Reload the bundled Card Ladder Auto-Comp extension."
             )
             return
+        if result_status == "extension_error":
+            row.card_ladder_value = None
+            row.card_ladder_comps_average = None
+            row.card_ladder_comps = ""
+            row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
+            row.status = "Card Ladder extension error"
+            row.notes = str(result.get("error") or "Card Ladder lookup failed before a result could be captured.")
+            return
         if profile_title:
             row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
         row.card_ladder_comps_average = comp_price(comps, self.comp_strategy)

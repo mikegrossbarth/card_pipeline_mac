@@ -261,6 +261,7 @@ Common gotchas:
 - Current bridge expected helper version: `2026-06-17-no-blind-grader-option-v22`.
 - App warns if the extension version seen by the bridge is stale.
 - No-results pages preserve the Card Ladder title when available.
+- If a Card Ladder lookup visibly opens a cert but the helper throws before capture completes, the extension now posts an `extension_error` row result; LUCAS records `Card Ladder extension error` instead of leaving the row blank. Bridge result posts retry before failing.
 
 ## Tests And Verification
 
@@ -271,7 +272,7 @@ C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\py
 C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m unittest tests.test_shared_workflows -v
 ```
 
-Last full Mac result after recovery in this Windows Codex workspace: `39 tests OK`.
+Last full Mac result after recovery in this Windows Codex workspace: `109 tests OK`.
 
 On an actual Mac, prefer:
 

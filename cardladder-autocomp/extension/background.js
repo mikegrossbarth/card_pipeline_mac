@@ -240,7 +240,12 @@ async function runRows(tabId, rows, options = {}) {
       },
     });
 
-    const result = stampResult(await lookupRowWithRetries(tabId, row));
+    let result;
+    try {
+      result = stampResult(await lookupRowWithRetries(tabId, row));
+    } catch (error) {
+      result = stampResult(rowFailureResult(row, error));
+    }
     await throwIfCancelled(options);
 
     results.push(result);
@@ -381,6 +386,17 @@ function stampResult(result) {
   return {
     ...(result || {}),
     extensionVersion: CARDLADDER_BACKGROUND_VERSION,
+  };
+}
+
+function rowFailureResult(row, error) {
+  return {
+    ...(row || {}),
+    value: null,
+    status: "extension_error",
+    error: String(error?.message || error || "Card Ladder lookup failed before a result could be captured."),
+    ocr: { ok: false, value: null, comps: [], evidence: "Card Ladder lookup threw before capture completed.", debugImage: "" },
+    capturedAt: new Date().toISOString(),
   };
 }
 
@@ -689,19 +705,30 @@ async function captureActiveTabWithOcr(row) {
 }
 
 async function postBridgeResult(result) {
-  await fetch(`${activeBridgeUrl}/result/cardladder`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(result),
-  }).catch(() => {});
+  return postBridgeJson("/result/cardladder", result);
 }
 
 async function postBridgeFinish(payload) {
-  await fetch(`${activeBridgeUrl}/finish/cardladder`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  }).catch(() => {});
+  return postBridgeJson("/finish/cardladder", payload);
+}
+
+async function postBridgeJson(path, payload) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`${activeBridgeUrl}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (response.ok) return response;
+      lastError = new Error(`Bridge returned HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await delay(300 * (attempt + 1));
+  }
+  throw lastError || new Error(`Could not post ${path} to the L.U.C.A.S bridge.`);
 }
 
 async function closeActiveWindow() {
