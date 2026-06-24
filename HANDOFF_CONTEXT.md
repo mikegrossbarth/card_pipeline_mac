@@ -61,6 +61,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 - Company sheets now use one workbook per company with weekly tabs:
   - `COMPANY SHEETS/<Company>/<Company>.xlsx`
   - weekly tab name: `Week of YYYY-MM-DD`
+- CourtYard/CY weekly company sheets use the same visible front columns as ingestable CY sheets: `Grader`, `Cert`, `Description`, `Grade`, `Purchase`, `Estimate`, `Confidence`. L.U.C.A.S tracking/profit columns are kept to the right as hidden columns so profit backfill/refunds/source tracking still work.
 - Old legacy weekly company files remain readable for profit backfill.
 - Sunday at midnight rolls forward to the next Monday's company-sheet tab.
 - `Inventory` tracks active person-level inventory in `inventory_ledger.json`.

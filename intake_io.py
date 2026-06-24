@@ -132,6 +132,25 @@ COMPANY_SHEET_HEADERS = [
     "Status",
     "Notes",
 ]
+CY_COMPANY_SHEET_HEADERS = [
+    "Grader",
+    "Cert",
+    "Description",
+    "Grade",
+    "Purchase",
+    "Estimate",
+    "Confidence",
+    "Date Added",
+    "Source Sheet",
+    "Source",
+    "Sport",
+    "Card Ladder Value",
+    "Comps",
+    "Best Company",
+    "Estimated Payout",
+    "Status",
+    "Notes",
+]
 
 
 def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[dict[str, Any]]:
@@ -402,7 +421,7 @@ def ensure_company_workbook_sheet(path: Path, sheet_name: str) -> bool:
         workbook = load_workbook(path)
         if sheet_name in workbook.sheetnames:
             sheet = workbook[sheet_name]
-            ensure_cy_columns_after_comps(sheet)
+            ensure_company_sheet_layout(sheet, path.parent.name)
             workbook.save(path)
             workbook.close()
             return False
@@ -418,7 +437,7 @@ def ensure_company_workbook_sheet(path: Path, sheet_name: str) -> bool:
         sheet.title = sheet_name
         created = True
     if _sheet_max_row(sheet) <= 1 and sheet.cell(1, 1).value is None:
-        set_company_sheet_headers(sheet)
+        set_company_sheet_headers(sheet, path.parent.name)
     style_company_sheet_header(sheet)
     sheet.auto_filter.ref = sheet.dimensions
     workbook.save(path)
@@ -439,17 +458,17 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
                 sheet = workbook[sheet_name]
             else:
                 sheet = workbook.create_sheet(sheet_name)
-                set_company_sheet_headers(sheet)
+                set_company_sheet_headers(sheet, path.parent.name)
                 style_company_sheet_header(sheet)
         else:
             sheet = workbook.active
-        ensure_cy_columns_after_comps(sheet)
+        ensure_company_sheet_layout(sheet, path.parent.name)
         existing_certs = existing_sheet_certs(sheet)
     else:
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = sheet_name or "Cards"
-        set_company_sheet_headers(sheet)
+        set_company_sheet_headers(sheet, path.parent.name)
         style_company_sheet_header(sheet)
         existing_certs = set()
 
@@ -465,25 +484,7 @@ def append_rows_to_company_sheet(path: Path, rows: list[Any], source_lookup: dic
         source = (source_lookup or {}).get(row.excel_row, "")
         purchase_price = parse_money(getattr(row, "existing_value", None))
         sale_price = parse_money(getattr(row, "estimated_payout", None))
-        sheet.append(
-            [
-                today_text,
-                source_sheet,
-                source,
-                cert,
-                getattr(row, "grader", ""),
-                getattr(row, "card_title", ""),
-                purchase_price,
-                getattr(row, "card_ladder_value", None),
-                getattr(row, "card_ladder_comps_average", None),
-                getattr(row, "cy_value", None),
-                getattr(row, "cy_confidence", None),
-                getattr(row, "best_company", ""),
-                sale_price,
-                getattr(row, "status", ""),
-                getattr(row, "notes", ""),
-            ]
-        )
+        append_company_row(sheet, row, company, today_text, source_sheet, source, cert, purchase_price, sale_price)
         added_records.append(
             {
                 "date_added": today_text,
@@ -537,14 +538,86 @@ def style_company_sheet_header(sheet) -> None:
         cell.fill = header_fill
         cell.font = header_font
     sheet.freeze_panes = "A2"
-    widths = [14, 28, 22, 22, 14, 62, 16, 18, 14, 14, 16, 18, 18, 20, 38]
+    if _is_cy_company_sheet(sheet):
+        widths = [14, 18, 62, 12, 14, 14, 14, 14, 28, 22, 14, 18, 14, 18, 18, 20, 38]
+    else:
+        widths = [14, 28, 22, 22, 14, 62, 16, 18, 14, 14, 16, 18, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
+    if _is_cy_company_sheet(sheet):
+        for index in range(8, len(CY_COMPANY_SHEET_HEADERS) + 1):
+            sheet.column_dimensions[sheet.cell(1, index).column_letter].hidden = True
 
 
-def set_company_sheet_headers(sheet) -> None:
-    for index, header in enumerate(COMPANY_SHEET_HEADERS, start=1):
+def set_company_sheet_headers(sheet, company: str = "") -> None:
+    headers = CY_COMPANY_SHEET_HEADERS if is_cy_company(company) else COMPANY_SHEET_HEADERS
+    for index, header in enumerate(headers, start=1):
         sheet.cell(1, index).value = header
+
+
+def is_cy_company(company: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "", clean_part(company).lower())
+    return normalized in {"cy", "courtyard", "courtyardcards", "courtyardcard"} or normalized.startswith("courtyard")
+
+
+def _is_cy_company_sheet(sheet) -> bool:
+    headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
+    return bool(headers.get("cert") and headers.get("estimate") and headers.get("confidence"))
+
+
+def ensure_company_sheet_layout(sheet, company: str = "") -> None:
+    if is_cy_company(company):
+        headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
+        has_data = _sheet_max_row(sheet) >= 2 and any(sheet.cell(row_index, 1).value is not None for row_index in range(2, _sheet_max_row(sheet) + 1))
+        if (not headers or sheet.cell(1, 1).value is None) or (not has_data and not _is_cy_company_sheet(sheet)):
+            set_company_sheet_headers(sheet, company)
+            return
+    ensure_cy_columns_after_comps(sheet)
+
+
+def append_company_row(sheet, row: Any, company: str, today_text: str, source_sheet: str, source: str, cert: str, purchase_price: float | None, sale_price: float | None) -> None:
+    if _is_cy_company_sheet(sheet):
+        sheet.append(
+            [
+                getattr(row, "grader", ""),
+                cert,
+                getattr(row, "card_title", ""),
+                "",
+                purchase_price,
+                getattr(row, "cy_value", None),
+                getattr(row, "cy_confidence", None),
+                today_text,
+                source_sheet,
+                source,
+                getattr(row, "category", ""),
+                getattr(row, "card_ladder_value", None),
+                getattr(row, "card_ladder_comps_average", None),
+                getattr(row, "best_company", ""),
+                sale_price,
+                getattr(row, "status", ""),
+                getattr(row, "notes", ""),
+            ]
+        )
+        return
+    sheet.append(
+        [
+            today_text,
+            source_sheet,
+            source,
+            cert,
+            getattr(row, "grader", ""),
+            getattr(row, "card_title", ""),
+            purchase_price,
+            getattr(row, "card_ladder_value", None),
+            getattr(row, "card_ladder_comps_average", None),
+            getattr(row, "cy_value", None),
+            getattr(row, "cy_confidence", None),
+            getattr(row, "best_company", ""),
+            sale_price,
+            getattr(row, "status", ""),
+            getattr(row, "notes", ""),
+        ]
+    )
 
 
 def ensure_cy_columns_after_comps(sheet) -> None:

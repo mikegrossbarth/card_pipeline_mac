@@ -142,6 +142,51 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
             self.assertEqual(rows[0]["cy_value"], 19.30)
             self.assertEqual(rows[0]["cy_confidence"], 4)
 
+    def test_courtyard_weekly_sheet_uses_cy_ingest_format(self) -> None:
+        with TemporaryDirectory() as tmp:
+            company_dir = Path(tmp) / "COMPANY SHEETS"
+            rows = [
+                WorkbookRow(
+                    excel_row=2,
+                    cert_number="1401045404276",
+                    grader="CGC",
+                    category="pokemon",
+                    card_title="2022 Paradigm Trigger Unown VSTAR CGC 10",
+                    existing_value=17.37,
+                    card_ladder_value=22,
+                    card_ladder_comps_average=21,
+                    cy_value=19.30,
+                    cy_confidence=4,
+                    best_company="CourtYard",
+                    estimated_payout=18.33,
+                    status="Received",
+                )
+            ]
+
+            result = append_company_sheet_rows(company_dir, rows, {2: "cy.xlsx:2"}, {2: "cy.xlsx"})
+
+            self.assertEqual(result["rows_added"], 1)
+            path = company_dir / "CourtYard" / "CourtYard.xlsx"
+            workbook = load_workbook(path, data_only=True)
+            sheet = workbook[workbook.sheetnames[0]]
+            try:
+                first_headers = [sheet.cell(1, column).value for column in range(1, 8)]
+                self.assertEqual(first_headers, ["Grader", "Cert", "Description", "Grade", "Purchase", "Estimate", "Confidence"])
+                self.assertTrue(sheet.column_dimensions["H"].hidden)
+            finally:
+                workbook.close()
+
+            imported = read_simple_spreadsheet(path)
+            self.assertEqual(imported[0]["grader"], "CGC")
+            self.assertEqual(imported[0]["cert_number"], "1401045404276")
+            self.assertEqual(imported[0]["purchase_price"], 17.37)
+            self.assertEqual(imported[0]["cy_value"], 19.30)
+            self.assertEqual(imported[0]["cy_confidence"], 4)
+            profit_records = read_company_profit_records(company_dir)
+            self.assertEqual(len(profit_records), 1)
+            self.assertEqual(profit_records[0]["sale_price"], 18.33)
+            self.assertEqual(profit_records[0]["source_sheet"], "cy.xlsx")
+
     def test_working_sheet_round_trips_manual_sport(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "manual-sport.xlsx"
