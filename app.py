@@ -671,6 +671,7 @@ class CardPipelineApp(tk.Tk):
             "warning": "#5a4a14",
             "danger": "#5a1f1f",
         }
+        self.app_palette = palette
         self.configure(bg=palette["bg"])
         self.option_add("*TCombobox*Listbox.background", palette["field"])
         self.option_add("*TCombobox*Listbox.foreground", palette["text"])
@@ -831,10 +832,10 @@ class CardPipelineApp(tk.Tk):
         header_actions = ttk.Frame(header, style="Header.TFrame")
         header_actions.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(12, 0))
         header_buttons = [
-            ttk.Button(header_actions, text="Activity Log", command=self.open_activity_log, style="Soft.TButton"),
-            ttk.Button(header_actions, text="System Health", command=self.open_setup_doctor, style="Soft.TButton"),
-            ttk.Button(header_actions, text="Working Folder", command=self.choose_working_folder, style="Soft.TButton"),
-            ttk.Button(header_actions, text="Mobile Help", command=self.open_mobile_connection_helper, style="Soft.TButton"),
+            self._make_colored_button(header_actions, "Activity Log", self.open_activity_log, variant="primary"),
+            self._make_colored_button(header_actions, "System Health", self.open_setup_doctor, variant="primary"),
+            self._make_colored_button(header_actions, "Working Folder", self.choose_working_folder, variant="primary"),
+            self._make_colored_button(header_actions, "Mobile Help", self.open_mobile_connection_helper, variant="primary"),
         ]
         self._bind_responsive_button_row(header_actions, header_buttons, min_button_width=132)
 
@@ -1192,7 +1193,7 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_list.bind("<<ListboxSelect>>", lambda _event: self._load_home_selected_marker())
         self.home_sheet_list.bind("<Button-3>", self._show_home_sheet_context_menu)
         self.home_sheet_list.bind("<Button-2>", self._show_home_sheet_context_menu)
-        ttk.Button(sheet_panel, text="Refresh Home View", command=self.refresh_home, style="Primary.TButton").pack(fill=tk.X)
+        self._make_colored_button(sheet_panel, "Refresh Home View", self.refresh_home, variant="primary").pack(fill=tk.X)
 
         right = ttk.Frame(body, style="App.TFrame")
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -4959,6 +4960,38 @@ class CardPipelineApp(tk.Tk):
     def choose_pipeline_root(self) -> None:
         self.choose_working_folder()
 
+    def _make_colored_button(self, parent: tk.Widget, text: str, command, variant: str = "soft") -> tk.Button:
+        palette = getattr(self, "app_palette", {})
+        if variant == "primary":
+            bg = str(palette.get("button") or "#1ed760")
+            hover = str(palette.get("button_hover") or "#1fdf64")
+            pressed = str(palette.get("button_pressed") or "#169c46")
+            fg = "#000000"
+        else:
+            bg = str(palette.get("soft_button") or "#2a2a2a")
+            hover = str(palette.get("soft_button_hover") or "#3a3a3a")
+            pressed = str(palette.get("border") or "#333333")
+            fg = str(palette.get("text") or "#ffffff")
+        button = tk.Button(
+            parent,
+            text=text,
+            command=command,
+            bg=bg,
+            fg=fg,
+            activebackground=pressed,
+            activeforeground=fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            highlightthickness=0,
+            padx=16,
+            pady=9,
+            font=("Segoe UI Semibold", 10),
+            cursor="hand2",
+        )
+        button.bind("<Enter>", lambda _event: button.configure(bg=hover), add="+")
+        button.bind("<Leave>", lambda _event: button.configure(bg=bg), add="+")
+        return button
+
     def _bind_responsive_button_row(
         self,
         parent: tk.Widget,
@@ -5051,7 +5084,7 @@ class CardPipelineApp(tk.Tk):
             return
         palette = self.home_tab_palette
         active_kind = self.home_sheet_kind.get()
-        active = {"bg": palette["panel_high"], "fg": palette["text"], "activebackground": palette["panel_high"], "activeforeground": palette["text"]}
+        active = {"bg": palette["button"], "fg": "#000000", "activebackground": palette["button_hover"], "activeforeground": "#000000"}
         inactive = {"bg": palette["soft_button"], "fg": palette["muted"], "activebackground": palette["soft_button_hover"], "activeforeground": palette["text"]}
         self.home_incoming_tab.configure(**(active if active_kind == "Incoming" else inactive))
         self.home_working_tab.configure(**(active if active_kind == "Working" else inactive))
