@@ -815,22 +815,28 @@ class CardPipelineApp(tk.Tk):
 
         header = ttk.Frame(self, style="Header.TFrame", padding=(18, 16))
         header.pack(fill=tk.X)
+        header.columnconfigure(1, weight=1)
         if LUCAS_LOGO_PATH.exists():
             try:
                 self.logo_image = tk.PhotoImage(file=str(LUCAS_LOGO_PATH)).subsample(6, 6)
                 self.iconphoto(False, self.logo_image)
-                ttk.Label(header, image=self.logo_image, style="Header.TLabel").pack(side=tk.LEFT, padx=(0, 14))
+                ttk.Label(header, image=self.logo_image, style="Header.TLabel").grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 14))
             except tk.TclError:
                 self.logo_image = None
         title_group = ttk.Frame(header, style="Header.TFrame")
-        title_group.pack(side=tk.LEFT)
+        title_group.grid(row=0, column=1, sticky="w")
         ttk.Label(title_group, text=APP_TITLE, style="HeaderTitle.TLabel").pack(anchor=tk.W)
         ttk.Label(title_group, text=APP_SUBTITLE, style="HeaderSub.TLabel").pack(anchor=tk.W, pady=(3, 0))
-        ttk.Label(header, textvariable=self.bridge_status_var, style="BridgeBadge.TLabel").pack(side=tk.RIGHT, padx=(16, 0))
-        ttk.Button(header, text="Mobile Help", command=self.open_mobile_connection_helper, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
-        ttk.Button(header, text="Working Folder", command=self.choose_working_folder, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
-        ttk.Button(header, text="System Health", command=self.open_setup_doctor, style="Soft.TButton").pack(side=tk.RIGHT, padx=(16, 0))
-        ttk.Button(header, text="Activity Log", command=self.open_activity_log, style="Soft.TButton").pack(side=tk.RIGHT)
+        ttk.Label(header, textvariable=self.bridge_status_var, style="BridgeBadge.TLabel").grid(row=0, column=2, sticky="ne", padx=(16, 0))
+        header_actions = ttk.Frame(header, style="Header.TFrame")
+        header_actions.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(12, 0))
+        header_buttons = [
+            ttk.Button(header_actions, text="Activity Log", command=self.open_activity_log, style="Soft.TButton"),
+            ttk.Button(header_actions, text="System Health", command=self.open_setup_doctor, style="Soft.TButton"),
+            ttk.Button(header_actions, text="Working Folder", command=self.choose_working_folder, style="Soft.TButton"),
+            ttk.Button(header_actions, text="Mobile Help", command=self.open_mobile_connection_helper, style="Soft.TButton"),
+        ]
+        self._bind_responsive_button_row(header_actions, header_buttons, min_button_width=132)
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill=tk.BOTH, expand=True, padx=18, pady=(16, 12))
@@ -1156,15 +1162,15 @@ class CardPipelineApp(tk.Tk):
         toggle_row.pack(fill=tk.X, pady=(0, 8))
         self.home_tab_palette = palette
         self.home_incoming_tab = self._build_home_tab_button(toggle_row, "Incoming", lambda: self._set_home_sheet_kind("Incoming"))
-        self.home_incoming_tab.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self.home_working_tab = self._build_home_tab_button(toggle_row, "Working", lambda: self._set_home_sheet_kind("Working"))
-        self.home_working_tab.grid(row=0, column=1, sticky="ew", padx=(0, 4))
         self.home_received_tab = self._build_home_tab_button(toggle_row, "Received", lambda: self._set_home_sheet_kind("Received"))
-        self.home_received_tab.grid(row=0, column=2, sticky="ew", padx=(0, 4))
         self.home_edit_markers_tab = self._build_home_tab_button(toggle_row, "Edit Markers", self.open_sheet_marker_editor)
-        self.home_edit_markers_tab.grid(row=0, column=3, sticky="ew")
-        for col in range(4):
-            toggle_row.columnconfigure(col, weight=1, uniform="home_tabs")
+        self._bind_responsive_button_row(
+            toggle_row,
+            [self.home_incoming_tab, self.home_working_tab, self.home_received_tab, self.home_edit_markers_tab],
+            min_button_width=78,
+            uniform_columns=True,
+        )
         self.home_sheet_list = tk.Listbox(
             sheet_panel,
             width=1,
@@ -4952,6 +4958,40 @@ class CardPipelineApp(tk.Tk):
 
     def choose_pipeline_root(self) -> None:
         self.choose_working_folder()
+
+    def _bind_responsive_button_row(
+        self,
+        parent: tk.Widget,
+        buttons: list[tk.Widget],
+        min_button_width: int = 96,
+        uniform_columns: bool = False,
+    ) -> None:
+        state = {"columns": 0}
+
+        def relayout(_event: tk.Event | None = None) -> None:
+            live_width = parent.winfo_width()
+            width = live_width if live_width > 1 else max(parent.winfo_reqwidth(), min_button_width)
+            gap = 8
+            columns = max(1, width // (min_button_width + gap))
+            columns = min(columns, len(buttons))
+            if columns == state["columns"]:
+                return
+            state["columns"] = columns
+            for column in range(max(len(buttons), 1)):
+                parent.columnconfigure(column, weight=0, uniform="")
+            for row in range((len(buttons) + columns - 1) // columns + 1):
+                parent.rowconfigure(row, weight=0)
+            for index, button in enumerate(buttons):
+                row = index // columns
+                column = index % columns
+                padx = (0, gap) if column < columns - 1 else (0, 0)
+                pady = (0, 6) if row < (len(buttons) - 1) // columns else (0, 0)
+                button.grid(row=row, column=column, sticky="ew", padx=padx, pady=pady)
+            for column in range(columns):
+                parent.columnconfigure(column, weight=1 if uniform_columns else 0, uniform="responsive_buttons" if uniform_columns else "")
+
+        parent.bind("<Configure>", relayout, add="+")
+        parent.after_idle(relayout)
 
     def _build_home_tab_button(self, parent: tk.Frame, text: str, command) -> tk.Button:
         palette = self.home_tab_palette
