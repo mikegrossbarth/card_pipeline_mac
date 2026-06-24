@@ -1734,6 +1734,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
             _realized_profit_totals_by_person_sheet = app.CardPipelineApp._realized_profit_totals_by_person_sheet
             _realized_profit_groups_by_person_sheet = app.CardPipelineApp._realized_profit_groups_by_person_sheet
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
@@ -1820,6 +1824,26 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers), (0.0, "Team half sold profit"))
         self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers, realized_profit_total=70.0), (35.0, "Team half sold profit"))
         self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 100.0, 80.0, sellers, realized_profit_total=-20.0), (0.0, "Team half sold profit"))
+
+    def test_sheet_marker_controls_seller_payout_classification(self) -> None:
+        class PayoutDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
+
+            def __init__(self):
+                self.home_sheet_markers = {
+                    "Received|Seller Lot.xlsx": {"assigned_person": "John Seller", "seller_terms_applied": True},
+                    "Received|Team Lot.xlsx": {"assigned_person": "John Seller"},
+                }
+
+            def _seller_terms_seller_names(self):
+                return {"john seller"}
+
+        dummy = PayoutDummy()
+        self.assertTrue(dummy._source_sheet_is_seller_payout("Seller Lot.xlsx", "John Seller"))
+        self.assertFalse(dummy._source_sheet_is_seller_payout("Team Lot.xlsx", "John Seller"))
+        self.assertTrue(dummy._source_sheet_is_seller_payout("Legacy Missing Marker.xlsx", "John Seller"))
 
     def test_known_people_includes_seller_terms_people(self) -> None:
         class PeopleDummy:
@@ -1983,6 +2007,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
 
             def __init__(self):
                 self.home_sheet_paths = {"Incoming": {"Lot A.xlsx": Path("Lot A.xlsx")}, "Received": {}}
@@ -3448,6 +3474,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             record_profit_sales = app.CardPipelineApp.record_profit_sales
             refresh_inventory_tab = lambda self: None
             refresh_profit_tab = lambda self: None
+            _append_activity = lambda self, action, summary, details=None: None
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3537,6 +3564,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             mark_inventory_record_sold = app.CardPipelineApp.mark_inventory_record_sold
             record_profit_sales = app.CardPipelineApp.record_profit_sales
             refresh_profit_tab = lambda self: None
+            _append_activity = lambda self, action, summary, details=None: None
 
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR
@@ -3606,6 +3634,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             mark_inventory_record_sold = app.CardPipelineApp.mark_inventory_record_sold
             record_profit_sales = app.CardPipelineApp.record_profit_sales
             refresh_profit_tab = lambda self: None
+            _append_activity = lambda self, action, summary, details=None: None
 
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR
@@ -4036,6 +4065,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
             mobile_inventory_search = app.CardPipelineApp.mobile_inventory_search
             mobile_inventory_add = app.CardPipelineApp.mobile_inventory_add
+            _append_activity = lambda self, action, summary, details=None: None
 
             def __init__(self, root: Path) -> None:
                 self.events = queue.Queue()
@@ -4229,6 +4259,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
             mobile_inventory_mark_sold = app.CardPipelineApp.mobile_inventory_mark_sold
+            _append_activity = lambda self, action, summary, details=None: None
 
             def __init__(self):
                 self.events = queue.Queue()
@@ -4307,6 +4338,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _save_mobile_action_log = app.CardPipelineApp._save_mobile_action_log
             _apply_mobile_queue_action = app.CardPipelineApp._apply_mobile_queue_action
             mobile_queue_sync = app.CardPipelineApp.mobile_queue_sync
+            _append_activity = lambda self, action, summary, details=None: None
 
             def __init__(self):
                 self.events = queue.Queue()
