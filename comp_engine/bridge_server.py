@@ -831,10 +831,25 @@ def stale_newest_else_average(comps: list[dict], values: list[float]) -> float |
             dated_values.append((sold_date, value))
     dated_values.sort(key=lambda item: item[0], reverse=True)
     if dated_values and (datetime.now() - dated_values[0][0]).days > 7:
-        return dated_values[0][1]
+        return best_value_for_comp_date(comps, dated_values[0][0])
     if len(dated_values) >= 2 and (dated_values[0][0] - dated_values[1][0]).days > 7:
-        return dated_values[0][1]
+        return best_value_for_comp_date(comps, dated_values[0][0])
     return round(sum(values) / len(values), 2)
+
+
+def best_value_for_comp_date(comps: list[dict], sold_date: datetime) -> float | None:
+    same_day: list[dict] = []
+    for comp in comps[:5]:
+        if not isinstance(comp, dict):
+            continue
+        value = parse_value(comp.get("price"))
+        comp_date = parse_comp_date(comp.get("date_sold"))
+        if value is not None and comp_date == sold_date:
+            same_day.append(comp)
+    if not same_day:
+        return None
+    best = max(same_day, key=comp_quality)
+    return parse_value(best.get("price"))
 
 
 def parse_comp_date(value) -> datetime | None:

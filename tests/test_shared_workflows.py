@@ -1165,6 +1165,33 @@ class AssignmentEngineTests(unittest.TestCase):
 
         self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 130.5)
 
+    def test_date_weighted_prefers_best_same_day_stale_newest_comp(self) -> None:
+        comps = [
+            {
+                "source": "BECKETT",
+                "title": ", Autograph Grade: 10, Profile: 2014 Panini Flawless Greats Patches Autographs Gold #22 Joe Montana (Pop 2) $2,100.00",
+                "date_sold": "Sep 4, 2025",
+                "sale_type": "Auction",
+                "price": "$1,424.00",
+            },
+            {
+                "source": "ALT",
+                "title": "(CONFIRMED PAID) 2014 Panini Flawless Greats Patch Autograph Gold Joe Montana #22 BGS 9 Auto 10 /10",
+                "date_sold": "Sep 4, 2025",
+                "sale_type": "Auction",
+                "price": "$2,760.00",
+            },
+            {
+                "source": "EBAY",
+                "title": "225 BREAKERS 2014 Panini Flawless Joe Montana Greats Patch On Card AUTO Gold /10 BGS 9",
+                "date_sold": "Jun 18, 2025",
+                "sale_type": "Auction",
+                "price": "$1,424.00",
+            },
+        ]
+
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 2760.0)
+
     def test_accepted_company_without_matching_payout_cannot_win(self) -> None:
         row = WorkbookRow(
             excel_row=2,
