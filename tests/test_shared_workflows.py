@@ -1772,8 +1772,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy.received_sheet_paths = {}
             dummy.home_sheet_summaries = {}
             try:
-                self.assertTrue(dummy._assign_sheet_to_seller("Working", "Lot A.xlsx", "John Seller"))
+                self.assertTrue(dummy._assign_sheet_to_seller("Working", "Lot A.xlsx", "John Seller", "Arena Club", {"rate": 0.9}))
                 self.assertEqual(dummy.home_sheet_markers["Working|Lot A.xlsx"]["assigned_person"], "John Seller")
+                self.assertTrue(dummy.home_sheet_markers["Working|Lot A.xlsx"]["seller_terms_applied"])
+                self.assertEqual(dummy.home_sheet_markers["Working|Lot A.xlsx"]["seller_sheet_type"], "Arena Club")
+                self.assertEqual(dummy.home_sheet_markers["Working|Lot A.xlsx"]["seller_rate"], 0.9)
 
                 moved_key, cleanup = dummy._move_home_sheet_to_stage("Working|Lot A.xlsx", "Incoming")
                 self.assertEqual(moved_key, "Incoming|Lot A.xlsx")
@@ -1816,6 +1819,61 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers), (0.0, "Team half sold profit"))
         self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers, realized_profit_total=70.0), (35.0, "Team half sold profit"))
         self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 100.0, 80.0, sellers, realized_profit_total=-20.0), (0.0, "Team half sold profit"))
+
+    def test_known_people_includes_seller_terms_people(self) -> None:
+        class PeopleDummy:
+            _known_people = app.CardPipelineApp._known_people
+
+            def _known_assigned_people(self):
+                return ["Kevin Hambone"]
+
+            def _load_seller_terms(self):
+                return [{"seller": "John Seller", "sheet_type": "Arena Club", "rate": 0.9}]
+
+            def _load_profit_ledger(self):
+                return []
+
+            def _load_inventory_ledger(self):
+                return []
+
+        self.assertEqual(PeopleDummy()._known_people(), ["John Seller", "Kevin Hambone"])
+
+    def test_save_working_sheet_requires_valid_network_seller_terms(self) -> None:
+        class Var:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class SaveDummy:
+            save_working_sheet = app.CardPipelineApp.save_working_sheet
+            _network_mode_enabled = app.CardPipelineApp._network_mode_enabled
+            _money_value = app.CardPipelineApp._money_value
+
+            def __init__(self):
+                self.intake_rows = [WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Test", existing_value=10)]
+                self.working_sheet_title = Var("Network Lot")
+                self.create_network_mode_var = Var(True)
+                self.seller_terms_seller_var = Var("John Seller")
+                self.seller_terms_sheet_type_var = Var("Arena Club")
+                self.applied_terms = False
+
+            def _seller_terms_match(self, seller, sheet_type):
+                return None
+
+            def _seller_terms_company_price(self, row, company_name, rate=None, deduction=None):
+                return 90.0
+
+            def apply_create_seller_terms(self, show_status=True):
+                self.applied_terms = True
+                return 1
+
+        dummy = SaveDummy()
+        with patch.object(app.messagebox, "showinfo") as showinfo:
+            dummy.save_working_sheet()
+        self.assertTrue(showinfo.called)
+        self.assertFalse(dummy.applied_terms)
 
     def test_paid_received_sheets_archive_after_two_weeks_only_when_paid(self) -> None:
         class ArchiveDummy:

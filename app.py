@@ -5421,6 +5421,11 @@ class CardPipelineApp(tk.Tk):
 
     def _known_people(self) -> list[str]:
         people_set = set(self._known_assigned_people())
+        people_set.update(
+            str(term.get("seller") or "").strip()
+            for term in self._load_seller_terms()
+            if str(term.get("seller") or "").strip()
+        )
         if hasattr(self, "profit_rows"):
             people_set.update(
                 str(record.get("assigned_person") or "").strip()
@@ -6022,7 +6027,14 @@ class CardPipelineApp(tk.Tk):
         moved_key, _cleanup = self._move_home_sheet_to_stage(key, "Incoming")
         return moved_key
 
-    def _assign_sheet_to_seller(self, stage: str, sheet_name: str, seller: str) -> bool:
+    def _assign_sheet_to_seller(
+        self,
+        stage: str,
+        sheet_name: str,
+        seller: str,
+        sheet_type: str = "",
+        term: dict[str, object] | None = None,
+    ) -> bool:
         person = str(seller or "").strip()
         if stage not in {"Working", "Incoming", "Received"} or not sheet_name or not person:
             return False
@@ -6030,6 +6042,17 @@ class CardPipelineApp(tk.Tk):
         marker = dict(self._load_sheet_markers().get(key, {}))
         marker.update(dict(self.home_sheet_markers.get(key, {})))
         marker["assigned_person"] = person
+        sheet_type = str(sheet_type or "").strip()
+        if sheet_type:
+            marker["seller_terms_applied"] = True
+            marker["seller_sheet_type"] = sheet_type
+            if term:
+                rate = term.get("rate")
+                deduction = term.get("deduction")
+                if rate is not None:
+                    marker["seller_rate"] = rate
+                if deduction is not None:
+                    marker["seller_deduction"] = deduction
         marker = self._marker_for_stage(marker, stage)
         self.home_sheet_markers[key] = marker
         self._save_sheet_markers()
@@ -7311,14 +7334,50 @@ class CardPipelineApp(tk.Tk):
         if not title:
             messagebox.showinfo("Title required", "Enter a working sheet title first.")
             return
+        seller = ""
+        seller_sheet_type = ""
+        seller_term: dict[str, object] | None = None
+        if self._network_mode_enabled() and hasattr(self, "seller_terms_seller_var"):
+            seller = self.seller_terms_seller_var.get().strip()
+            seller_sheet_type = self.seller_terms_sheet_type_var.get().strip() if hasattr(self, "seller_terms_sheet_type_var") else ""
+            if seller or seller_sheet_type:
+                if not seller or not seller_sheet_type:
+                    messagebox.showinfo(
+                        "Seller terms required",
+                        "Network Mode seller buys need both Seller and Sheet Type. Leave both blank for a normal Open Team sheet.",
+                    )
+                    return
+                seller_term = self._seller_terms_match(seller, seller_sheet_type)
+                if not seller_term:
+                    messagebox.showinfo(
+                        "Seller terms not found",
+                        f"No seller terms were found for {seller} / {seller_sheet_type}. Update seller_terms.csv or leave both fields blank.",
+                    )
+                    return
+                rate = self._money_value(seller_term.get("rate"))
+                deduction = self._money_value(seller_term.get("deduction"))
+                applicable_rows = 0
+                for row in self.intake_rows:
+                    seller_price = (
+                        self._seller_terms_company_price(row, seller_sheet_type, deduction=deduction)
+                        if deduction is not None
+                        else self._seller_terms_company_price(row, seller_sheet_type, rate=rate)
+                    )
+                    if seller_price is not None:
+                        applicable_rows += 1
+                if applicable_rows <= 0:
+                    messagebox.showinfo(
+                        "No seller payout rows",
+                        f"No Create rows matched {seller_sheet_type} seller terms. Fix the Sheet Type or leave Seller and Sheet Type blank.",
+                    )
+                    return
         self.apply_create_seller_terms(show_status=False)
-        seller = self.seller_terms_seller_var.get().strip() if self._network_mode_enabled() and hasattr(self, "seller_terms_seller_var") else ""
         try:
             with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
                 path = working_sheet_path(WORKING_SHEETS_DIR, title)
                 write_working_sheet(path, self.intake_rows, self.intake_sources)
             if seller:
-                self._assign_sheet_to_seller("Working", path.name, seller)
+                self._assign_sheet_to_seller("Working", path.name, seller, seller_sheet_type, seller_term)
         except Exception as error:
             messagebox.showerror("Save failed", str(error))
             return
