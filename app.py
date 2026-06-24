@@ -1169,7 +1169,7 @@ class CardPipelineApp(tk.Tk):
         self._bind_responsive_button_row(
             toggle_row,
             [self.home_incoming_tab, self.home_working_tab, self.home_received_tab, self.home_edit_markers_tab],
-            min_button_width=78,
+            min_button_width=70,
             uniform_columns=True,
         )
         self.home_sheet_list = tk.Listbox(
@@ -5050,9 +5050,9 @@ class CardPipelineApp(tk.Tk):
             relief=tk.FLAT,
             borderwidth=0,
             highlightthickness=0,
-            padx=8,
+            padx=5,
             pady=6,
-            font=("Segoe UI Semibold", 9),
+            font=("Segoe UI Semibold", 8),
             cursor="hand2",
         )
         self._configure_colored_button(button, palette["soft_button"], palette["muted"], palette["soft_button_hover"], palette["border"])
