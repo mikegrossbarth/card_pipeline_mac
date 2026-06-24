@@ -395,6 +395,9 @@ class BridgeState:
         profile_title = clean_profile_title(ocr.get("profileTitle") or ocr.get("profile_title") or ocr.get("profile"))
         profile_grader = clean_grader(ocr.get("profileGrader") or ocr.get("profile_grader") or row.grader)
         profile_grade = clean_grade(ocr.get("profileGrade") or ocr.get("profile_grade") or "")
+        raw_comp_count = len(comps)
+        comps = filter_comps_for_card(comps, profile_title or row.card_title)
+        filtered_comp_count = raw_comp_count - len(comps)
         if result_status == "partial_comp_capture":
             if profile_title:
                 row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
@@ -444,9 +447,12 @@ class BridgeState:
         row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
         if result_status == "no_results":
             row.status = "Card Ladder no results"
+        elif raw_comp_count and not comps:
+            row.status = "Card Ladder review"
         else:
             row.status = "Card Ladder OK" if value is not None else "Card Ladder review"
-        row.notes = str(result.get("error") or result.get("status") or "")
+        filter_note = f"Rejected {filtered_comp_count} likely wrong-card comp(s)." if filtered_comp_count else ""
+        row.notes = " ".join(part for part in (str(result.get("error") or result.get("status") or ""), filter_note) if part).strip()
 
     def finish_cardladder(self, payload: dict) -> None:
         cy_lookups: list[tuple[int, str, str]] = []
@@ -675,6 +681,103 @@ def average_comp_prices(comps: list[dict]) -> float | None:
     if not values:
         return None
     return round(sum(values) / len(values), 2)
+
+
+def filter_comps_for_card(comps: list[dict], card_title: str) -> list[dict]:
+    if not comps:
+        return []
+    target_tokens = comp_match_tokens(card_title)
+    target_years = {token for token in target_tokens if re.fullmatch(r"(?:19|20)\d{2}", token)}
+    target_numbers = comp_card_number_tokens(target_tokens)
+    target_parallel_tokens = target_tokens & {
+        "gold",
+        "silver",
+        "orange",
+        "red",
+        "blue",
+        "green",
+        "yellow",
+        "black",
+        "white",
+        "purple",
+        "pink",
+        "holo",
+        "laser",
+        "shimmer",
+        "fluorescent",
+        "optic",
+        "mosaic",
+        "prizm",
+        "refractor",
+        "wave",
+        "cracked",
+        "ice",
+        "choice",
+    }
+    if len(target_tokens) < 4:
+        return comps
+    filtered: list[dict] = []
+    for comp in comps:
+        if not isinstance(comp, dict):
+            continue
+        title = clean_comp_title(comp.get("title"))
+        tokens = comp_match_tokens(title)
+        if len(tokens) < 3:
+            filtered.append(comp)
+            continue
+        comp_years = {token for token in tokens if re.fullmatch(r"(?:19|20)\d{2}", token)}
+        if target_years and comp_years and target_years.isdisjoint(comp_years):
+            continue
+        comp_numbers = comp_card_number_tokens(tokens)
+        if target_numbers and comp_numbers and target_numbers.isdisjoint(comp_numbers):
+            continue
+        comp_parallel_tokens = tokens & target_parallel_tokens
+        if len(target_parallel_tokens) >= 2 and not comp_parallel_tokens:
+            continue
+        overlap = target_tokens & tokens
+        required = 2 if len(target_tokens) < 7 else 3
+        if len(overlap) >= required:
+            filtered.append(comp)
+            continue
+        ratio = len(overlap) / max(1, min(len(target_tokens), len(tokens)))
+        if ratio >= 0.42:
+            filtered.append(comp)
+    return filtered
+
+
+def comp_match_tokens(value: object) -> set[str]:
+    text = clean_comp_title(value).lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    raw_tokens = re.findall(r"[a-z0-9]+", text)
+    stop = {
+        "psa",
+        "bgs",
+        "sgc",
+        "cgc",
+        "gem",
+        "mint",
+        "rookie",
+        "rc",
+        "card",
+        "cards",
+        "auto",
+        "autograph",
+        "autographs",
+        "refractor",
+        "refractors",
+        "chrome",
+        "panini",
+        "topps",
+        "donruss",
+        "bowman",
+        "upper",
+        "deck",
+    }
+    return {token for token in raw_tokens if len(token) >= 3 and token not in stop}
+
+
+def comp_card_number_tokens(tokens: set[str]) -> set[str]:
+    return {token for token in tokens if token.isdigit() and len(token) >= 3 and not re.fullmatch(r"(?:19|20)\d{2}", token)}
 
 
 def dedupe_comps(comps: list[dict]) -> list[dict]:

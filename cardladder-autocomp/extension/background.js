@@ -7,7 +7,7 @@ const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
 const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-no-blind-grader-option-v22";
-const KEEP_SYNC_TAB_CLOSE_MS = 12000;
+const KEEP_SYNC_TAB_CLOSE_MS = 30000;
 const KEEP_SYNC_RETRY_MS = 60000;
 
 let runInProgress = false;
@@ -152,12 +152,48 @@ async function maybeSyncKeepSources(bridgeUrl, response) {
 async function syncKeepSourceInBackground(url, bridgeUrl, key) {
   const before = await fetch(`${bridgeUrl}/status`).then((r) => r.json()).catch(() => null);
   const tab = await chrome.tabs.create({ url, active: false });
-  await delay(KEEP_SYNC_TAB_CLOSE_MS);
-  const after = await fetch(`${bridgeUrl}/status`).then((r) => r.json()).catch(() => null);
-  const saved = Number(after?.lastKeepSync?.saved || 0);
-  await chrome.tabs.remove(tab.id).catch(() => {});
-  if (saved > 0 && after?.lastKeepSync?.syncedAt !== before?.lastKeepSync?.syncedAt) {
-    keepSyncAttempts.set(key, { inFlight: false, lastAttempt: Date.now() + 24 * 60 * 60 * 1000 });
+  try {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < KEEP_SYNC_TAB_CLOSE_MS) {
+      await delay(1000);
+      const after = await fetch(`${bridgeUrl}/status`).then((r) => r.json()).catch(() => null);
+      if (keepSyncMatches(url, before, after)) {
+        keepSyncAttempts.set(key, { inFlight: false, lastAttempt: Date.now() + 24 * 60 * 60 * 1000 });
+        return;
+      }
+    }
+  } finally {
+    await chrome.tabs.remove(tab.id).catch(() => {});
+  }
+}
+
+function keepSyncMatches(url, before, after) {
+  const sync = after?.lastKeepSync || {};
+  const saved = Number(sync.saved || 0);
+  if (!saved || sync.syncedAt === before?.lastKeepSync?.syncedAt) return false;
+  const expectedKey = keepNoteKey(url);
+  const syncedKey = keepNoteKey(sync.url || "");
+  if (expectedKey && syncedKey) return expectedKey === syncedKey;
+  return normalizeKeepUrl(url) === normalizeKeepUrl(sync.url || "");
+}
+
+function keepNoteKey(url) {
+  const text = String(url || "");
+  const notesMatch = text.match(/\/notes\/([^/?#]+)/i);
+  if (notesMatch) return decodeURIComponent(notesMatch[1]).toLowerCase();
+  const hashMatch = text.match(/#NOTE\/([^/?#]+)/i);
+  if (hashMatch) return decodeURIComponent(hashMatch[1]).toLowerCase();
+  const encodedMatch = text.match(/(?:note|id|text)%3D([^&#]+)/i);
+  return encodedMatch ? decodeURIComponent(encodedMatch[1]).toLowerCase() : "";
+}
+
+function normalizeKeepUrl(url) {
+  try {
+    const parsed = new URL(String(url || ""));
+    if (!parsed.hostname.endsWith("keep.google.com")) return "";
+    return `${parsed.protocol}//${parsed.hostname}${parsed.pathname}#${parsed.hash.replace(/^#/, "")}`.replace(/[#/]+$/g, "").toLowerCase();
+  } catch (_error) {
+    return "";
   }
 }
 

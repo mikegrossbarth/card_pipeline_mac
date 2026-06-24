@@ -758,6 +758,8 @@ def read_source_text(source: Any, base_dir: Path, interactive_google: bool = Fal
         return ""
     if is_google_keep_url(raw):
         return read_keep_note_cache({"kind": "google_keep", "url": raw}, base_dir)
+    if is_google_sheet_url(raw):
+        return read_google_sheet_text(raw, interactive=interactive_google)
     if raw.startswith(("http://", "https://")):
         return read_url_text(raw)
     path = Path(raw).expanduser()
@@ -844,6 +846,11 @@ def path_from_source_value(value: Any, base_dir: Path) -> Path:
 def is_google_keep_url(value: Any) -> bool:
     parsed = urllib.parse.urlparse(str(value or "").strip())
     return parsed.scheme in {"http", "https"} and parsed.netloc.lower().endswith("keep.google.com")
+
+
+def is_google_sheet_url(value: Any) -> bool:
+    parsed = urllib.parse.urlparse(str(value or "").strip())
+    return parsed.scheme in {"http", "https"} and parsed.netloc.lower().endswith("docs.google.com") and "/spreadsheets/" in parsed.path
 
 
 def google_keep_note_id(url: str) -> str:

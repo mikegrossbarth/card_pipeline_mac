@@ -717,6 +717,15 @@ class GoogleSheetCacheTests(unittest.TestCase):
             )
         )
 
+    def test_raw_google_sheet_url_uses_authenticated_reader(self) -> None:
+        sheet_url = "https://docs.google.com/spreadsheets/d/private-sheet-id/edit#gid=0"
+        with TemporaryDirectory() as tmp:
+            with patch.object(assignment_engine, "read_google_sheet_text", return_value="Arena Club rules") as reader:
+                text = assignment_engine.read_source_text(sheet_url, Path(tmp), interactive_google=True)
+
+        self.assertEqual(text, "Arena Club rules")
+        reader.assert_called_once_with(sheet_url, interactive=True)
+
 
 class AssignmentEngineTests(unittest.TestCase):
     def test_kemba_walker_title_infers_basketball_without_short_name_false_matches(self) -> None:
@@ -1270,6 +1279,51 @@ class AssignmentEngineTests(unittest.TestCase):
         ]
 
         self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 2760.0)
+
+    def test_cardladder_result_rejects_obvious_wrong_card_comp_rows(self) -> None:
+        bridge = app.BridgeState()
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="99505674",
+            grader="PSA",
+            card_title="2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser PSA 9",
+        )
+        result = {
+            "excelRow": 2,
+            "certNumber": "99505674",
+            "grader": "PSA",
+            "status": "ok",
+            "value": 73,
+            "ocr": {
+                "profileTitle": "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser",
+                "profileGrader": "PSA",
+                "profileGrade": "9",
+                "resultCount": 2,
+                "comps": [
+                    {
+                        "source": "EBAY",
+                        "title": "2022 Panini Donruss Chet Holmgren Yellow Holo Laser #202 PSA 9",
+                        "date_sold": "Jun 1, 2026",
+                        "sale_type": "Auction",
+                        "price": "$73.00",
+                    },
+                    {
+                        "source": "EBAY",
+                        "title": "2022 Panini Prizm Chet Holmgren Gold Rookie #266 PSA 10",
+                        "date_sold": "Jun 2, 2026",
+                        "sale_type": "Auction",
+                        "price": "$314.75",
+                    },
+                ],
+            },
+        }
+
+        bridge._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.card_ladder_comps_average, 73.0)
+        self.assertIn("Yellow Holo Laser", row.card_ladder_comps)
+        self.assertNotIn("Prizm", row.card_ladder_comps)
+        self.assertIn("Rejected 1 likely wrong-card", row.notes)
 
     def test_date_weighted_normalizes_equivalent_date_formats_before_dedupe(self) -> None:
         comps = [
