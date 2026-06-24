@@ -3383,15 +3383,74 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_recomp_record_matches_scope = app.CardPipelineApp._inventory_recomp_record_matches_scope
 
         dummy = RecompScopeDummy()
-        full_record = {"card_ladder_value": 50, "card_ladder_comps_average": 40, "cy_value": 30}
-        missing_comps = {"card_ladder_value": 50, "card_ladder_comps_average": None, "cy_value": 30}
-        missing_cy = {"card_ladder_value": 50, "card_ladder_comps_average": 40, "cy_value": None}
+        full_record = {"card_ladder_value": 50, "card_ladder_comps_average": 40, "cy_value": 30, "cy_confidence": 4}
+        missing_comps = {"card_ladder_value": 50, "card_ladder_comps_average": None, "cy_value": 30, "cy_confidence": 4}
+        missing_cy = {"card_ladder_value": 50, "card_ladder_comps_average": 40, "cy_value": None, "cy_confidence": ""}
+        missing_cy_confidence = {"card_ladder_value": 50, "card_ladder_comps_average": 40, "cy_value": 30, "cy_confidence": ""}
 
         self.assertTrue(dummy._inventory_recomp_record_matches_scope(full_record, {"scope": app.COMP_SCOPE_ALL, "card_ladder_comps": True}))
         self.assertFalse(dummy._inventory_recomp_record_matches_scope(full_record, {"scope": app.COMP_SCOPE_EMPTY, "card_ladder_value": True, "card_ladder_comps": True}))
         self.assertTrue(dummy._inventory_recomp_record_matches_scope(missing_comps, {"scope": app.COMP_SCOPE_EMPTY, "card_ladder_comps": True}))
         self.assertFalse(dummy._inventory_recomp_record_matches_scope(missing_cy, {"scope": app.COMP_SCOPE_EMPTY, "card_ladder_comps": True}))
         self.assertTrue(dummy._inventory_recomp_record_matches_scope(missing_cy, {"scope": app.COMP_SCOPE_EMPTY, "cy": True}))
+        self.assertTrue(dummy._inventory_recomp_record_matches_scope(missing_cy_confidence, {"scope": app.COMP_SCOPE_EMPTY, "cy": True}))
+
+    def test_inventory_recomp_sync_preserves_cy_confidence(self) -> None:
+        class RecompSyncDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _sync_inventory_recomp_results = app.CardPipelineApp._sync_inventory_recomp_results
+
+            def _inventory_sport_from_value(self, sport, card_title):
+                return sport
+
+            def _enrich_inventory_record_assignment(self, record, force=False):
+                return self._normalize_inventory_record(record)
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = RecompSyncDummy()
+            original = dummy._normalize_inventory_record(
+                {
+                    "assigned_person": "Kevin Hambone",
+                    "cert_number": "123",
+                    "card_title": "Test Card",
+                    "source_sheet": "INVENTORY.xlsx",
+                    "status": "Active",
+                    "cy_value": None,
+                    "cy_confidence": "",
+                }
+            )
+            dummy._save_inventory_ledger([original])
+            dummy.state = types.SimpleNamespace(
+                lock=threading.Lock(),
+                rows=[
+                    WorkbookRow(
+                        excel_row=2,
+                        cert_number="123",
+                        card_title="Test Card",
+                        grader="PSA",
+                        cy_value=88.0,
+                        cy_confidence=4,
+                        status="Ready",
+                    )
+                ],
+            )
+            dummy.inventory_recomp_context = {
+                "keys_by_excel_row": {2: original["inventory_key"]},
+                "features": {"cy": True},
+            }
+            try:
+                self.assertEqual(dummy._sync_inventory_recomp_results(), 1)
+                rows = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(rows[0]["cy_value"], 88.0)
+                self.assertEqual(rows[0]["cy_confidence"], 4)
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
 
     def test_edit_inventory_row_updates_visible_fields_and_rebuilds_key(self) -> None:
         class FakeTree:
