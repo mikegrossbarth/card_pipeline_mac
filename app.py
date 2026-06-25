@@ -504,6 +504,7 @@ class CardPipelineApp(tk.Tk):
         self.geometry("1420x820")
         self.minsize(760, 520)
         self.logo_image: tk.PhotoImage | None = None
+        self._tab_scroll_canvases: dict[str, tk.Canvas] = {}
 
         self.events: queue.Queue[str] = queue.Queue()
         self.intake_rows: list[WorkbookRow] = []
@@ -651,6 +652,71 @@ class CardPipelineApp(tk.Tk):
     def _on_close(self) -> None:
         self.destroy()
 
+    def _scroll_canvas_pixels(self, canvas: tk.Canvas, orient: str, pixels: int) -> bool:
+        if pixels == 0:
+            return False
+        bbox = canvas.bbox("all")
+        if not bbox:
+            return False
+        if orient == "x":
+            content_size = bbox[2] - bbox[0]
+            viewport_size = canvas.winfo_width()
+            first, last = canvas.xview()
+            view = canvas.xview_moveto
+        else:
+            content_size = bbox[3] - bbox[1]
+            viewport_size = canvas.winfo_height()
+            first, last = canvas.yview()
+            view = canvas.yview_moveto
+        scrollable = content_size - viewport_size
+        if scrollable <= 0 or (pixels < 0 and first <= 0) or (pixels > 0 and last >= 1):
+            return False
+        view(max(0.0, min(1.0, first + (pixels / scrollable))))
+        return True
+
+    def _wheel_pixels(self, event: tk.Event) -> int:
+        delta = getattr(event, "delta", 0)
+        if not delta:
+            return 0
+        if sys.platform == "darwin":
+            scale = 4 if abs(delta) < 10 else 1
+            return int(-delta * scale)
+        return int(-delta / 120 * 72)
+
+    def _current_tab_scroll_canvas(self) -> tk.Canvas | None:
+        if not hasattr(self, "tabs"):
+            return None
+        try:
+            return self._tab_scroll_canvases.get(str(self.tabs.select()))
+        except tk.TclError:
+            return None
+
+    def _handle_tab_mousewheel(self, event: tk.Event) -> str | None:
+        if event.widget.winfo_toplevel() is not self:
+            return None
+        canvas = self._current_tab_scroll_canvas()
+        if canvas is None:
+            return None
+        orient = "x" if getattr(event, "state", 0) & 0x0001 else "y"
+        return "break" if self._scroll_canvas_pixels(canvas, orient, self._wheel_pixels(event)) else None
+
+    def _handle_tab_button4(self, event: tk.Event) -> str | None:
+        if event.widget.winfo_toplevel() is not self:
+            return None
+        canvas = self._current_tab_scroll_canvas()
+        return "break" if canvas is not None and self._scroll_canvas_pixels(canvas, "y", -72) else None
+
+    def _handle_tab_button5(self, event: tk.Event) -> str | None:
+        if event.widget.winfo_toplevel() is not self:
+            return None
+        canvas = self._current_tab_scroll_canvas()
+        return "break" if canvas is not None and self._scroll_canvas_pixels(canvas, "y", 72) else None
+
+    def _install_tab_scroll_bindings(self) -> None:
+        self.bind_all("<MouseWheel>", self._handle_tab_mousewheel)
+        self.bind_all("<Button-4>", self._handle_tab_button4)
+        self.bind_all("<Button-5>", self._handle_tab_button5)
+
     def _make_scrollable_tab(self, tab: ttk.Frame) -> ttk.Frame:
         host = ttk.Frame(tab, style="App.TFrame")
         host.pack(fill=tk.BOTH, expand=True)
@@ -682,60 +748,9 @@ class CardPipelineApp(tk.Tk):
             canvas.itemconfigure(window_id, width=max(content.winfo_reqwidth(), event.width))
             sync_scroll_region()
 
-        def scroll_pixels(orient: str, pixels: int) -> None:
-            if pixels == 0:
-                return
-            bbox = canvas.bbox("all")
-            if not bbox:
-                return
-            if orient == "x":
-                content_size = bbox[2] - bbox[0]
-                viewport_size = canvas.winfo_width()
-                first, _last = canvas.xview()
-                view = canvas.xview_moveto
-            else:
-                content_size = bbox[3] - bbox[1]
-                viewport_size = canvas.winfo_height()
-                first, _last = canvas.yview()
-                view = canvas.yview_moveto
-            scrollable = max(1, content_size - viewport_size)
-            view(max(0.0, min(1.0, first + (pixels / scrollable))))
-
-        def wheel_pixels(event: tk.Event) -> int:
-            delta = getattr(event, "delta", 0)
-            if not delta:
-                return 0
-            if sys.platform == "darwin":
-                return int(-delta)
-            return int(-delta / 120 * 72)
-
-        def on_mousewheel(event: tk.Event) -> str:
-            scroll_pixels("y", wheel_pixels(event))
-            return "break"
-
-        def on_shift_mousewheel(event: tk.Event) -> str:
-            scroll_pixels("x", wheel_pixels(event))
-            return "break"
-
-        def on_button4(_event: tk.Event) -> str:
-            scroll_pixels("y", -72)
-            return "break"
-
-        def on_button5(_event: tk.Event) -> str:
-            scroll_pixels("y", 72)
-            return "break"
-
-        def bind_wheel(_event: tk.Event) -> None:
-            canvas.bind_all("<MouseWheel>", on_mousewheel)
-            canvas.bind_all("<Shift-MouseWheel>", on_shift_mousewheel)
-            canvas.bind_all("<Button-4>", on_button4)
-            canvas.bind_all("<Button-5>", on_button5)
-
         content.bind("<Configure>", sync_scroll_region)
         canvas.bind("<Configure>", sync_content_width)
-        host.bind("<Enter>", bind_wheel)
-        canvas.bind("<Enter>", bind_wheel)
-        content.bind("<Enter>", bind_wheel)
+        self._tab_scroll_canvases[str(tab)] = canvas
         return content
 
     def _build_ui(self) -> None:
@@ -972,6 +987,7 @@ class CardPipelineApp(tk.Tk):
             "profit_tab",
         ):
             setattr(self, tab_attr, self._make_scrollable_tab(getattr(self, tab_attr)))
+        self._install_tab_scroll_bindings()
         self.row_trees: list[ttk.Treeview] = []
 
         self._build_home_tab(palette)
