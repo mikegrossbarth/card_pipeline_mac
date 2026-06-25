@@ -2054,6 +2054,59 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertTrue(showinfo.called)
         self.assertFalse(dummy.applied_terms)
 
+    def test_save_working_sheet_no_seller_rows_explains_assignment_reason(self) -> None:
+        class Var:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class SaveDummy:
+            save_working_sheet = app.CardPipelineApp.save_working_sheet
+            _network_mode_enabled = app.CardPipelineApp._network_mode_enabled
+            _money_value = app.CardPipelineApp._money_value
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+            _seller_terms_no_match_details = app.CardPipelineApp._seller_terms_no_match_details
+            _seller_terms_no_match_message = app.CardPipelineApp._seller_terms_no_match_message
+
+            def __init__(self):
+                self.intake_rows = [WorkbookRow(excel_row=2, cert_number="137915162", grader="PSA", card_title="Test Card PSA 10", existing_value=10)]
+                self.working_sheet_title = Var("Network Lot")
+                self.create_network_mode_var = Var(True)
+                self.seller_terms_seller_var = Var("John Seller")
+                self.seller_terms_sheet_type_var = Var("Arena Club")
+                self.assignment_engine = types.SimpleNamespace(
+                    evaluate=lambda row: [
+                        types.SimpleNamespace(
+                            company="Arena Club",
+                            accepted=False,
+                            payout=None,
+                            source_value=None,
+                            reason="missing comp/card ladder value",
+                        )
+                    ]
+                )
+                self.applied_terms = False
+
+            def _seller_terms_match(self, seller, sheet_type):
+                return {"seller": seller, "sheet_type": sheet_type, "deduction": 0.1}
+
+            def apply_create_seller_terms(self, show_status=True):
+                self.applied_terms = True
+                return 0
+
+        dummy = SaveDummy()
+        with patch.object(app.messagebox, "showinfo") as showinfo:
+            dummy.save_working_sheet()
+        self.assertTrue(showinfo.called)
+        self.assertEqual(showinfo.call_args.args[0], "No seller payout rows")
+        self.assertIn("seller_terms.csv row", showinfo.call_args.args[1])
+        self.assertIn("137915162", showinfo.call_args.args[1])
+        self.assertIn("missing comp/card ladder value", showinfo.call_args.args[1])
+        self.assertFalse(dummy.applied_terms)
+
     def test_seller_terms_health_reports_duplicates_and_company_issues(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "seller_terms.csv"
@@ -3469,6 +3522,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
             _load_seller_terms = app.CardPipelineApp._load_seller_terms
             _seller_terms_match = app.CardPipelineApp._seller_terms_match
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
             _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
             _restore_create_seller_term_prices = app.CardPipelineApp._restore_create_seller_term_prices
             _network_mode_enabled = app.CardPipelineApp._network_mode_enabled

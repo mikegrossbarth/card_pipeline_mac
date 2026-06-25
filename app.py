@@ -6153,23 +6153,63 @@ class CardPipelineApp(tk.Tk):
                 return term
         return None
 
-    def _seller_terms_company_price(self, row: WorkbookRow, company_name: str, rate: float | None = None, deduction: float | None = None) -> float | None:
+    def _seller_terms_company_decision(self, row: WorkbookRow, company_name: str):
         company_key = company_name.strip().lower()
+        decisions = list(self.assignment_engine.evaluate(row))
         if not company_key:
+            return None, decisions
+        for decision in decisions:
+            if decision.company.strip().lower() == company_key:
+                return decision, decisions
+        return None, decisions
+
+    def _seller_terms_company_price(self, row: WorkbookRow, company_name: str, rate: float | None = None, deduction: float | None = None) -> float | None:
+        decision, _decisions = self._seller_terms_company_decision(row, company_name)
+        if decision is None:
             return None
-        for decision in self.assignment_engine.evaluate(row):
-            if decision.company.strip().lower() != company_key:
-                continue
-            if decision.source_value is None:
+        if decision.source_value is None:
+            return None
+        if deduction is not None:
+            if decision.payout is None:
                 return None
-            if deduction is not None:
-                if decision.payout is None:
-                    return None
-                return max(0.0, round(decision.payout - (decision.source_value * deduction), 2))
-            if rate is not None:
-                return round(decision.source_value * rate, 2)
-            return None
+            return max(0.0, round(decision.payout - (decision.source_value * deduction), 2))
+        if rate is not None:
+            return round(decision.source_value * rate, 2)
         return None
+
+    def _seller_terms_no_match_details(self, rows: list[WorkbookRow], company_name: str, limit: int = 5) -> str:
+        details: list[str] = []
+        for row in rows[:limit]:
+            decision, decisions = self._seller_terms_company_decision(row, company_name)
+            label_parts = [str(row.cert_number or "").strip(), str(row.card_title or "").strip()]
+            label = " / ".join(part for part in label_parts if part) or f"row {getattr(row, 'excel_row', '') or '?'}"
+            if not decisions:
+                details.append(f"{label}: no assignment companies are loaded.")
+            elif decision is None:
+                details.append(f"{label}: {company_name} is not an active/loaded assignment company.")
+            elif decision.source_value is None:
+                details.append(f"{label}: {decision.reason or 'missing value for this company'}.")
+            elif decision.payout is None:
+                source = format_money(decision.source_value) if decision.source_value is not None else "no source value"
+                details.append(f"{label}: {decision.reason or 'no payout'} ({source}).")
+            elif not decision.accepted:
+                details.append(f"{label}: {decision.reason or 'not accepted by company rules'}.")
+            else:
+                details.append(f"{label}: no seller price was produced.")
+        if len(rows) > limit:
+            details.append(f"...and {len(rows) - limit} more row(s).")
+        return "\n".join(details)
+
+    def _seller_terms_no_match_message(self, rows: list[WorkbookRow], seller_sheet_type: str, deduction: float | None) -> str:
+        basis = "actual payout" if deduction is not None else "source value"
+        details = self._seller_terms_no_match_details(rows, seller_sheet_type)
+        message = (
+            f"No Create rows produced a {seller_sheet_type} seller payout. "
+            f"L.U.C.A.S found the seller_terms.csv row, but this Sheet Type needs a {seller_sheet_type} {basis} on at least one card."
+        )
+        if details:
+            message = f"{message}\n\nRow reasons:\n{details}"
+        return message
 
     def _restore_create_seller_term_prices(self) -> int:
         restored = 0
@@ -8211,7 +8251,7 @@ class CardPipelineApp(tk.Tk):
                 if applicable_rows <= 0:
                     messagebox.showinfo(
                         "No seller payout rows",
-                        f"No Create rows matched {seller_sheet_type} seller terms. Fix the Sheet Type or leave Seller and Sheet Type blank.",
+                        self._seller_terms_no_match_message(self.intake_rows, seller_sheet_type, deduction),
                     )
                     return
         self.apply_create_seller_terms(show_status=False)
