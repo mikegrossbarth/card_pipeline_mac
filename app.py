@@ -505,6 +505,7 @@ class CardPipelineApp(tk.Tk):
         self.minsize(760, 520)
         self.logo_image: tk.PhotoImage | None = None
         self._tab_scroll_canvases: dict[str, tk.Canvas] = {}
+        self._tab_scroll_hosts: dict[str, tk.Widget] = {}
         self._tab_scroll_contents: list[tk.Widget] = []
         self._tab_scroll_bound_widgets: set[str] = set()
         self._tab_scroll_min_width = 1180
@@ -696,8 +697,30 @@ class CardPipelineApp(tk.Tk):
         except tk.TclError:
             return None
 
+    def _current_tab_scroll_host(self) -> tk.Widget | None:
+        if not hasattr(self, "tabs"):
+            return None
+        try:
+            return self._tab_scroll_hosts.get(str(self.tabs.select()))
+        except tk.TclError:
+            return None
+
+    def _event_is_inside_active_tab_scroll_area(self, event: tk.Event) -> bool:
+        host = self._current_tab_scroll_host()
+        if host is None or not host.winfo_exists():
+            return False
+        x_root = getattr(event, "x_root", None)
+        y_root = getattr(event, "y_root", None)
+        if x_root is None or y_root is None:
+            return False
+        left = host.winfo_rootx()
+        top = host.winfo_rooty()
+        return left <= x_root < left + host.winfo_width() and top <= y_root < top + host.winfo_height()
+
     def _handle_tab_mousewheel(self, event: tk.Event) -> str | None:
         if str(event.widget.winfo_toplevel()) != str(self):
+            return None
+        if not self._event_is_inside_active_tab_scroll_area(event):
             return None
         canvas = self._current_tab_scroll_canvas()
         if canvas is None:
@@ -708,11 +731,15 @@ class CardPipelineApp(tk.Tk):
     def _handle_tab_button4(self, event: tk.Event) -> str | None:
         if str(event.widget.winfo_toplevel()) != str(self):
             return None
+        if not self._event_is_inside_active_tab_scroll_area(event):
+            return None
         canvas = self._current_tab_scroll_canvas()
         return "break" if canvas is not None and self._scroll_canvas_pixels(canvas, "y", -72) else None
 
     def _handle_tab_button5(self, event: tk.Event) -> str | None:
         if str(event.widget.winfo_toplevel()) != str(self):
+            return None
+        if not self._event_is_inside_active_tab_scroll_area(event):
             return None
         canvas = self._current_tab_scroll_canvas()
         return "break" if canvas is not None and self._scroll_canvas_pixels(canvas, "y", 72) else None
@@ -784,6 +811,7 @@ class CardPipelineApp(tk.Tk):
         content.bind("<Configure>", schedule_scroll_region_sync)
         canvas.bind("<Configure>", schedule_scroll_region_sync)
         self._tab_scroll_canvases[str(tab)] = canvas
+        self._tab_scroll_hosts[str(tab)] = host
         self._tab_scroll_contents.append(content)
         return content
 
