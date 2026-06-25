@@ -248,7 +248,7 @@ Google Sheets access is required for Google Sheet rule or payout sources.
 5. Choose application type `Desktop app`.
 6. Copy the client ID and secret into `.env`.
 7. Restart L.U.C.A.S.
-8. Open Assignment Rules.
+8. Open Company Rules.
 9. Click `Connect Google`.
 10. Sign in with the Google account that can access the sheets.
 
@@ -272,12 +272,12 @@ On modern macOS, Drive usually appears under:
 
 Use Finder to locate the exact folder, then copy the `WORKING SHEETS` path into `.env` or choose it with the app's `Working Folder` button.
 
-## Step 14: Set Up Assignment Companies
+## Step 14: Set Up Company Rules
 
 In L.U.C.A.S:
 
 1. open the `Assignment` tab
-2. click `Assignment Rules`
+2. click `Company Rules`
 3. create a company
 4. choose whether the company is active
 5. choose a rule source
@@ -287,7 +287,7 @@ In L.U.C.A.S:
 For Google Keep rule sources, sync is done per company:
 
 ```text
-Assignment Rules -> select company -> Rule Source -> Sync Google Keep
+Company Rules -> select company -> Rule Source -> Sync Google Keep
 ```
 
 Use this when a Keep note changed and L.U.C.A.S needs the Chrome extension to refresh its cached note text.
@@ -301,7 +301,7 @@ Use this only if the computer will buy cards from sellers with preset terms.
 Open:
 
 ```text
-Assignment Rules -> People Rules
+Company Rules -> People Rules
 ```
 
 People Rules writes shared seller terms to:
@@ -337,7 +337,7 @@ Test in this order:
 2. Save it to `WORKING SHEETS`.
 3. Open `Comp` and make sure the sheet appears.
 4. Run one Card Ladder comp as a test.
-5. Open Assignment Rules and make sure companies load.
+5. Open Company Rules and make sure companies load.
 6. If Network Mode is needed, open People Rules and make sure People Rules Health is clean.
 7. Open `Assignment` and confirm best company and estimated payout can populate.
 8. Open `Receive` and test marking a row received.

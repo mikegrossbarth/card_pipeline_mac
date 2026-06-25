@@ -58,8 +58,8 @@ def google_ssl_error_message(error: BaseException) -> str:
     LAST_OAUTH_DIAGNOSTICS.setdefault("ssl_cert_file", os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or "system default")
     return (
         "Google HTTPS certificate verification failed: unable to get local issuer certificate. "
-        "On macOS, run Install Certificates.command for the Python version used by L.U.C.A.S, "
-        "then rerun install_dependencies.sh or update certifi in the app environment."
+        "On macOS, run Install Certificates.command for the Python version used by L.U.C.A.S if it exists. "
+        "If that command is missing, rerun install_dependencies.sh or update certifi in the app environment."
     )
 
 
@@ -72,7 +72,7 @@ def authorize_google_sheets(interactive: bool = True) -> dict[str, Any]:
             return token
     if not interactive:
         raise GoogleSheetsAuthError(
-            "Google Sheets is not connected yet. Open Assignment Rules and click Connect Google, then try again."
+            "Google Sheets is not connected yet. Open Company Rules and click Connect Google, then try again."
         )
     return run_desktop_oauth(client_id, client_secret)
 

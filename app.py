@@ -9664,7 +9664,7 @@ class CardPipelineApp(tk.Tk):
 
     def _assignment_config_status(self) -> str:
         if self.assignment_engine.error:
-            return f"Assignment config error: {self.assignment_engine.error}"
+            return f"Company Rules config error: {self.assignment_engine.error}"
         count = len(self.assignment_engine.companies)
         if not count:
             return "Assignment companies: none configured. Add assignment_companies.json to enable best-company payouts."

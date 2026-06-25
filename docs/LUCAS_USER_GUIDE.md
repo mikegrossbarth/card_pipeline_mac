@@ -56,7 +56,7 @@ At a high level:
 3. Open LUCAS.
 4. Use **Working Folder** and select the shared `WORKING SHEETS` folder.
 5. Load the Card Ladder Chrome extension.
-6. In **Assignment Rules**, connect Google if rules use Google Sheets.
+6. In **Company Rules**, connect Google if rules use Google Sheets.
 7. Confirm assignment companies are active.
 8. Run **System Health** and fix anything marked as needing attention.
 
@@ -217,7 +217,7 @@ Use this tab to:
 
 - Load received sheets for assignment review.
 - Re-run/update best company and payout.
-- Open **Assignment Rules**.
+- Open **Company Rules**.
 - Open saved Google Keep note sources from each company's **Rule Source** panel with **Sync Google Keep**.
 - Review unassigned players.
 
@@ -346,7 +346,7 @@ When Network Mode is on:
 
 - Create exposes Seller and Sheet Type.
 - Seller terms can auto-fill purchase prices.
-- Seller terms are edited from **Assignment Rules -> People Rules**.
+- Seller terms are edited from **Company Rules -> People Rules**.
 - Seller terms are stored in `ASSIGNMENT RULES/seller_terms.csv` for the shared pipeline.
 
 Seller terms columns:
@@ -384,7 +384,7 @@ How seller terms work:
 - If Seller or Sheet Type is blank, purchase prices stay normal.
 - If terms are invalid, save stops with a clear prompt.
 
-Use **People Rules Health** in Assignment Rules to find duplicate rows, inactive companies, missing companies, bad rates, and parsed terms.
+Use **People Rules Health** in Company Rules to find duplicate rows, inactive companies, missing companies, bad rates, and parsed terms.
 
 ## Google Sheets And Google Keep Sources
 
@@ -394,7 +394,7 @@ Assignment rules may come from local files, Google Sheets, or Google Keep notes.
 
 ### Google Sheets
 
-Use Assignment Rules -> **Connect Google** once per computer.
+Use Company Rules -> **Connect Google** once per computer.
 
 LUCAS stores the local token as:
 
@@ -406,7 +406,7 @@ If Google Sheets cannot be read:
 
 1. Open **System Health**.
 2. Check Google status.
-3. Use **Reconnect Google** in Assignment Rules if needed.
+3. Use **Reconnect Google** in Company Rules if needed.
 4. Confirm the OAuth app/credentials are correct.
 
 ### Google Keep
@@ -416,18 +416,18 @@ Google Keep notes are synced by opening saved note URLs so the Chrome extension 
 Use:
 
 ```text
-Assignment Rules -> select company -> Rule Source -> Sync Google Keep
+Company Rules -> select company -> Rule Source -> Sync Google Keep
 ```
 
 If rules still look stale:
 
 1. Confirm Chrome is open.
 2. Confirm the Card Ladder/LUCAS extension is loaded.
-3. Open **Assignment Rules**.
+3. Open **Company Rules**.
 4. Select the company whose Keep note needs refreshing.
 5. Click **Sync Google Keep** in that company's Rule Source panel.
 6. Wait for notes to load.
-7. Save/reload Assignment Rules or run System Health.
+7. Save/reload Company Rules or run System Health.
 
 ## Company Sheets
 
@@ -506,7 +506,7 @@ It checks:
 
 Try:
 
-1. Assignment Rules -> Reconnect Google.
+1. Company Rules -> Reconnect Google.
 2. Use the Google account allowed by the OAuth app.
 3. Confirm the browser shows the final success page.
 4. Check whether `lucas_google_sheets_token.json` was created.
@@ -575,7 +575,7 @@ Other tips:
 - Use right-click actions instead of manually changing ledgers.
 - Use Manual Entry or Inventory -> Add Card for quick one-off cards.
 - Use Deep Sync only when external sheet edits need to be recovered.
-- Keep Assignment Rules and People Rules Health clean before big receive/sell sessions.
+- Keep Company Rules and People Rules Health clean before big receive/sell sessions.
 - Commit/push app changes before handing a build to another user.
 
 ## Platform Differences
@@ -603,6 +603,6 @@ Other tips:
 | Mark inventory sold | Inventory -> right-click -> Mark Sold |
 | Add expense | Profit -> Add Expense |
 | Refund sold card | Profit -> Sold Cards right-click -> Refund Selected |
-| Sync Google Keep notes | Assignment Rules -> company -> Rule Source -> Sync Google Keep |
-| Check People Rules | Assignment Rules -> People Rules Health |
+| Sync Google Keep notes | Company Rules -> company -> Rule Source -> Sync Google Keep |
+| Check People Rules | Company Rules -> People Rules Health |
 | Backfill company sheets | Profit -> Deep Sync |

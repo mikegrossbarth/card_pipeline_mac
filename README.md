@@ -126,11 +126,11 @@ Use the `Receive` tab for physically receiving cards and source matching. Use th
 
 Assignment companies are local in `assignment_companies.json`. The manager supports manual rules, local files, Google Keep exports, workbook/CSV files, Google Sheets through OAuth, manual payout tiers, payout files, and linked `Payouts` tabs. Google Keep note sources are synced per company from the selected company's Rule Source panel with `Sync Google Keep`.
 
-Network Mode exposes seller terms in Create and is configured through `Assignment Rules -> People Rules`. People Rules stores shared seller rows in `ASSIGNMENT RULES/seller_terms.csv`. The UI labels `Seller Rate %` and `Deduction %` as percentage fields and accepts numbers only, for example `90`, `92.5`, `10`, or `10.5`, without percent signs. `Seller Rate %` pays the seller a flat percentage of the selected Sheet Type company's source value. `Deduction %` follows that Sheet Type company's payout logic and subtracts the deduction from the company payout.
+Network Mode exposes seller terms in Create and is configured through `Company Rules -> People Rules`. People Rules stores shared seller rows in `ASSIGNMENT RULES/seller_terms.csv`. The UI labels `Seller Rate %` and `Deduction %` as percentage fields and accepts numbers only, for example `90`, `92.5`, `10`, or `10.5`, without percent signs. `Seller Rate %` pays the seller a flat percentage of the selected Sheet Type company's source value. `Deduction %` follows that Sheet Type company's payout logic and subtracts the deduction from the company payout.
 
 Assignment can use comps, Card Ladder value, or imported `CY Estimate` as a company value source. If a company requires Card Ladder value or CY Estimate and the row is missing that value, the company is ignored.
 
-The company list in Assignment Rules can be filtered by name and by All, Active, or Inactive status.
+The company list in Company Rules can be filtered by name and by All, Active, or Inactive status.
 
 Example Mac source paths:
 

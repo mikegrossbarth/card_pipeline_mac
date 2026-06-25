@@ -14,7 +14,7 @@
     <rect x="70" y="315" width="210" height="95" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
     <rect x="410" y="315" width="230" height="95" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
     <rect x="770" y="315" width="210" height="95" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
-    <text x="175" y="170" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Assignment Rules</text>
+    <text x="175" y="170" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Company Rules</text>
     <text x="175" y="195" text-anchor="middle" font-size="13" fill="#4b5563">per-company source URLs/paths</text>
     <text x="525" y="170" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Google Sheet</text>
     <text x="525" y="195" text-anchor="middle" font-size="13" fill="#4b5563">OAuth export to local xlsx cache</text>
