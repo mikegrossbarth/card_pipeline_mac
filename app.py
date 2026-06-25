@@ -502,7 +502,7 @@ class CardPipelineApp(tk.Tk):
         app_debug_log("app_start")
         self.title(f"{APP_TITLE} - {APP_SUBTITLE}")
         self.geometry("1420x820")
-        self.minsize(1120, 680)
+        self.minsize(760, 520)
         self.logo_image: tk.PhotoImage | None = None
 
         self.events: queue.Queue[str] = queue.Queue()
@@ -650,6 +650,69 @@ class CardPipelineApp(tk.Tk):
 
     def _on_close(self) -> None:
         self.destroy()
+
+    def _make_scrollable_tab(self, tab: ttk.Frame) -> ttk.Frame:
+        host = ttk.Frame(tab, style="App.TFrame")
+        host.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(
+            host,
+            bg=self.app_palette["bg"],
+            borderwidth=0,
+            highlightthickness=0,
+            xscrollincrement=24,
+            yscrollincrement=24,
+        )
+        y_scroll = ttk.Scrollbar(host, orient=tk.VERTICAL, command=canvas.yview)
+        x_scroll = ttk.Scrollbar(host, orient=tk.HORIZONTAL, command=canvas.xview)
+        canvas.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        host.columnconfigure(0, weight=1)
+        host.rowconfigure(0, weight=1)
+
+        content = ttk.Frame(canvas, style="App.TFrame")
+        window_id = canvas.create_window((0, 0), window=content, anchor=tk.NW)
+
+        def sync_scroll_region(_event: tk.Event | None = None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def sync_content_width(event: tk.Event) -> None:
+            content.update_idletasks()
+            canvas.itemconfigure(window_id, width=max(content.winfo_reqwidth(), event.width))
+            sync_scroll_region()
+
+        def wheel_units(event: tk.Event) -> int:
+            delta = getattr(event, "delta", 0)
+            if not delta:
+                return 0
+            return -1 if delta > 0 else 1
+
+        def on_mousewheel(event: tk.Event) -> str:
+            units = wheel_units(event)
+            if units:
+                canvas.yview_scroll(units, "units")
+            return "break"
+
+        def on_shift_mousewheel(event: tk.Event) -> str:
+            units = wheel_units(event)
+            if units:
+                canvas.xview_scroll(units, "units")
+            return "break"
+
+        def bind_wheel(_event: tk.Event) -> None:
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
+            canvas.bind_all("<Shift-MouseWheel>", on_shift_mousewheel)
+
+        def unbind_wheel(_event: tk.Event) -> None:
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Shift-MouseWheel>")
+
+        content.bind("<Configure>", sync_scroll_region)
+        canvas.bind("<Configure>", sync_content_width)
+        canvas.bind("<Enter>", bind_wheel)
+        canvas.bind("<Leave>", unbind_wheel)
+        return content
 
     def _build_ui(self) -> None:
         palette = {
@@ -858,6 +921,17 @@ class CardPipelineApp(tk.Tk):
         self.tabs.add(self.payouts_tab, text="Payouts/Tabs")
         self.tabs.add(self.inventory_tab, text="Inventory")
         self.tabs.add(self.profit_tab, text="Profit")
+        for tab_attr in (
+            "home_tab",
+            "intake_tab",
+            "comp_tab",
+            "receive_tab",
+            "review_tab",
+            "payouts_tab",
+            "inventory_tab",
+            "profit_tab",
+        ):
+            setattr(self, tab_attr, self._make_scrollable_tab(getattr(self, tab_attr)))
         self.row_trees: list[ttk.Treeview] = []
 
         self._build_home_tab(palette)
