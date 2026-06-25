@@ -2054,58 +2054,38 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertTrue(showinfo.called)
         self.assertFalse(dummy.applied_terms)
 
-    def test_save_working_sheet_no_seller_rows_explains_assignment_reason(self) -> None:
-        class Var:
-            def __init__(self, value=""):
-                self.value = value
-
-            def get(self):
-                return self.value
-
-        class SaveDummy:
-            save_working_sheet = app.CardPipelineApp.save_working_sheet
-            _network_mode_enabled = app.CardPipelineApp._network_mode_enabled
+    def test_seller_terms_pending_until_required_values_exist(self) -> None:
+        class SellerSummaryDummy:
             _money_value = app.CardPipelineApp._money_value
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_match = lambda self, seller, sheet_type: {"seller": seller, "sheet_type": sheet_type, "deduction": 0.1}
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _seller_term_for_marker = app.CardPipelineApp._seller_term_for_marker
+            _seller_terms_value_label = app.CardPipelineApp._seller_terms_value_label
             _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
             _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
-            _seller_terms_no_match_details = app.CardPipelineApp._seller_terms_no_match_details
-            _seller_terms_no_match_message = app.CardPipelineApp._seller_terms_no_match_message
+            _seller_payout_summary_for_rows = app.CardPipelineApp._seller_payout_summary_for_rows
 
-            def __init__(self):
-                self.intake_rows = [WorkbookRow(excel_row=2, cert_number="137915162", grader="PSA", card_title="Test Card PSA 10", existing_value=10)]
-                self.working_sheet_title = Var("Network Lot")
-                self.create_network_mode_var = Var(True)
-                self.seller_terms_seller_var = Var("John Seller")
-                self.seller_terms_sheet_type_var = Var("Arena Club")
+            def __init__(self, decision):
                 self.assignment_engine = types.SimpleNamespace(
-                    evaluate=lambda row: [
-                        types.SimpleNamespace(
-                            company="Arena Club",
-                            accepted=False,
-                            payout=None,
-                            source_value=None,
-                            reason="missing comp/card ladder value",
-                        )
-                    ]
+                    companies=[types.SimpleNamespace(name="Arena Club", value_source="comps")],
+                    evaluate=lambda row: [decision],
                 )
-                self.applied_terms = False
 
-            def _seller_terms_match(self, seller, sheet_type):
-                return {"seller": seller, "sheet_type": sheet_type, "deduction": 0.1}
+        marker = {"assigned_person": "John Seller", "seller_terms_applied": True, "seller_sheet_type": "Arena Club", "seller_deduction": 0.1}
+        row = WorkbookRow(excel_row=2, cert_number="137915162", grader="PSA", card_title="Test Card PSA 10")
+        pending_decision = types.SimpleNamespace(company="Arena Club", accepted=False, payout=None, source_value=None, reason="missing comp/card ladder value")
+        pending = SellerSummaryDummy(pending_decision)._seller_payout_summary_for_rows([row], marker)
+        self.assertTrue(pending["seller_payout_pending"])
+        self.assertFalse(pending["seller_payout_payable"])
+        self.assertEqual(pending["seller_payout_total"], 0.0)
+        self.assertIn("Seller owed money but no Arena Club payout input", pending["seller_payout_warning"])
 
-            def apply_create_seller_terms(self, show_status=True):
-                self.applied_terms = True
-                return 0
-
-        dummy = SaveDummy()
-        with patch.object(app.messagebox, "showinfo") as showinfo:
-            dummy.save_working_sheet()
-        self.assertTrue(showinfo.called)
-        self.assertEqual(showinfo.call_args.args[0], "No seller payout rows")
-        self.assertIn("People Rules row", showinfo.call_args.args[1])
-        self.assertIn("137915162", showinfo.call_args.args[1])
-        self.assertIn("missing comp/card ladder value", showinfo.call_args.args[1])
-        self.assertFalse(dummy.applied_terms)
+        ready_decision = types.SimpleNamespace(company="Arena Club", accepted=True, payout=95.0, source_value=100.0, reason="accepted")
+        ready = SellerSummaryDummy(ready_decision)._seller_payout_summary_for_rows([row], marker)
+        self.assertFalse(ready["seller_payout_pending"])
+        self.assertTrue(ready["seller_payout_payable"])
+        self.assertEqual(ready["seller_payout_total"], 85.0)
 
     def test_seller_terms_health_reports_duplicates_and_company_issues(self) -> None:
         with TemporaryDirectory() as tmp:

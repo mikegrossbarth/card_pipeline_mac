@@ -5608,6 +5608,7 @@ class CardPipelineApp(tk.Tk):
                 except Exception as error:
                     errors.append(f"{path.name}: {error}")
                     summary = {"name": path.name, "row_count": 0, "received_count": 0, "purchase_total": 0.0, "all_received": False, "partially_received": False}
+                summary = self._enrich_home_seller_payout_summary(path, self.home_sheet_markers.get(key, {}), summary)
                 self.home_sheet_summaries[key] = summary
         self._prune_home_summary_cache(live_summary_paths)
         self._refresh_home_sheet_list()
@@ -5925,6 +5926,7 @@ class CardPipelineApp(tk.Tk):
                 except Exception as error:
                     errors.append(f"{path.name}: {error}")
                     summary = {"name": path.name, "row_count": 0, "received_count": 0, "purchase_total": 0.0, "all_received": False, "partially_received": False}
+                summary = self._enrich_home_seller_payout_summary(path, self.home_sheet_markers.get(key, {}), summary)
                 payload["home_summaries"][key] = summary
         self._prune_home_summary_cache(live_summary_paths)
         record_performance_event("startup.home_summaries", summaries_start, f"summaries={len(payload['home_summaries'])}")
@@ -6018,6 +6020,7 @@ class CardPipelineApp(tk.Tk):
             total = int(summary.get("row_count") or 0)
             received = int(summary.get("received_count") or 0)
             volume = float(summary.get("purchase_total") or 0.0)
+            status = self._incoming_sheet_status(marker, summary)
             total_cards += total
             total_received += received
             total_volume += volume
@@ -6030,7 +6033,7 @@ class CardPipelineApp(tk.Tk):
                     total,
                     received,
                     format_money(volume),
-                    self._incoming_sheet_status(marker, summary),
+                    status,
                 ),
             )
             if summary.get("partially_received"):
@@ -6062,11 +6065,128 @@ class CardPipelineApp(tk.Tk):
             )
 
     def _incoming_sheet_status(self, marker: dict[str, object], summary: dict[str, object]) -> str:
+        warning = str(summary.get("seller_payout_warning") or "").strip()
+        if warning:
+            return warning
         has_tracking = bool(str(marker.get("tracking_number") or "").strip())
         received = int(summary.get("received_count") or 0)
         if has_tracking or received:
             return "Awaiting Receive"
         return "Awaiting tracking"
+
+    def _enrich_home_seller_payout_summary(self, path: Path, marker: dict[str, object], summary: dict[str, object]) -> dict[str, object]:
+        enriched = dict(summary)
+        if not self._sheet_marker_is_seller_payout(marker):
+            return enriched
+        try:
+            rows = self._workbook_rows_from_simple_records(read_simple_spreadsheet(path), source_name=path.name)
+        except Exception as error:
+            enriched["seller_payout_warning"] = f"Seller payout pending: could not read sheet values ({error})"
+            enriched["seller_payout_pending"] = True
+            enriched["seller_payout_payable"] = False
+            return enriched
+        seller_summary = self._seller_payout_summary_for_rows(rows, marker)
+        enriched.update(seller_summary)
+        return enriched
+
+    def _workbook_rows_from_simple_records(self, records: list[dict[str, object]], source_name: str = "") -> list[WorkbookRow]:
+        rows: list[WorkbookRow] = []
+        for offset, record in enumerate(records, start=2):
+            cert = str(record.get("cert_number") or "")
+            grader = str(record.get("grader") or infer_grader(str(record.get("card_title") or "")) or "PSA").upper()
+            card = str(record.get("card_title") or "").strip()
+            rows.append(
+                WorkbookRow(
+                    excel_row=offset,
+                    cert_number=cert,
+                    card_title=card,
+                    grader=grader,
+                    category=str(record.get("sport") or record.get("category") or "").strip(),
+                    existing_value=record.get("purchase_price"),
+                    card_ladder_value=record.get("card_ladder_value"),
+                    card_ladder_comps_average=record.get("card_ladder_comps_average"),
+                    cy_value=record.get("cy_value"),
+                    cy_confidence=record.get("cy_confidence"),
+                    card_ladder_comps=str(record.get("card_ladder_comps") or ""),
+                    best_company=str(record.get("best_company") or ""),
+                    estimated_payout=record.get("estimated_payout"),
+                    status=str(record.get("status") or ("Ready" if cert and grader else "Needs setup")),
+                    notes=str(record.get("notes") or source_name or ""),
+                )
+            )
+        return rows
+
+    def _seller_term_for_marker(self, marker: dict[str, object]) -> dict[str, object] | None:
+        if not self._sheet_marker_is_seller_payout(marker):
+            return None
+        seller = str(marker.get("assigned_person") or "").strip()
+        sheet_type = str(marker.get("seller_sheet_type") or "").strip()
+        if not sheet_type:
+            return None
+        rate = self._seller_terms_rate(marker.get("seller_rate"))
+        deduction = self._seller_terms_rate(marker.get("seller_deduction"))
+        term = self._seller_terms_match(seller, sheet_type) if seller else None
+        if term:
+            if rate is None:
+                rate = self._seller_terms_rate(term.get("rate"))
+            if deduction is None:
+                deduction = self._seller_terms_rate(term.get("deduction"))
+        if rate is None and deduction is None:
+            return None
+        return {"seller": seller, "sheet_type": sheet_type, "rate": rate, "deduction": deduction}
+
+    def _seller_terms_value_label(self, sheet_type: str, deduction: float | None = None) -> str:
+        if deduction is not None:
+            return f"{sheet_type} payout"
+        company_key = str(sheet_type or "").strip().lower()
+        for company in getattr(self.assignment_engine, "companies", []):
+            if str(getattr(company, "name", "") or "").strip().lower() != company_key:
+                continue
+            value_source = str(getattr(company, "value_source", "") or "").strip().lower()
+            if value_source == "card_ladder":
+                return "Card Ladder value"
+            if value_source == "cy_estimate":
+                return "CY Estimate"
+            return "Comps"
+        return "Comps/Card Ladder/CY value"
+
+    def _seller_payout_summary_for_rows(self, rows: list[WorkbookRow], marker: dict[str, object]) -> dict[str, object]:
+        term = self._seller_term_for_marker(marker)
+        if not term:
+            return {"seller_payout_total": 0.0, "seller_payout_ready_count": 0, "seller_payout_missing_count": len(rows), "seller_payout_pending": bool(rows), "seller_payout_payable": False}
+        sheet_type = str(term.get("sheet_type") or "").strip()
+        rate = self._seller_terms_rate(term.get("rate"))
+        deduction = self._seller_terms_rate(term.get("deduction"))
+        payout_total = 0.0
+        ready_count = 0
+        missing_count = 0
+        for row in rows:
+            seller_price = (
+                self._seller_terms_company_price(row, sheet_type, deduction=deduction)
+                if deduction is not None
+                else self._seller_terms_company_price(row, sheet_type, rate=rate)
+            )
+            if seller_price is None:
+                missing_count += 1
+                continue
+            payout_total += seller_price
+            ready_count += 1
+        value_label = self._seller_terms_value_label(sheet_type, deduction=deduction)
+        pending = missing_count > 0
+        warning = ""
+        if pending:
+            warning = f"Seller owed money but no {value_label} input to determine seller payout"
+            if ready_count:
+                warning = f"{warning} ({missing_count} row(s) pending)"
+        return {
+            "seller_payout_total": round(payout_total, 2),
+            "seller_payout_ready_count": ready_count,
+            "seller_payout_missing_count": missing_count,
+            "seller_payout_pending": pending,
+            "seller_payout_payable": bool(rows) and not pending and ready_count > 0,
+            "seller_payout_warning": warning,
+            "seller_payout_value_label": value_label,
+        }
 
     def refresh_payouts_tab(self) -> None:
         perf_start = time.perf_counter()
@@ -6086,7 +6206,7 @@ class CardPipelineApp(tk.Tk):
             person = item["person"] or "Unassigned"
             if filter_person and filter_person not in person.lower():
                 continue
-            if not item["paid"]:
+            if not item["paid"] and item.get("payable", True):
                 balance = balances.setdefault(person, {"sheets": 0, "cards": 0, "balance": 0.0})
                 balance["sheets"] = int(balance["sheets"]) + 1
                 balance["cards"] = int(balance["cards"]) + int(item["row_count"])
@@ -6172,14 +6292,25 @@ class CardPipelineApp(tk.Tk):
                 purchase_total = float(summary.get("purchase_total") or 0.0)
                 estimated_payout_total = float(summary.get("estimated_payout_total") or 0.0)
                 realized_profit_total = float(realized_profit_groups.get((person.lower(), Path(name).name.lower()), {}).get("profit") or 0.0)
-                payout_balance, payout_basis = self._active_payout_balance(
-                    person,
-                    purchase_total,
-                    estimated_payout_total,
-                    seller_names,
-                    realized_profit_total=realized_profit_total,
-                    seller_payout=True,
-                )
+                has_live_seller_summary = "seller_payout_total" in summary or "seller_payout_pending" in summary
+                seller_payable = bool(summary.get("seller_payout_payable")) if has_live_seller_summary else True
+                seller_pending = bool(summary.get("seller_payout_pending")) if has_live_seller_summary else False
+                if self._sheet_marker_is_seller_payout(marker) and has_live_seller_summary:
+                    payout_balance = round(float(summary.get("seller_payout_total") or 0.0), 2)
+                    value_label = str(summary.get("seller_payout_value_label") or "seller terms")
+                    payout_basis = f"Seller terms from {value_label}"
+                    if seller_pending:
+                        status = str(summary.get("seller_payout_warning") or "Seller payout pending values")
+                else:
+                    payout_balance, payout_basis = self._active_payout_balance(
+                        person,
+                        purchase_total,
+                        estimated_payout_total,
+                        seller_names,
+                        realized_profit_total=realized_profit_total,
+                        seller_payout=True,
+                    )
+                    seller_payable = True
                 items.append(
                     {
                         "key": key,
@@ -6195,6 +6326,7 @@ class CardPipelineApp(tk.Tk):
                         "realized_profit_total": round(realized_profit_total, 2),
                         "payout_balance": payout_balance,
                         "payout_basis": payout_basis,
+                        "payable": seller_payable,
                         "status": status,
                     }
                 )
@@ -6721,7 +6853,7 @@ class CardPipelineApp(tk.Tk):
         matching_items = [
             item
             for item in self._payout_sheet_items()
-            if not item["paid"] and (item["person"] or "Unassigned") == person
+            if not item["paid"] and item.get("payable", True) and (item["person"] or "Unassigned") == person
         ]
         if not matching_items:
             self.payout_status_var.set(f"No unpaid sheets found for {person}.")
@@ -8513,11 +8645,7 @@ class CardPipelineApp(tk.Tk):
                     if seller_price is not None:
                         applicable_rows += 1
                 if applicable_rows <= 0:
-                    messagebox.showinfo(
-                        "No seller payout rows",
-                        self._seller_terms_no_match_message(self.intake_rows, seller_sheet_type, deduction),
-                    )
-                    return
+                    self.status_var.set(self._seller_terms_no_match_message(self.intake_rows, seller_sheet_type, deduction))
         self.apply_create_seller_terms(show_status=False)
         try:
             with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
@@ -8529,6 +8657,10 @@ class CardPipelineApp(tk.Tk):
             messagebox.showerror("Save failed", str(error))
             return
         seller_note = f" Assigned to {seller} for payouts." if seller else ""
+        if seller and seller_term:
+            term_summary = self._seller_payout_summary_for_rows(self.intake_rows, {"assigned_person": seller, "seller_terms_applied": True, "seller_sheet_type": seller_sheet_type, "seller_rate": seller_term.get("rate"), "seller_deduction": seller_term.get("deduction")})
+            if term_summary.get("seller_payout_pending"):
+                seller_note = f"{seller_note} {term_summary.get('seller_payout_warning')}."
         self.status_var.set(f"Saved working sheet: {path}.{seller_note}")
         self.intake_rows = []
         self.intake_sources = {}
