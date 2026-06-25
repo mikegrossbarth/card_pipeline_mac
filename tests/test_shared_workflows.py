@@ -9,7 +9,7 @@ import time
 import types
 import unittest
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -256,6 +256,79 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
             self.assertEqual(len(profit_records), 1)
             self.assertEqual(profit_records[0]["sale_price"], 18.33)
             self.assertEqual(profit_records[0]["source_sheet"], "cy.xlsx")
+
+    def test_fanatics_weekly_sheet_uses_fanatics_front_columns(self) -> None:
+        with TemporaryDirectory() as tmp:
+            company_dir = Path(tmp) / "COMPANY SHEETS"
+            rows = [
+                WorkbookRow(
+                    excel_row=2,
+                    cert_number="153415486",
+                    grader="PSA",
+                    category="BASEBALL",
+                    card_title="2012 Topps Pro Debut #164 Jose Ramirez PSA 10",
+                    existing_value=120,
+                    card_ladder_value=212,
+                    card_ladder_comps_average=205,
+                    best_company="Fanatics",
+                    estimated_payout=197.16,
+                    status="Received",
+                )
+            ]
+
+            result = append_company_sheet_rows(company_dir, rows, {2: "fanatics.xlsx:2"}, {2: "fanatics.xlsx"})
+
+            self.assertEqual(result["rows_added"], 1)
+            path = company_dir / "Fanatics" / "Fanatics.xlsx"
+            workbook = load_workbook(path, data_only=True)
+            sheet = workbook[workbook.sheetnames[0]]
+            try:
+                first_headers = [sheet.cell(1, column).value for column in range(1, 7)]
+                first_values = [sheet.cell(2, column).value for column in range(1, 7)]
+                self.assertEqual(first_headers, ["Category", "Card", "Grade", "Cert #", "CL Value", "Payout"])
+                self.assertEqual(first_values, ["BASEBALL", "2012 Topps Pro Debut #164 Jose Ramirez PSA 10", "PSA 10", "153415486", 212, 197.16])
+                self.assertEqual(sheet.cell(1, 8).value, "Source Sheet")
+                self.assertEqual(sheet.cell(2, 8).value, "fanatics.xlsx")
+            finally:
+                workbook.close()
+
+            imported = read_simple_spreadsheet(path)
+            self.assertEqual(imported[0]["sport"], "BASEBALL")
+            self.assertEqual(imported[0]["cert_number"], "153415486")
+            self.assertEqual(imported[0]["card_ladder_value"], 212)
+            self.assertEqual(imported[0]["estimated_payout"], 197.16)
+            profit_records = read_company_profit_records(company_dir)
+            self.assertEqual(len(profit_records), 1)
+            self.assertEqual(profit_records[0]["purchase_price"], 120)
+            self.assertEqual(profit_records[0]["sale_price"], 197.16)
+            self.assertEqual(profit_records[0]["source_sheet"], "fanatics.xlsx")
+
+    def test_existing_fanatics_sheet_migrates_to_front_column_format(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "COMPANY SHEETS"
+            path = root / "Fanatics" / "Fanatics.xlsx"
+            path.parent.mkdir(parents=True)
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Week of 2026-06-22"
+            sheet.append(["Date Added", "Source Sheet", "Source", "Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder Value", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Status", "Notes"])
+            sheet.append(["2026-06-22", "Lot A.xlsx", "LUCAS", "153415486", "PSA", "2012 Topps Pro Debut #164 Jose Ramirez PSA 10", 120, 212, 205, "", "", "Fanatics", 197.16, "Received", ""])
+            workbook.save(path)
+            workbook.close()
+
+            ensure_company_weekly_sheets(root, ["Fanatics"], date(2026, 6, 22))
+
+            workbook = load_workbook(path, data_only=True)
+            sheet = workbook["Week of 2026-06-22"]
+            try:
+                first_headers = [sheet.cell(1, column).value for column in range(1, 7)]
+                first_values = [sheet.cell(2, column).value for column in range(1, 7)]
+                self.assertEqual(first_headers, ["Category", "Card", "Grade", "Cert #", "CL Value", "Payout"])
+                self.assertEqual(first_values, [None, "2012 Topps Pro Debut #164 Jose Ramirez PSA 10", "PSA 10", "153415486", 212, 197.16])
+                self.assertEqual(sheet.cell(2, 8).value, "Lot A.xlsx")
+                self.assertEqual(sheet.cell(2, 11).value, 120)
+            finally:
+                workbook.close()
 
     def test_working_sheet_round_trips_manual_sport(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -2087,6 +2160,166 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertTrue(ready["seller_payout_payable"])
         self.assertEqual(ready["seller_payout_total"], 85.0)
 
+    def test_seller_rate_requires_company_acceptance(self) -> None:
+        class SellerPriceDummy:
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+
+            def __init__(self, decision):
+                self.assignment_engine = types.SimpleNamespace(evaluate=lambda row: [decision])
+
+        row = WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Rejected Card")
+        rejected = types.SimpleNamespace(company="Arena Club", accepted=False, payout=None, source_value=100.0, reason="card does not match company rules")
+        accepted = types.SimpleNamespace(company="Arena Club", accepted=True, payout=None, source_value=100.0, reason="accepted, but no payout tier matched")
+
+        self.assertIsNone(SellerPriceDummy(rejected)._seller_terms_company_price(row, "Arena Club", rate=0.9))
+        self.assertEqual(SellerPriceDummy(accepted)._seller_terms_company_price(row, "Arena Club", rate=0.9), 90.0)
+
+    def test_save_home_sheet_markers_preserves_seller_metadata(self) -> None:
+        class MarkerDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _marker_for_stage = app.CardPipelineApp._marker_for_stage
+            save_home_sheet_markers = app.CardPipelineApp.save_home_sheet_markers
+
+            def _seller_terms_match(self, seller, sheet_type):
+                return {"seller": seller, "sheet_type": sheet_type, "rate": 0.85, "deduction": None}
+
+            def _move_received_sheet_to_incoming(self, key):
+                return ""
+
+            def _move_sheet_to_received(self, key):
+                return ""
+
+            def _move_working_sheet_to_incoming(self, key):
+                return ""
+
+            def _retarget_inventory_rows_for_source(self, source_sheet, assigned_person):
+                return 0
+
+            def _save_sheet_markers(self):
+                self.saved = True
+
+            def refresh_working_sheets(self):
+                pass
+
+            def refresh_received_sheets(self):
+                pass
+
+            def refresh_incoming_index(self):
+                pass
+
+            def refresh_home(self):
+                pass
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            dummy = MarkerDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.home_selected_sheet_key = "Working|Lot.xlsx"
+            dummy.home_sheet_kind = types.SimpleNamespace(set=lambda value: None)
+            dummy.status_var = types.SimpleNamespace(set=lambda value: None)
+            dummy.home_sheet_markers = {
+                "Working|Lot.xlsx": {
+                    "assigned_person": "John Seller",
+                    "seller_terms_applied": True,
+                    "seller_sheet_type": "Arena Club",
+                    "seller_rate": 0.9,
+                    "paid": False,
+                }
+            }
+            dummy.home_sheet_summaries = {"Working|Lot.xlsx": {"row_count": 1}}
+            try:
+                dummy.save_home_sheet_markers(
+                    {
+                        "incoming_proper": False,
+                        "tracking_number": "TRACK",
+                        "all_received": False,
+                        "assigned_person": "John Seller",
+                    }
+                )
+                marker = dummy.home_sheet_markers["Working|Lot.xlsx"]
+                self.assertTrue(marker["seller_terms_applied"])
+                self.assertEqual(marker["seller_sheet_type"], "Arena Club")
+                self.assertEqual(marker["seller_rate"], 0.9)
+                self.assertEqual(marker["tracking_number"], "TRACK")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+
+    def test_save_payout_marker_blocks_pending_seller_paid(self) -> None:
+        class PayoutDummy:
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            save_payout_sheet_marker = app.CardPipelineApp.save_payout_sheet_marker
+
+            def _payout_item_for_key(self, key):
+                return {"key": key, "payable": False, "status": "Seller owed money but no Comps input"}
+
+        dummy = PayoutDummy()
+        dummy.home_sheet_markers = {"Received|Lot.xlsx": {"assigned_person": "John Seller", "paid": False}}
+        dummy.home_sheet_summaries = {"Received|Lot.xlsx": {"all_received": True}}
+        with patch.object(app.messagebox, "showinfo") as showinfo:
+            dummy.save_payout_sheet_marker("Received|Lot.xlsx", "John Seller", True)
+        self.assertTrue(showinfo.called)
+        self.assertFalse(dummy.home_sheet_markers["Received|Lot.xlsx"]["paid"])
+
+    def test_save_comp_to_source_sheet_recalculates_seller_purchase(self) -> None:
+        class Var:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class SourceSaveDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_match = lambda self, seller, sheet_type: {"seller": seller, "sheet_type": sheet_type, "rate": 0.9}
+            _seller_term_for_marker = app.CardPipelineApp._seller_term_for_marker
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+            _marker_for_sheet_name = app.CardPipelineApp._marker_for_sheet_name
+            _apply_seller_terms_to_rows_for_marker = app.CardPipelineApp._apply_seller_terms_to_rows_for_marker
+            save_comp_to_source_sheet = app.CardPipelineApp.save_comp_to_source_sheet
+
+            def _refresh_table(self, schedule_recommendations=False):
+                pass
+
+            def refresh_home(self):
+                pass
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            working_dir = root / "WORKING SHEETS"
+            working_dir.mkdir(parents=True)
+            path = working_dir / "Seller Lot.xlsx"
+            write_working_sheet(path, [WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Card", existing_value=None, card_ladder_comps_average=100.0)], {2: "manual"})
+
+            old_pipeline = app.CARD_PIPELINE_DIR
+            app.CARD_PIPELINE_DIR = root
+            dummy = SourceSaveDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            row = WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Card", existing_value=None, card_ladder_comps_average=100.0)
+            dummy.state = types.SimpleNamespace(rows=[row])
+            dummy.row_sources = {2: "manual"}
+            dummy.selected_working_sheet = Var("Seller Lot.xlsx")
+            dummy.working_sheet_paths = {"Seller Lot.xlsx": path}
+            dummy.home_sheet_markers = {"Working|Seller Lot.xlsx": {"assigned_person": "John Seller", "seller_terms_applied": True, "seller_sheet_type": "Arena Club", "seller_rate": 0.9}}
+            dummy.assignment_engine = types.SimpleNamespace(
+                evaluate=lambda _row: [types.SimpleNamespace(company="Arena Club", accepted=True, payout=95.0, source_value=100.0, reason="accepted")]
+            )
+            dummy.status_var = Var("")
+            dummy.status_var.set = lambda value: setattr(dummy.status_var, "value", value)
+            try:
+                dummy.save_comp_to_source_sheet()
+                saved = read_simple_spreadsheet(path)
+                self.assertEqual(saved[0]["purchase_price"], 90.0)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+
     def test_seller_terms_health_reports_duplicates_and_company_issues(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "seller_terms.csv"
@@ -3516,7 +3749,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.refreshed = 0
                 self.assignment_engine = types.SimpleNamespace(
                     evaluate=lambda row: (
-                        [types.SimpleNamespace(company="Arena Club", payout=95.0, source_value=100.0)]
+                        [types.SimpleNamespace(company="Arena Club", accepted=True, payout=95.0, source_value=100.0)]
                         if row.cert_number == "1"
                         else []
                     )

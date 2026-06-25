@@ -4,6 +4,8 @@ import csv
 import json
 import os
 import re
+import subprocess
+import sys
 import tkinter as tk
 import urllib.parse
 import webbrowser
@@ -190,6 +192,8 @@ def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str,
             row_errors.append(f"invalid Deduction {deduction_raw!r}")
         if rate is None and deduction is None:
             row_errors.append("missing Seller Rate or Deduction")
+        if rate is not None and deduction is not None:
+            row_errors.append("use Seller Rate or Deduction, not both")
         if rate is not None and rate > 1:
             row_errors.append(f"Seller Rate parses above 100% ({rate:.0%})")
         if deduction is not None and deduction > 1:
@@ -457,10 +461,10 @@ class AssignmentRulesDialog(tk.Toplevel):
         actions.grid(row=4, column=0, sticky="ew", pady=(8, 0))
         actions.columnconfigure(0, weight=1)
         actions.columnconfigure(1, weight=1)
-        actions.columnconfigure(2, weight=1)
         ttk.Button(actions, text="Preview Source", command=self._preview_rule_source, style="AssignSoft.TButton").grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ttk.Button(actions, text="Open Keep Note", command=self._open_keep_note, style="AssignSoft.TButton").grid(row=0, column=1, sticky="ew", padx=4)
-        ttk.Button(actions, text="Connect Google", command=self._connect_google, style="AssignSoft.TButton").grid(row=0, column=2, sticky="ew", padx=(4, 0))
+        ttk.Button(actions, text="Open Keep Note", command=self._open_keep_note, style="AssignSoft.TButton").grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        ttk.Button(actions, text="Sync Google Keep", command=self._sync_keep_note, style="AssignSoft.TButton").grid(row=1, column=0, sticky="ew", padx=(0, 4), pady=(6, 0))
+        ttk.Button(actions, text="Connect Google", command=self._connect_google, style="AssignSoft.TButton").grid(row=1, column=1, sticky="ew", padx=(4, 0), pady=(6, 0))
         self.link_payouts_check = ttk.Checkbutton(
             frame,
             text="Link Payouts to Same File",
@@ -1207,6 +1211,85 @@ class AssignmentRulesDialog(tk.Toplevel):
         webbrowser.open(url)
         self.preview_status.set("Opened Google Keep. Keep the note open; L.U.C.A.S will use the latest synced cache.")
 
+    def _current_keep_sources(self) -> list[dict[str, Any]]:
+        sources: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def add_source(source: object, is_payout: bool = False) -> None:
+            prepared: dict[str, Any] | None = None
+            if isinstance(source, dict) and str(source.get("kind") or "").strip() == "google_keep":
+                prepared = dict(source)
+            else:
+                raw = normalize_source_value(source.get("url") if isinstance(source, dict) else source)
+                if is_google_keep_url(raw):
+                    prepared = dict(self._materialize_source_if_needed(raw, is_payout=is_payout))  # type: ignore[arg-type]
+            if not prepared:
+                return
+            url = str(prepared.get("url") or "").strip()
+            if not url or url in seen:
+                return
+            seen.add(url)
+            sources.append(prepared)
+
+        rule_source = self.rule_materialized_source if isinstance(self.rule_materialized_source, dict) else self.rule_source_path.get().strip()
+        add_source(rule_source)
+        if not self.link_payouts_to_rule_source.get():
+            payout_source = self.payout_materialized_source if isinstance(self.payout_materialized_source, dict) else self.payout_source_path.get().strip()
+            add_source(payout_source, is_payout=True)
+        return sources
+
+    def _sync_keep_note(self) -> None:
+        sources = self._current_keep_sources()
+        if not sources:
+            messagebox.showinfo("Sync Keep", "Select a Google Keep note URL for this company first.")
+            return
+        parent_state = getattr(getattr(self, "master", None), "state", None)
+        if parent_state is not None and hasattr(parent_state, "register_keep_note_sources"):
+            try:
+                parent_state.register_keep_note_sources(sources)
+            except Exception:
+                pass
+        opened = 0
+        for source in sources:
+            url = str(source.get("url") or "").strip()
+            if url and self._open_google_keep_source_url(url):
+                opened += 1
+        if opened:
+            note_word = "note" if opened == 1 else "notes"
+            self.preview_status.set(f"Opened {opened} Google Keep {note_word} for this company. The extension will sync after each note loads.")
+            self._refresh_google_status()
+            return
+        messagebox.showinfo("Sync Keep", "L.U.C.A.S could not open this company's Google Keep note.")
+
+    def _open_google_keep_source_url(self, url: str) -> bool:
+        if sys.platform == "win32":
+            chrome_candidates = [
+                Path(os.environ.get("ProgramFiles", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                Path(os.environ.get("ProgramFiles(x86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                Path(os.environ.get("LocalAppData", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            ]
+            for chrome_path in chrome_candidates:
+                try:
+                    if chrome_path.exists():
+                        subprocess.Popen([str(chrome_path), url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        return True
+                except Exception:
+                    continue
+        if sys.platform == "darwin":
+            try:
+                result = subprocess.run(
+                    ["open", "-a", "Google Chrome", url],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode == 0:
+                    return True
+            except Exception:
+                pass
+        return bool(webbrowser.open(url))
+
     def _save_and_reload(self) -> None:
         if self._save_company():
             self.on_saved()
@@ -1339,6 +1422,32 @@ class PeopleRulesDialog(tk.Toplevel):
             return
         self._render_rows()
 
+    def _bind_rate_deduction_exclusivity(self, vars_by_field: dict[str, tk.StringVar]) -> None:
+        rate_var = vars_by_field["Seller Rate"]
+        deduction_var = vars_by_field["Deduction"]
+        if getattr(rate_var, "_lucas_exclusive_bound", False):
+            return
+        updating = {"active": False}
+
+        def clear_deduction(*_args) -> None:
+            if updating["active"] or not rate_var.get().strip():
+                return
+            updating["active"] = True
+            deduction_var.set("")
+            updating["active"] = False
+
+        def clear_rate(*_args) -> None:
+            if updating["active"] or not deduction_var.get().strip():
+                return
+            updating["active"] = True
+            rate_var.set("")
+            updating["active"] = False
+
+        rate_var.trace_add("write", clear_deduction)
+        deduction_var.trace_add("write", clear_rate)
+        setattr(rate_var, "_lucas_exclusive_bound", True)
+        setattr(deduction_var, "_lucas_exclusive_bound", True)
+
     def _render_rows(self) -> None:
         for child in self.rows_frame.grid_slaves():
             row = int(child.grid_info().get("row") or 0)
@@ -1346,6 +1455,7 @@ class PeopleRulesDialog(tk.Toplevel):
                 child.destroy()
         sheet_types = self._active_sheet_types()
         for index, vars_by_field in enumerate(self.row_vars, start=1):
+            self._bind_rate_deduction_exclusivity(vars_by_field)
             ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller"], style="Assign.TEntry", width=26).grid(row=index, column=0, sticky="ew", padx=(0, 8), pady=(0, 8))
             ttk.Combobox(
                 self.rows_frame,
@@ -1377,6 +1487,9 @@ class PeopleRulesDialog(tk.Toplevel):
                 return None
             if not row["Seller Rate"] and not row["Deduction"]:
                 self.status.set(f"Row {index}: enter Seller Rate or Deduction.")
+                return None
+            if row["Seller Rate"] and row["Deduction"]:
+                self.status.set(f"Row {index}: use Seller Rate or Deduction, not both.")
                 return None
             if row["Seller Rate"] and seller_terms_rate(row["Seller Rate"]) is None:
                 self.status.set(f"Row {index}: Seller Rate is invalid.")

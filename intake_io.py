@@ -155,6 +155,25 @@ CY_COMPANY_SHEET_HEADERS = [
     "Status",
     "Notes",
 ]
+FANATICS_COMPANY_SHEET_HEADERS = [
+    "Category",
+    "Card",
+    "Grade",
+    "Cert #",
+    "CL Value",
+    "Payout",
+    "Date Added",
+    "Source Sheet",
+    "Source",
+    "Grader",
+    "Purchase Price",
+    "Comps",
+    "CY Estimate",
+    "CY Confidence",
+    "Best Company",
+    "Status",
+    "Notes",
+]
 
 
 def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[dict[str, Any]]:
@@ -551,6 +570,8 @@ def style_company_sheet_header(sheet) -> None:
     sheet.freeze_panes = "A2"
     if _is_cy_company_sheet(sheet):
         widths = [14, 18, 62, 12, 14, 14, 14, 14, 28, 22, 14, 18, 14, 18, 18, 20, 38]
+    elif _is_fanatics_company_sheet(sheet):
+        widths = [16, 62, 14, 18, 14, 14, 14, 28, 22, 14, 16, 14, 14, 16, 18, 20, 38]
     else:
         widths = [14, 28, 22, 22, 14, 62, 16, 18, 14, 14, 16, 18, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
@@ -561,7 +582,12 @@ def style_company_sheet_header(sheet) -> None:
 
 
 def set_company_sheet_headers(sheet, company: str = "") -> None:
-    headers = CY_COMPANY_SHEET_HEADERS if is_cy_company(company) else COMPANY_SHEET_HEADERS
+    if is_cy_company(company):
+        headers = CY_COMPANY_SHEET_HEADERS
+    elif is_fanatics_company(company):
+        headers = FANATICS_COMPANY_SHEET_HEADERS
+    else:
+        headers = COMPANY_SHEET_HEADERS
     for index, header in enumerate(headers, start=1):
         sheet.cell(1, index).value = header
 
@@ -571,12 +597,25 @@ def is_cy_company(company: str) -> bool:
     return normalized in {"cy", "courtyard", "courtyardcards", "courtyardcard"} or normalized.startswith("courtyard")
 
 
+def is_fanatics_company(company: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "", clean_part(company).lower())
+    return normalized == "fanatics"
+
+
 def _is_cy_company_sheet(sheet) -> bool:
     headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
     return bool(headers.get("cert") and headers.get("estimate") and headers.get("confidence"))
 
 
+def _is_fanatics_company_sheet(sheet) -> bool:
+    headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
+    return all(headers.get(_normalize_header(header)) for header in FANATICS_COMPANY_SHEET_HEADERS[:6])
+
+
 def ensure_company_sheet_layout(sheet, company: str = "") -> None:
+    if is_fanatics_company(company):
+        ensure_fanatics_company_sheet_layout(sheet)
+        return
     if is_cy_company(company):
         headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
         has_data = _sheet_max_row(sheet) >= 2 and any(sheet.cell(row_index, 1).value is not None for row_index in range(2, _sheet_max_row(sheet) + 1))
@@ -584,6 +623,65 @@ def ensure_company_sheet_layout(sheet, company: str = "") -> None:
             set_company_sheet_headers(sheet, company)
             return
     ensure_cy_columns_after_comps(sheet)
+
+
+def ensure_fanatics_company_sheet_layout(sheet) -> None:
+    if _sheet_max_row(sheet) <= 1 and sheet.cell(1, 1).value is None:
+        set_company_sheet_headers(sheet, "Fanatics")
+        return
+    if _is_fanatics_company_sheet(sheet):
+        return
+    headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
+    if not headers:
+        set_company_sheet_headers(sheet, "Fanatics")
+        return
+    row_values: list[list[Any]] = []
+    max_row = _sheet_max_row(sheet)
+    for row_index in range(2, max_row + 1):
+        card = clean_part(_cell_by_header(sheet, row_index, headers, CARD_HEADERS, 6))
+        grader = normalize_grader(_cell_by_header(sheet, row_index, headers, GRADER_HEADERS, 5))
+        values = [
+            clean_part(_cell_by_header(sheet, row_index, headers, SPORT_HEADERS, None)),
+            card,
+            _fanatics_grade_label(grader, card),
+            normalize_cert(_cell_by_header(sheet, row_index, headers, CERT_HEADERS, 4)),
+            _cell_by_header(sheet, row_index, headers, CARD_LADDER_VALUE_HEADERS, 8),
+            _cell_by_header(sheet, row_index, headers, ESTIMATED_PAYOUT_HEADERS, 13),
+            _cell_by_header(sheet, row_index, headers, ("dateadded", "date"), 1),
+            clean_part(_cell_by_header(sheet, row_index, headers, ("sourcesheet",), 2)),
+            clean_part(_cell_by_header(sheet, row_index, headers, SOURCE_HEADERS, 3)),
+            grader,
+            _cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, 7),
+            _cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, 9),
+            _cell_by_header(sheet, row_index, headers, CY_VALUE_HEADERS, 10),
+            _cell_by_header(sheet, row_index, headers, CY_CONFIDENCE_HEADERS, 11),
+            clean_part(_cell_by_header(sheet, row_index, headers, BEST_COMPANY_HEADERS, 12)),
+            clean_part(_cell_by_header(sheet, row_index, headers, STATUS_HEADERS, 14)),
+            clean_part(_cell_by_header(sheet, row_index, headers, NOTES_HEADERS, 15)),
+        ]
+        if any(value not in (None, "") for value in values):
+            row_values.append(values)
+    max_col = max(sheet.max_column, len(FANATICS_COMPANY_SHEET_HEADERS))
+    for column in range(1, max_col + 1):
+        sheet.cell(1, column).value = None
+    set_company_sheet_headers(sheet, "Fanatics")
+    for offset, values in enumerate(row_values, start=2):
+        for column, value in enumerate(values, start=1):
+            sheet.cell(offset, column).value = value
+        for column in range(len(values) + 1, max_col + 1):
+            sheet.cell(offset, column).value = None
+    for row_index in range(len(row_values) + 2, max_row + 1):
+        for column in range(1, max_col + 1):
+            sheet.cell(row_index, column).value = None
+
+
+def _fanatics_grade_label(grader: str, card_title: str) -> str:
+    text = clean_part(card_title)
+    match = re.search(r"\b(PSA|BGS|SGC|CGC)\s*([0-9]+(?:\.[0-9]+)?)\b", text, re.I)
+    if match:
+        return f"{match.group(1).upper()} {match.group(2)}"
+    company = normalize_grader(grader)
+    return company
 
 
 def append_company_row(sheet, row: Any, company: str, today_text: str, source_sheet: str, source: str, cert: str, purchase_price: float | None, sale_price: float | None) -> None:
@@ -605,6 +703,31 @@ def append_company_row(sheet, row: Any, company: str, today_text: str, source_sh
                 getattr(row, "card_ladder_comps_average", None),
                 getattr(row, "best_company", ""),
                 sale_price,
+                getattr(row, "status", ""),
+                getattr(row, "notes", ""),
+            ]
+        )
+        return
+    if _is_fanatics_company_sheet(sheet):
+        card_title = getattr(row, "card_title", "")
+        grader = getattr(row, "grader", "")
+        sheet.append(
+            [
+                getattr(row, "category", ""),
+                card_title,
+                _fanatics_grade_label(grader, card_title),
+                cert,
+                getattr(row, "card_ladder_value", None),
+                sale_price,
+                today_text,
+                source_sheet,
+                source,
+                grader,
+                purchase_price,
+                getattr(row, "card_ladder_comps_average", None),
+                getattr(row, "cy_value", None),
+                getattr(row, "cy_confidence", None),
+                getattr(row, "best_company", ""),
                 getattr(row, "status", ""),
                 getattr(row, "notes", ""),
             ]

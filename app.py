@@ -650,6 +650,7 @@ class CardPipelineApp(tk.Tk):
         self.inventory_bulk_cell: tuple[str, str] | None = None
         self.inventory_cell_editor: ttk.Entry | None = None
         self.inventory_cell_edit: tuple[str, str] | None = None
+        self.inventory_bulk_undo_stack: list[dict[str, object]] = []
         self.inventory_filter_after_id: str | None = None
         self.inventory_sort_column = "date"
         self.inventory_sort_descending = True
@@ -1155,6 +1156,7 @@ class CardPipelineApp(tk.Tk):
         comp_controls = ttk.Frame(comp_main, style="Panel.TFrame", padding=(16, 12))
         comp_controls.pack(fill=tk.X, pady=(10, 0))
         ttk.Button(comp_controls, text="Save Output", command=self.save_output, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(comp_controls, text="Save Back to Source Sheet", command=self.save_comp_to_source_sheet, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_controls, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_controls, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_controls, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
@@ -1221,7 +1223,6 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(review_controls, text="Refresh Received Sheets", command=self.refresh_received_sheets, style="Soft.TButton").grid(row=0, column=3, sticky="w")
         ttk.Button(review_controls, text="Company Rules", command=self.open_assignment_rules, style="Soft.TButton").grid(row=0, column=4, sticky="w", padx=(8, 0))
         ttk.Button(review_controls, text="People Rules", command=self.open_people_rules, style="Soft.TButton").grid(row=0, column=5, sticky="w", padx=(8, 0))
-        ttk.Button(review_controls, text="Sync Google Keep", command=self.sync_google_keep_notes, style="Soft.TButton").grid(row=0, column=6, sticky="w", padx=(8, 0))
         ttk.Button(review_controls, text="Unassigned Players", command=self.open_unassigned_players_dialog, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(8, 0))
         review_controls.columnconfigure(1, weight=1)
         ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=8, sticky="w", pady=(10, 0))
@@ -1634,7 +1635,22 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(action_row, text="Recomp Visible Cards", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Import Mobile Queue", command=self.import_mobile_queue_file, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Checkbutton(action_row, text="Bulk Edit", variable=self.inventory_bulk_edit_var, command=self._toggle_inventory_bulk_edit, style="TCheckbutton").pack(side=tk.LEFT, padx=(14, 0))
+        self.inventory_bulk_toggle = tk.Checkbutton(
+            action_row,
+            text="Bulk Edit",
+            variable=self.inventory_bulk_edit_var,
+            command=self._toggle_inventory_bulk_edit,
+            indicatoron=False,
+            cursor="hand2",
+            relief=tk.FLAT,
+            borderwidth=0,
+            highlightthickness=0,
+            padx=14,
+            pady=7,
+            font=("Segoe UI Semibold", 9),
+        )
+        self.inventory_bulk_toggle.pack(side=tk.LEFT, padx=(14, 0))
+        self._style_inventory_bulk_toggle()
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var):
             var.trace_add("write", lambda *_args: self._schedule_inventory_filter_refresh())
@@ -1659,6 +1675,10 @@ class CardPipelineApp(tk.Tk):
         self.inventory_tree.bind("<Down>", lambda event: self._move_inventory_bulk_cell(1, 0), add="+")
         self.inventory_tree.bind("<Left>", lambda event: self._move_inventory_bulk_cell(0, -1), add="+")
         self.inventory_tree.bind("<Right>", lambda event: self._move_inventory_bulk_cell(0, 1), add="+")
+        self.inventory_tree.bind("<Control-z>", self._undo_inventory_bulk_edit, add="+")
+        self.inventory_tree.bind("<Control-Z>", self._undo_inventory_bulk_edit, add="+")
+        self.inventory_tree.bind("<Command-z>", self._undo_inventory_bulk_edit, add="+")
+        self.inventory_tree.bind("<Command-Z>", self._undo_inventory_bulk_edit, add="+")
         self.refresh_inventory_tab()
 
     def _build_profit_tab(self) -> None:
@@ -3427,8 +3447,23 @@ class CardPipelineApp(tk.Tk):
                 self._save_inventory_ledger(rows)
         return updated
 
+    def _replace_inventory_record_by_key(self, key: str, replacement: dict[str, object]) -> dict[str, object] | None:
+        if not key:
+            return None
+        with shared_lock(CARD_PIPELINE_DIR, "inventory-row-edit", self.lucas_identity):
+            rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+            for index, record in enumerate(rows):
+                if str(record.get("inventory_key") or "") != key:
+                    continue
+                normalized = self._normalize_inventory_record(replacement)
+                rows[index] = normalized
+                self._save_inventory_ledger(rows)
+                return normalized
+        return None
+
     def _toggle_inventory_bulk_edit(self) -> None:
         self._destroy_inventory_cell_editor()
+        self._style_inventory_bulk_toggle()
         if not self.inventory_bulk_edit_var.get():
             self.inventory_bulk_cell = None
             self.inventory_status_var.set("Bulk edit off.")
@@ -3440,6 +3475,30 @@ class CardPipelineApp(tk.Tk):
             self._set_inventory_bulk_cell(iid, self._inventory_editable_columns()[0])
         self.inventory_tree.focus_set()
         self.inventory_status_var.set("Bulk edit on. Use arrows to move, Enter/F2 to edit, Esc to cancel a cell.")
+
+    def _style_inventory_bulk_toggle(self) -> None:
+        toggle = getattr(self, "inventory_bulk_toggle", None)
+        if toggle is None:
+            return
+        active = bool(self.inventory_bulk_edit_var.get())
+        if active:
+            toggle.configure(
+                text="Bulk Edit ON",
+                bg="#1ed760",
+                fg="#000000",
+                activebackground="#1fdf64",
+                activeforeground="#000000",
+                selectcolor="#1ed760",
+            )
+        else:
+            toggle.configure(
+                text="Bulk Edit",
+                bg="#2a2a2a",
+                fg="#ffffff",
+                activebackground="#333333",
+                activeforeground="#ffffff",
+                selectcolor="#2a2a2a",
+            )
 
     def _inventory_editable_columns(self) -> list[str]:
         return [column for column in INVENTORY_TABLE_COLUMNS if column in INVENTORY_EDIT_COLUMN_FIELDS]
@@ -3530,6 +3589,10 @@ class CardPipelineApp(tk.Tk):
         editor.bind("<Down>", lambda _event: self._commit_inventory_bulk_edit(1, 0, reopen=True))
         editor.bind("<Left>", lambda _event: self._commit_inventory_bulk_edit(0, -1, reopen=True))
         editor.bind("<Right>", lambda _event: self._commit_inventory_bulk_edit(0, 1, reopen=True))
+        editor.bind("<Control-z>", self._undo_inventory_bulk_edit)
+        editor.bind("<Control-Z>", self._undo_inventory_bulk_edit)
+        editor.bind("<Command-z>", self._undo_inventory_bulk_edit)
+        editor.bind("<Command-Z>", self._undo_inventory_bulk_edit)
         editor.bind("<Escape>", lambda _event: self._cancel_inventory_bulk_edit())
         editor.bind("<FocusOut>", lambda _event: self._commit_inventory_bulk_edit(0, 0, reopen=False))
         return "break"
@@ -3550,12 +3613,21 @@ class CardPipelineApp(tk.Tk):
             self._begin_inventory_bulk_edit()
             return "break"
         key = str(record.get("inventory_key") or "")
+        before = dict(record)
         updated = self._update_inventory_record_by_key(key, updates)
         if updated:
             merged = dict(record)
             merged.update(updates)
             merged.pop("inventory_key", None)
             normalized = self._normalize_inventory_record(merged)
+            self.inventory_bulk_undo_stack.append(
+                {
+                    "iid": iid,
+                    "column": column,
+                    "before": before,
+                    "after_key": str(normalized.get("inventory_key") or key),
+                }
+            )
             self.inventory_tree_records[iid] = normalized
             self._refresh_inventory_tree_row(iid, normalized)
             self.status_var.set("Inventory cell saved.")
@@ -3604,6 +3676,33 @@ class CardPipelineApp(tk.Tk):
 
     def _cancel_inventory_bulk_edit(self) -> str:
         self._destroy_inventory_cell_editor()
+        return "break"
+
+    def _undo_inventory_bulk_edit(self, event: tk.Event | None = None) -> str:
+        if not getattr(self, "inventory_bulk_edit_var", None) or not self.inventory_bulk_edit_var.get():
+            return "break"
+        self._destroy_inventory_cell_editor()
+        if not self.inventory_bulk_undo_stack:
+            self.inventory_status_var.set("Nothing to undo.")
+            return "break"
+        action = self.inventory_bulk_undo_stack.pop()
+        before = dict(action.get("before") or {})
+        after_key = str(action.get("after_key") or before.get("inventory_key") or "")
+        restored = self._replace_inventory_record_by_key(after_key, before)
+        if not restored:
+            self.inventory_status_var.set("Could not undo; inventory row was not found.")
+            return "break"
+        iid = str(action.get("iid") or "")
+        if iid and hasattr(self, "inventory_tree") and iid in self.inventory_tree.get_children():
+            self.inventory_tree_records[iid] = restored
+            self._refresh_inventory_tree_row(iid, restored)
+            column = str(action.get("column") or "")
+            if column in INVENTORY_EDIT_COLUMN_FIELDS:
+                self._set_inventory_bulk_cell(iid, column)
+        else:
+            self.refresh_inventory_tab()
+        self.inventory_status_var.set("Undid last bulk edit.")
+        self.status_var.set("Inventory bulk edit undone.")
         return "break"
 
     def _destroy_inventory_cell_editor(self) -> None:
@@ -5617,6 +5716,9 @@ class CardPipelineApp(tk.Tk):
         self._update_home_sheet_tabs()
         if errors:
             self.status_var.set(f"Home refreshed with {len(errors)} sheet issue(s).")
+        elif self._seller_warning_count("Working"):
+            count = self._seller_warning_count("Working")
+            self.status_var.set(f"Home metrics refreshed. {count} working seller sheet(s) need values.")
         elif archived_count:
             self.status_var.set(f"Home metrics refreshed. Archived {archived_count} paid received sheet(s).")
         else:
@@ -5983,6 +6085,9 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(f"Startup sheet refresh finished with {len(errors)} issue(s).")
         elif refreshed_google_sheets:
             self.status_var.set(f"Sheet lists loaded. Refreshed {refreshed_google_sheets} Google Sheet cache(s).")
+        elif self._seller_warning_count("Working"):
+            count = self._seller_warning_count("Working")
+            self.status_var.set(f"Sheet lists loaded. {count} working seller sheet(s) need values.")
         else:
             self.status_var.set("Sheet lists loaded.")
         record_performance_event(
@@ -6073,6 +6178,16 @@ class CardPipelineApp(tk.Tk):
         if has_tracking or received:
             return "Awaiting Receive"
         return "Awaiting tracking"
+
+    def _seller_warning_count(self, stage: str = "") -> int:
+        count = 0
+        for key, summary in getattr(self, "home_sheet_summaries", {}).items():
+            kind, _name = self._split_home_sheet_key(key)
+            if stage and kind != stage:
+                continue
+            if str(summary.get("seller_payout_warning") or "").strip():
+                count += 1
+        return count
 
     def _enrich_home_seller_payout_summary(self, path: Path, marker: dict[str, object], summary: dict[str, object]) -> dict[str, object]:
         enriched = dict(summary)
@@ -6570,6 +6685,8 @@ class CardPipelineApp(tk.Tk):
                 return None
             return max(0.0, round(decision.payout - (decision.source_value * deduction), 2))
         if rate is not None:
+            if not getattr(decision, "accepted", False):
+                return None
             return round(decision.source_value * rate, 2)
         return None
 
@@ -6961,12 +7078,20 @@ class CardPipelineApp(tk.Tk):
             person = str(marker.get("assigned_person") or "").strip()
             display_name = name
             realized_profit_total = self._realized_profit_totals_by_person_sheet().get((person.lower(), Path(name).name.lower()), 0.0)
-        balance, basis = self._active_payout_balance(
-            person,
-            float(summary.get("purchase_total") or 0.0),
-            float(summary.get("estimated_payout_total") or 0.0),
-            realized_profit_total=realized_profit_total,
-        )
+        payout_item = self._payout_item_for_key(key)
+        payable = bool(payout_item.get("payable", True)) if payout_item else True
+        if payout_item:
+            balance = float(payout_item.get("payout_balance") or 0.0)
+            basis = str(payout_item.get("payout_basis") or "")
+            status = str(payout_item.get("status") or "")
+        else:
+            balance, basis = self._active_payout_balance(
+                person,
+                float(summary.get("purchase_total") or 0.0),
+                float(summary.get("estimated_payout_total") or 0.0),
+                realized_profit_total=realized_profit_total,
+            )
+            status = ""
         paid_var = tk.BooleanVar(value=bool(marker.get("paid")))
         person_var = tk.StringVar(value=str(marker.get("assigned_person") or "").strip())
 
@@ -6980,12 +7105,16 @@ class CardPipelineApp(tk.Tk):
         frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text=display_name, style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
-        ttk.Label(frame, text=f"{kind} | Balance: {format_money(balance)} | {basis}", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        subtitle = f"{kind} | Balance: {format_money(balance)} | {basis}"
+        if status and status not in {"Paid", "Unpaid", "Sold"}:
+            subtitle = f"{subtitle} | {status}"
+        ttk.Label(frame, text=subtitle, style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
         ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
         person_combo.grid(row=2, column=1, sticky="ew", pady=(0, 10))
         self._bind_person_autocomplete(person_combo)
-        ttk.Checkbutton(frame, text="Paid", variable=paid_var, style="Panel.TCheckbutton").grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        paid_state = tk.NORMAL if payable or bool(marker.get("paid")) else tk.DISABLED
+        ttk.Checkbutton(frame, text="Paid", variable=paid_var, state=paid_state, style="Panel.TCheckbutton").grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 14))
         buttons = ttk.Frame(frame, style="Panel.TFrame")
         buttons.grid(row=4, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
@@ -7001,10 +7130,20 @@ class CardPipelineApp(tk.Tk):
         y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
         popup.geometry(f"+{x}+{y}")
 
+    def _payout_item_for_key(self, key: str) -> dict[str, object] | None:
+        for item in self._payout_sheet_items():
+            if str(item.get("key") or "") == key:
+                return item
+        return None
+
     def save_payout_sheet_marker(self, key: str, person: str, paid: bool, popup: tk.Toplevel | None = None) -> None:
         marker = dict(self.home_sheet_markers.get(key, {}))
         kind, _name = self._split_home_sheet_key(key)
         summary = self.home_sheet_summaries.get(key, {})
+        payout_item = self._payout_item_for_key(key)
+        if paid and payout_item and not bool(payout_item.get("payable", True)):
+            messagebox.showinfo("Payout not ready", str(payout_item.get("status") or "This seller payout is still waiting on required values."))
+            return
         marker["assigned_person"] = person.strip()
         marker["paid"] = bool(paid)
         marker["all_received"] = bool(marker.get("all_received") or summary.get("all_received") or kind == "Received")
@@ -7026,6 +7165,10 @@ class CardPipelineApp(tk.Tk):
         name = str(self.home_sheet_list.get(selected[0]))
         key = self._home_sheet_key(kind, name)
         self.home_selected_sheet_key = key
+        summary = self.home_sheet_summaries.get(key, {})
+        warning = str(summary.get("seller_payout_warning") or "").strip()
+        if warning:
+            self.status_var.set(warning)
 
     def _show_home_sheet_context_menu(self, event) -> str:
         if not hasattr(self, "home_sheet_list"):
@@ -7200,12 +7343,29 @@ class CardPipelineApp(tk.Tk):
         existing_marker = dict(self.home_sheet_markers.get(self.home_selected_sheet_key, {}))
         incoming_proper = bool(marker.get("incoming_proper"))
         old_assigned_person = str(existing_marker.get("assigned_person") or "").strip()
-        marker = {
-            "paid": bool(existing_marker.get("paid")),
-            "tracking_number": str(marker.get("tracking_number") or "").strip(),
-            "all_received": bool(marker.get("all_received")),
-            "assigned_person": str(marker.get("assigned_person") or "").strip(),
-        }
+        updated_marker = dict(existing_marker)
+        updated_marker["paid"] = bool(existing_marker.get("paid"))
+        updated_marker["tracking_number"] = str(marker.get("tracking_number") or "").strip()
+        updated_marker["all_received"] = bool(marker.get("all_received"))
+        updated_marker["assigned_person"] = str(marker.get("assigned_person") or "").strip()
+        if bool(updated_marker.get("seller_terms_applied") or updated_marker.get("seller_sheet_type")):
+            sheet_type = str(updated_marker.get("seller_sheet_type") or "").strip()
+            assigned_person = str(updated_marker.get("assigned_person") or "").strip()
+            if not assigned_person or not sheet_type:
+                messagebox.showinfo("Seller terms required", "Network Mode seller sheets need an assigned person and Sheet Type.")
+                return
+            if assigned_person.lower() != old_assigned_person.lower():
+                seller_term = self._seller_terms_match(assigned_person, sheet_type)
+                if not seller_term:
+                    messagebox.showinfo(
+                        "People Rule missing",
+                        f"No People Rule was found for {assigned_person} / {sheet_type}. Update People Rules before changing this seller sheet.",
+                    )
+                    return
+                updated_marker["seller_terms_applied"] = True
+                updated_marker["seller_rate"] = seller_term.get("rate")
+                updated_marker["seller_deduction"] = seller_term.get("deduction")
+        marker = updated_marker
         key = self.home_selected_sheet_key
         moved = False
         inventory_rows_added = 0
@@ -8604,6 +8764,66 @@ class CardPipelineApp(tk.Tk):
             return
         self.comp_output_saved = True
         self.status_var.set(f"Saved {path}")
+
+    def _marker_for_sheet_name(self, sheet_name: str, stages: tuple[str, ...] = ("Working", "Incoming", "Received")) -> tuple[str, dict[str, object]]:
+        source_name = Path(str(sheet_name or "")).name
+        if not source_name:
+            return "", {}
+        for stage in stages:
+            key = self._home_sheet_key(stage, source_name)
+            marker = self.home_sheet_markers.get(key, {})
+            if marker:
+                return key, marker
+        source_key = source_name.lower()
+        for key, marker in self.home_sheet_markers.items():
+            stage, name = self._split_home_sheet_key(key)
+            if stage in stages and Path(name).name.lower() == source_key:
+                return key, marker
+        return "", {}
+
+    def _apply_seller_terms_to_rows_for_marker(self, rows: list[WorkbookRow], marker: dict[str, object]) -> int:
+        term = self._seller_term_for_marker(marker)
+        if not term:
+            return 0
+        sheet_type = str(term.get("sheet_type") or "").strip()
+        rate = self._seller_terms_rate(term.get("rate"))
+        deduction = self._seller_terms_rate(term.get("deduction"))
+        changed = 0
+        for row in rows:
+            seller_price = (
+                self._seller_terms_company_price(row, sheet_type, deduction=deduction)
+                if deduction is not None
+                else self._seller_terms_company_price(row, sheet_type, rate=rate)
+            )
+            if seller_price is None:
+                continue
+            if row.existing_value != seller_price:
+                row.existing_value = seller_price
+                changed += 1
+        return changed
+
+    def save_comp_to_source_sheet(self) -> None:
+        if not self.state.rows:
+            messagebox.showinfo("No rows", "Load a working sheet before saving back to its source.")
+            return
+        name = self.selected_working_sheet.get().strip() if hasattr(self, "selected_working_sheet") else ""
+        path = self.working_sheet_paths.get(name) if name else None
+        if not path:
+            messagebox.showinfo("No source sheet", "Choose and load a working sheet before saving back to its source.")
+            return
+        key, marker = self._marker_for_sheet_name(path.name, ("Working",))
+        seller_updates = self._apply_seller_terms_to_rows_for_marker(self.state.rows, marker)
+        try:
+            with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
+                write_working_sheet(path, self.state.rows, self.row_sources)
+        except Exception as error:
+            messagebox.showerror("Save failed", str(error))
+            return
+        self.comp_output_saved = True
+        self._refresh_table(schedule_recommendations=False)
+        self.refresh_home()
+        suffix = f" Seller prices updated on {seller_updates} row(s)." if key and seller_updates else ""
+        self.status_var.set(f"Saved current comp rows back to {path.name}.{suffix}")
 
     def save_working_sheet(self) -> None:
         if not self.intake_rows:
