@@ -48,6 +48,7 @@ CERT_HEADERS = ("certificationnumber", "certnumber", "cert", "certification", "c
 GRADER_HEADERS = ("company", "gradingcompany", "grader", "gradingco", "gradingcompanyname")
 CARD_HEADERS = ("carddescription", "card", "description", "title", "cardtitle", "item", "itemtitle")
 SPORT_HEADERS = ("sport", "sports", "category", "cardcategory", "assignmentcategory")
+DATE_HEADERS = ("date", "dateadded", "createddate", "receiveddate", "purchasedate")
 PURCHASE_PRICE_HEADERS = ("purchaseprice", "purchase", "price", "cost", "buyprice", "paid")
 CARD_LADDER_VALUE_HEADERS = (
     "cardladdervalue",
@@ -63,6 +64,8 @@ COMPS_AVERAGE_HEADERS = (
     "comp",
     "compsvalue",
     "compvalue",
+    "compprice",
+    "compsprice",
     "compsavg",
     "compavg",
     "averagecomp",
@@ -106,6 +109,7 @@ SIMPLE_HEADER_ALIASES = (
     + GRADER_HEADERS
     + CARD_HEADERS
     + SPORT_HEADERS
+    + DATE_HEADERS
     + PURCHASE_PRICE_HEADERS
     + CARD_LADDER_VALUE_HEADERS
     + COMPS_AVERAGE_HEADERS
@@ -158,15 +162,21 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
     try:
         sheet = workbook[sheet_name] if sheet_name else workbook[workbook.sheetnames[0]]
         rows: list[dict[str, Any]] = []
-        has_header = _looks_like_simple_header(sheet)
-        headers = _header_map_for_row(sheet, 1) if has_header else {}
-        start_row = 2 if has_header else 1
+        header_row = _simple_header_row(sheet)
+        has_header = bool(header_row)
+        headers = _header_map_for_row(sheet, header_row or 1) if has_header else {}
+        start_row = (header_row or 0) + 1 if has_header else 1
+        cert_fallback = None if has_header else 1
+        card_fallback = None if has_header else 2
+        purchase_fallback = None if has_header else 3
+        source_fallback = None if has_header else 4
         for row_index in range(start_row, _sheet_max_row(sheet) + 1):
-            cert = normalize_cert(_cell_by_header(sheet, row_index, headers, CERT_HEADERS, 1))
+            date_added = clean_part(_cell_by_header(sheet, row_index, headers, DATE_HEADERS, None))
+            cert = normalize_cert(_cell_by_header(sheet, row_index, headers, CERT_HEADERS, cert_fallback))
             grader = normalize_grader(_cell_by_header(sheet, row_index, headers, GRADER_HEADERS, None))
-            card = clean_part(_cell_by_header(sheet, row_index, headers, CARD_HEADERS, 2))
+            card = clean_part(_cell_by_header(sheet, row_index, headers, CARD_HEADERS, card_fallback))
             sport = clean_part(_cell_by_header(sheet, row_index, headers, SPORT_HEADERS, None))
-            purchase_price = parse_money(_cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, 3))
+            purchase_price = parse_money(_cell_by_header(sheet, row_index, headers, PURCHASE_PRICE_HEADERS, purchase_fallback))
             card_ladder_value = parse_money(_cell_by_header(sheet, row_index, headers, CARD_LADDER_VALUE_HEADERS, None))
             comps_average = parse_money(_cell_by_header(sheet, row_index, headers, COMPS_AVERAGE_HEADERS, None))
             cy_value = parse_money(_cell_by_header(sheet, row_index, headers, CY_VALUE_HEADERS, None))
@@ -176,7 +186,7 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
             estimated_payout = parse_money(_cell_by_header(sheet, row_index, headers, ESTIMATED_PAYOUT_HEADERS, None))
             status = clean_part(_cell_by_header(sheet, row_index, headers, STATUS_HEADERS, None))
             notes = clean_part(_cell_by_header(sheet, row_index, headers, NOTES_HEADERS, None))
-            source = clean_part(_cell_by_header(sheet, row_index, headers, SOURCE_HEADERS, None if has_header else 4))
+            source = clean_part(_cell_by_header(sheet, row_index, headers, SOURCE_HEADERS, source_fallback))
             if not cert and not card and purchase_price is None:
                 continue
             grader = grader or infer_grader(card)
@@ -195,6 +205,7 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
                     "best_company": best_company,
                     "estimated_payout": estimated_payout,
                     "source": source or f"{path.name}:{row_index}",
+                    "date_added": date_added,
                     "status": status,
                     "notes": notes or _setup_notes(cert, card, grader),
                 }
@@ -967,11 +978,47 @@ def clean_part(value: Any) -> str:
 
 
 def _looks_like_simple_header(sheet) -> bool:
-    headers = _header_map_for_row(sheet, 1) if _sheet_max_row(sheet) else {}
-    if any(alias in headers for alias in SIMPLE_HEADER_ALIASES):
-        return True
-    first = " ".join(clean_part(sheet.cell(1, col).value).lower() for col in range(1, min(_sheet_max_column(sheet), 5) + 1))
+    return _simple_header_row(sheet) is not None
+
+
+def _simple_header_row(sheet) -> int | None:
+    best_row = None
+    best_score = 0
+    for row_index in range(1, min(_sheet_max_row(sheet), 10) + 1):
+        headers = _header_map_for_row(sheet, row_index)
+        score = _simple_header_score(headers)
+        if score > best_score:
+            best_row = row_index
+            best_score = score
+    if best_row and best_score >= 2:
+        return best_row
+    if best_row and best_score >= 1:
+        first = " ".join(clean_part(sheet.cell(best_row, col).value).lower() for col in range(1, min(_sheet_max_column(sheet), 8) + 1))
+        if any(token in first for token in ("cert", "card", "description", "purchase", "price", "comp", "ladder", "date")):
+            return best_row
+    first = " ".join(clean_part(sheet.cell(1, col).value).lower() for col in range(1, min(_sheet_max_column(sheet), 8) + 1))
     return any(token in first for token in ("cert", "card", "description", "purchase", "price", "comp", "ladder"))
+
+
+def _simple_header_score(headers: dict[str, int]) -> int:
+    groups = (
+        CERT_HEADERS,
+        GRADER_HEADERS,
+        CARD_HEADERS,
+        SPORT_HEADERS,
+        DATE_HEADERS,
+        PURCHASE_PRICE_HEADERS,
+        CARD_LADDER_VALUE_HEADERS,
+        COMPS_AVERAGE_HEADERS,
+        CY_VALUE_HEADERS,
+        CY_CONFIDENCE_HEADERS,
+        BEST_COMPANY_HEADERS,
+        ESTIMATED_PAYOUT_HEADERS,
+        STATUS_HEADERS,
+        NOTES_HEADERS,
+        SOURCE_HEADERS,
+    )
+    return sum(1 for aliases in groups if any(alias in headers for alias in aliases))
 
 
 def _cert_column(sheet) -> int | None:

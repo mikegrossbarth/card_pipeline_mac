@@ -178,6 +178,40 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
             self.assertEqual(rows[0]["cy_value"], 19.30)
             self.assertEqual(rows[0]["cy_confidence"], 4)
 
+    def test_sheet_loader_uses_headers_when_date_column_shifts_values(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "shifted.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Date", "Cert", "Grader", "Card", "Comp Value", "Purchase Price", "CL Value"])
+            sheet.append(["2026-06-24", "137915162", "PSA", "Test Card PSA 10", 120, 45, 150])
+            workbook.save(path)
+
+            rows = read_simple_spreadsheet(path)
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["cert_number"], "137915162")
+            self.assertEqual(rows[0]["purchase_price"], 45)
+            self.assertEqual(rows[0]["card_ladder_comps_average"], 120)
+            self.assertEqual(rows[0]["card_ladder_value"], 150)
+            self.assertEqual(rows[0]["date_added"], "2026-06-24")
+
+    def test_sheet_loader_detects_header_row_below_title_rows(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "title-row.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Network mode test upload"])
+            sheet.append(["Date", "Cert", "Grader", "Card", "Comps", "Purchase"])
+            sheet.append(["2026-06-24", "22222222", "PSA", "Another Test Card PSA 9", 80, 25])
+            workbook.save(path)
+
+            rows = read_simple_spreadsheet(path)
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["purchase_price"], 25)
+            self.assertEqual(rows[0]["card_ladder_comps_average"], 80)
+
     def test_courtyard_weekly_sheet_uses_cy_ingest_format(self) -> None:
         with TemporaryDirectory() as tmp:
             company_dir = Path(tmp) / "COMPANY SHEETS"
