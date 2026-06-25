@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -22,10 +23,44 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 _ENV_LOADED = False
 LAST_OAUTH_DIAGNOSTICS: dict[str, Any] = {}
+_SSL_CONTEXT: ssl.SSLContext | None = None
 
 
 class GoogleSheetsAuthError(RuntimeError):
     pass
+
+
+def google_ssl_context() -> ssl.SSLContext:
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT is not None:
+        return _SSL_CONTEXT
+    cafile = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or ""
+    if not cafile:
+        try:
+            import certifi
+
+            cafile = certifi.where()
+            if cafile:
+                os.environ.setdefault("SSL_CERT_FILE", cafile)
+                os.environ.setdefault("REQUESTS_CA_BUNDLE", cafile)
+        except Exception:
+            cafile = ""
+    LAST_OAUTH_DIAGNOSTICS["ssl_cert_file"] = cafile or "system default"
+    try:
+        _SSL_CONTEXT = ssl.create_default_context(cafile=cafile or None)
+    except Exception:
+        _SSL_CONTEXT = ssl.create_default_context()
+    return _SSL_CONTEXT
+
+
+def google_ssl_error_message(error: BaseException) -> str:
+    LAST_OAUTH_DIAGNOSTICS["ssl_error"] = str(error)
+    LAST_OAUTH_DIAGNOSTICS.setdefault("ssl_cert_file", os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or "system default")
+    return (
+        "Google HTTPS certificate verification failed: unable to get local issuer certificate. "
+        "On macOS, run Install Certificates.command for the Python version used by L.U.C.A.S, "
+        "then rerun install_dependencies.sh or update certifi in the app environment."
+    )
 
 
 def authorize_google_sheets(interactive: bool = True) -> dict[str, Any]:
@@ -354,7 +389,7 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
 def sheets_api_json(url: str, access_token: str) -> dict[str, Any]:
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {access_token}"})
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=20, context=google_ssl_context()) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         text = error.read().decode("utf-8", errors="replace")
@@ -363,6 +398,12 @@ def sheets_api_json(url: str, access_token: str) -> dict[str, Any]:
                 f"Google Sheets authorization failed ({error.code}). Connect Google again or confirm this account can open the sheet."
             ) from error
         raise ValueError(f"Google Sheets API failed ({error.code}): {text[:200]}") from error
+    except ssl.SSLCertVerificationError as error:
+        raise GoogleSheetsAuthError(google_ssl_error_message(error)) from error
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, ssl.SSLCertVerificationError):
+            raise GoogleSheetsAuthError(google_ssl_error_message(error.reason)) from error
+        raise
 
 
 def read_sheet_values(spreadsheet_id: str, title: str, access_token: str) -> list[list[Any]]:
@@ -380,9 +421,19 @@ def post_form(url: str, payload: dict[str, str]) -> dict[str, Any]:
     request = urllib.request.Request(url, data=data, method="POST")
     request.add_header("Content-Type", "application/x-www-form-urlencoded")
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=30, context=google_ssl_context()) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         text = error.read().decode("utf-8", errors="replace")
         LAST_OAUTH_DIAGNOSTICS["error"] = f"Google OAuth token request failed ({error.code}): {text[:220]}"
         raise GoogleSheetsAuthError(f"Google OAuth token request failed ({error.code}): {text[:220]}") from error
+    except ssl.SSLCertVerificationError as error:
+        message = google_ssl_error_message(error)
+        LAST_OAUTH_DIAGNOSTICS["error"] = message
+        raise GoogleSheetsAuthError(message) from error
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, ssl.SSLCertVerificationError):
+            message = google_ssl_error_message(error.reason)
+            LAST_OAUTH_DIAGNOSTICS["error"] = message
+            raise GoogleSheetsAuthError(message) from error
+        raise

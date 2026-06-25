@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import sys
 import threading
@@ -66,6 +67,41 @@ import multi_card_extraction
 
 
 class SharedStateTests(unittest.TestCase):
+    def test_google_ssl_context_uses_certifi_when_no_cert_env_is_set(self) -> None:
+        with TemporaryDirectory() as tmp:
+            cafile = Path(tmp) / "cacert.pem"
+            cafile.write_text("", encoding="utf-8")
+            fake_certifi = types.SimpleNamespace(where=lambda: str(cafile))
+            old_context = google_sheets_import._SSL_CONTEXT
+            old_diagnostics = dict(google_sheets_import.LAST_OAUTH_DIAGNOSTICS)
+            old_ssl_cert = os.environ.pop("SSL_CERT_FILE", None)
+            old_requests_bundle = os.environ.pop("REQUESTS_CA_BUNDLE", None)
+            try:
+                google_sheets_import._SSL_CONTEXT = None
+                sentinel_context = object()
+                with patch.dict(sys.modules, {"certifi": fake_certifi}), patch(
+                    "google_sheets_import.ssl.create_default_context",
+                    return_value=sentinel_context,
+                ) as create_context:
+                    context = google_sheets_import.google_ssl_context()
+                self.assertIs(context, sentinel_context)
+                create_context.assert_called_once_with(cafile=str(cafile))
+                self.assertEqual(os.environ.get("SSL_CERT_FILE"), str(cafile))
+                self.assertEqual(os.environ.get("REQUESTS_CA_BUNDLE"), str(cafile))
+                self.assertEqual(google_sheets_import.LAST_OAUTH_DIAGNOSTICS["ssl_cert_file"], str(cafile))
+            finally:
+                google_sheets_import._SSL_CONTEXT = old_context
+                google_sheets_import.LAST_OAUTH_DIAGNOSTICS.clear()
+                google_sheets_import.LAST_OAUTH_DIAGNOSTICS.update(old_diagnostics)
+                if old_ssl_cert is not None:
+                    os.environ["SSL_CERT_FILE"] = old_ssl_cert
+                else:
+                    os.environ.pop("SSL_CERT_FILE", None)
+                if old_requests_bundle is not None:
+                    os.environ["REQUESTS_CA_BUNDLE"] = old_requests_bundle
+                else:
+                    os.environ.pop("REQUESTS_CA_BUNDLE", None)
+
     def test_shared_lock_serializes_concurrent_writers(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

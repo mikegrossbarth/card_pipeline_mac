@@ -1,3 +1,4 @@
+certifi
 google-genai
 openpyxl
 pillow
