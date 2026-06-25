@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="560" viewBox="0 0 1120 560" role="img" aria-label="Network Mode and People Rules payout flow">
+  <rect width="1120" height="560" fill="#f8fafc"/>
+  <text x="40" y="48" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700" fill="#111827">Network Mode seller pricing</text>
+  <text x="40" y="78" font-family="Segoe UI, Arial, sans-serif" font-size="15" fill="#4b5563">People Rules decide how Create fills Purchase for seller sheets.</text>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#2563eb"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#94a3b8" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <g filter="url(#shadow)">
+      <rect x="55" y="130" width="215" height="110" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="335" y="130" width="230" height="110" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="635" y="130" width="230" height="110" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="905" y="130" width="170" height="110" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="220" y="330" width="285" height="140" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="615" y="330" width="285" height="140" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    </g>
+    <text x="162" y="166" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Create</text>
+    <text x="162" y="191" text-anchor="middle" font-size="13" fill="#4b5563">Network Mode on</text>
+    <text x="162" y="211" text-anchor="middle" font-size="13" fill="#4b5563">Seller + Sheet Type selected</text>
+    <text x="450" y="166" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">People Rules</text>
+    <text x="450" y="191" text-anchor="middle" font-size="13" fill="#4b5563">Seller Rate % or Deduction %</text>
+    <text x="450" y="211" text-anchor="middle" font-size="13" fill="#4b5563">numbers only, like 90 or 10.5</text>
+    <text x="750" y="166" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Company Rules</text>
+    <text x="750" y="191" text-anchor="middle" font-size="13" fill="#4b5563">Sheet Type chooses value source,</text>
+    <text x="750" y="211" text-anchor="middle" font-size="13" fill="#4b5563">acceptance rules, and payout tiers</text>
+    <text x="990" y="166" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Purchase</text>
+    <text x="990" y="191" text-anchor="middle" font-size="13" fill="#4b5563">written back to</text>
+    <text x="990" y="211" text-anchor="middle" font-size="13" fill="#4b5563">the seller sheet</text>
+    <text x="362" y="365" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Seller Rate %</text>
+    <text x="362" y="393" text-anchor="middle" font-size="14" fill="#111827">Purchase = source value x seller rate</text>
+    <text x="362" y="421" text-anchor="middle" font-size="13" fill="#4b5563">Example: comps 100, Seller Rate % 90</text>
+    <text x="362" y="443" text-anchor="middle" font-size="13" fill="#4b5563">Purchase = 90</text>
+    <text x="757" y="365" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Deduction %</text>
+    <text x="757" y="393" text-anchor="middle" font-size="14" fill="#111827">Purchase = company payout - deduction</text>
+    <text x="757" y="421" text-anchor="middle" font-size="13" fill="#4b5563">Example: Arena payout 95 on comps 100, Deduction % 10</text>
+    <text x="757" y="443" text-anchor="middle" font-size="13" fill="#4b5563">Purchase = 95 - 10 = 85</text>
+    <line x1="270" y1="185" x2="325" y2="185" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
+    <line x1="565" y1="185" x2="625" y2="185" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
+    <line x1="865" y1="185" x2="895" y2="185" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M450 240 C420 278 390 300 370 320" fill="none" stroke="#0f766e" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M750 240 C750 278 752 300 756 320" fill="none" stroke="#0f766e" stroke-width="3" marker-end="url(#arrow)"/>
+  </g>
+</svg>

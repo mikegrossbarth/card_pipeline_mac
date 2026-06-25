@@ -19,7 +19,7 @@ This guide is written for both the Windows and Mac repositories. Platform differ
 9. [Payouts/Tabs](#payoutstabs)
 10. [Inventory](#inventory)
 11. [Profit](#profit)
-12. [Network Mode And Seller Terms](#network-mode-and-seller-terms)
+12. [Network Mode And People Rules](#network-mode-and-people-rules)
 13. [Google Sheets And Google Keep Sources](#google-sheets-and-google-keep-sources)
 14. [Company Sheets](#company-sheets)
 15. [Mac-Only Mobile Companion](#mac-only-mobile-companion)
@@ -218,7 +218,7 @@ Use this tab to:
 - Load received sheets for assignment review.
 - Re-run/update best company and payout.
 - Open **Assignment Rules**.
-- Sync Google Keep note sources.
+- Open saved Google Keep note sources from each company's **Rule Source** panel with **Sync Google Keep**.
 - Review unassigned players.
 
 ### Explain Assignment
@@ -331,9 +331,11 @@ Expenses can be:
 
 Expenses deduct from profit. Expenses cannot be refunded to inventory, but they can be deleted.
 
-## Network Mode And Seller Terms
+## Network Mode And People Rules
 
 Network Mode is for buying from sellers at fixed terms.
+
+![Network Mode seller pricing](images/network-mode-people-rules.svg)
 
 When Network Mode is off:
 
@@ -344,7 +346,8 @@ When Network Mode is on:
 
 - Create exposes Seller and Sheet Type.
 - Seller terms can auto-fill purchase prices.
-- Seller terms are stored in `ASSIGNMENT RULES/seller_terms.csv`.
+- Seller terms are edited from **Assignment Rules -> People Rules**.
+- Seller terms are stored in `ASSIGNMENT RULES/seller_terms.csv` for the shared pipeline.
 
 Seller terms columns:
 
@@ -352,16 +355,36 @@ Seller terms columns:
 Seller, Sheet Type, Seller Rate, Deduction
 ```
 
+The People Rules popup labels the percentage fields as **Seller Rate %** and **Deduction %**. Type numbers only, without a percent sign. Decimals are allowed.
+
+Examples:
+
+```text
+90
+92.5
+10
+10.5
+```
+
+Do not type:
+
+```text
+90%
+10%
+ten
+```
+
 How seller terms work:
 
 - `Sheet Type` must match an active assignment company.
 - The matching assignment company determines the value source and rules.
-- `Seller Rate` pays the seller that percentage of the matching value.
-- `Deduction` follows that company payout logic and subtracts the deduction from the payout rate.
+- `Seller Rate %` pays the seller that percentage of the matching company source value. Example: source value `100` and Seller Rate `90` writes Purchase `90`.
+- `Deduction %` follows the Sheet Type company's payout logic, then subtracts that percentage of the company source value. Example: company payout `95` on source value `100` and Deduction `10` writes Purchase `85`.
+- Use either `Seller Rate %` or `Deduction %` on a row, not both.
 - If Seller or Sheet Type is blank, purchase prices stay normal.
 - If terms are invalid, save stops with a clear prompt.
 
-Use **Seller Terms Health** in Assignment Rules to find duplicate rows, inactive companies, missing companies, bad rates, and parsed terms.
+Use **People Rules Health** in Assignment Rules to find duplicate rows, inactive companies, missing companies, bad rates, and parsed terms.
 
 ## Google Sheets And Google Keep Sources
 
@@ -388,21 +411,23 @@ If Google Sheets cannot be read:
 
 ### Google Keep
 
-Google Keep notes are synced by opening the saved note URLs so the Chrome extension can cache note text locally.
+Google Keep notes are synced by opening saved note URLs so the Chrome extension can cache note text locally. Sync is per company, because different companies can use different Keep notes.
 
 Use:
 
 ```text
-Assignment -> Sync Google Keep
+Assignment Rules -> select company -> Rule Source -> Sync Google Keep
 ```
 
 If rules still look stale:
 
 1. Confirm Chrome is open.
 2. Confirm the Card Ladder/LUCAS extension is loaded.
-3. Click **Sync Google Keep**.
-4. Wait for notes to load.
-5. Refresh Assignment Rules or run System Health.
+3. Open **Assignment Rules**.
+4. Select the company whose Keep note needs refreshing.
+5. Click **Sync Google Keep** in that company's Rule Source panel.
+6. Wait for notes to load.
+7. Save/reload Assignment Rules or run System Health.
 
 ## Company Sheets
 
@@ -425,6 +450,14 @@ Grader | Cert | Description | Grade | Purchase | Estimate | Confidence
 ```
 
 LUCAS tracking/profit columns are kept to the right as hidden columns so profit backfill, source tracking, refunds, and dedupe still work.
+
+Fanatics company sheets use the Fanatics-facing front-column format:
+
+```text
+Category | Card | Grade | Cert # | CL Value | Payout
+```
+
+LUCAS tracking/profit columns trail after those visible fields so profit backfill, source tracking, refunds, and dedupe still work. New Fanatics weekly tabs use this format automatically, and older Fanatics weekly tabs are migrated when LUCAS touches the workbook.
 
 Manual edits:
 
@@ -542,7 +575,7 @@ Other tips:
 - Use right-click actions instead of manually changing ledgers.
 - Use Manual Entry or Inventory -> Add Card for quick one-off cards.
 - Use Deep Sync only when external sheet edits need to be recovered.
-- Keep Assignment Rules and Seller Terms Health clean before big receive/sell sessions.
+- Keep Assignment Rules and People Rules Health clean before big receive/sell sessions.
 - Commit/push app changes before handing a build to another user.
 
 ## Platform Differences
@@ -570,6 +603,6 @@ Other tips:
 | Mark inventory sold | Inventory -> right-click -> Mark Sold |
 | Add expense | Profit -> Add Expense |
 | Refund sold card | Profit -> Sold Cards right-click -> Refund Selected |
-| Sync Google Keep notes | Assignment -> Sync Google Keep |
-| Check seller terms | Assignment Rules -> Seller Terms Health |
+| Sync Google Keep notes | Assignment Rules -> company -> Rule Source -> Sync Google Keep |
+| Check People Rules | Assignment Rules -> People Rules Health |
 | Backfill company sheets | Profit -> Deep Sync |

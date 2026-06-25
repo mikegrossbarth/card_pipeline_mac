@@ -124,7 +124,9 @@ On macOS, L.U.C.A.S can submit certs to the local CourtYard app and fill `CY val
 
 Use the `Receive` tab for physically receiving cards and source matching. Use the `Assignment` tab for pure assignment review and fallback assignment work.
 
-Assignment companies are local in `assignment_companies.json`. The manager supports manual rules, local files, Google Keep exports, workbook/CSV files, Google Sheets through OAuth, manual payout tiers, payout files, and linked `Payouts` tabs.
+Assignment companies are local in `assignment_companies.json`. The manager supports manual rules, local files, Google Keep exports, workbook/CSV files, Google Sheets through OAuth, manual payout tiers, payout files, and linked `Payouts` tabs. Google Keep note sources are synced per company from the selected company's Rule Source panel with `Sync Google Keep`.
+
+Network Mode exposes seller terms in Create and is configured through `Assignment Rules -> People Rules`. People Rules stores shared seller rows in `ASSIGNMENT RULES/seller_terms.csv`. The UI labels `Seller Rate %` and `Deduction %` as percentage fields and accepts numbers only, for example `90`, `92.5`, `10`, or `10.5`, without percent signs. `Seller Rate %` pays the seller a flat percentage of the selected Sheet Type company's source value. `Deduction %` follows that Sheet Type company's payout logic and subtracts the deduction from the company payout.
 
 Assignment can use comps, Card Ladder value, or imported `CY Estimate` as a company value source. If a company requires Card Ladder value or CY Estimate and the row is missing that value, the company is ignored.
 
@@ -145,7 +147,7 @@ If no company can take a priced row, `Best Company` shows `NOBODY TAKES`.
 
 ## Payouts And Profit
 
-Use `Payouts/Tabs` to track active balances by assigned person and mark person-level balances paid. Company sheets are stored as one workbook per company under `COMPANY SHEETS/<Company>/<Company>.xlsx`, with weekly tabs named `Week of YYYY-MM-DD`.
+Use `Payouts/Tabs` to track active balances by assigned person and mark person-level balances paid. Company sheets are stored as one workbook per company under `COMPANY SHEETS/<Company>/<Company>.xlsx`, with weekly tabs named `Week of YYYY-MM-DD`. CourtYard/CY weekly tabs use CY-compatible front columns, and Fanatics weekly tabs use `Category`, `Card`, `Grade`, `Cert #`, `CL Value`, and `Payout` up front with L.U.C.A.S tracking columns trailing to the right.
 
 Use `Profit` to review sold cards and sold sheets. The Profit tab can filter by assigned person, shows a daily profit line chart, and can toggle between individual sold-card rows and grouped sold-sheet summaries.
 

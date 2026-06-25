@@ -284,7 +284,50 @@ In L.U.C.A.S:
 6. choose a payout source
 7. save the company
 
+For Google Keep rule sources, sync is done per company:
+
+```text
+Assignment Rules -> select company -> Rule Source -> Sync Google Keep
+```
+
+Use this when a Keep note changed and L.U.C.A.S needs the Chrome extension to refresh its cached note text.
+
 The app saves company setup locally in `assignment_companies.json`.
+
+### Optional: Set Up People Rules For Network Mode
+
+Use this only if the computer will buy cards from sellers with preset terms.
+
+Open:
+
+```text
+Assignment Rules -> People Rules
+```
+
+People Rules writes shared seller terms to:
+
+```text
+CARD_PIPELINE/ASSIGNMENT RULES/seller_terms.csv
+```
+
+Each row needs:
+
+```text
+Seller, Sheet Type, Seller Rate, Deduction
+```
+
+In the People Rules popup, the percentage fields are labeled **Seller Rate %** and **Deduction %**. Type numbers only, without `%`. Decimals are allowed.
+
+Examples:
+
+```text
+90
+92.5
+10
+10.5
+```
+
+Use **Seller Rate %** for a flat percent of the Sheet Type company's source value. Use **Deduction %** to follow the Sheet Type company's payout logic and subtract that percentage from the company payout. Use one or the other on a row, not both.
 
 ## Step 15: Check The Full Workflow
 
@@ -295,10 +338,11 @@ Test in this order:
 3. Open `Comp` and make sure the sheet appears.
 4. Run one Card Ladder comp as a test.
 5. Open Assignment Rules and make sure companies load.
-6. Open `Assignment` and confirm best company and estimated payout can populate.
-7. Open `Receive` and test marking a row received.
-8. Open `Payouts/Tabs`.
-9. Open `Profit` after company sheets have sold rows.
+6. If Network Mode is needed, open People Rules and make sure People Rules Health is clean.
+7. Open `Assignment` and confirm best company and estimated payout can populate.
+8. Open `Receive` and test marking a row received.
+9. Open `Payouts/Tabs`.
+10. Open `Profit` after company sheets have sold rows.
 
 Do not start with a giant sheet until this small test works.
 
@@ -318,4 +362,5 @@ Do not start with a giant sheet until this small test works.
 - [ ] Google OAuth credentials are added
 - [ ] `Connect Google` has been completed
 - [ ] assignment companies are created and active
+- [ ] People Rules are configured if Network Mode seller pricing is needed
 - [ ] one small test sheet works end to end
