@@ -58,6 +58,10 @@ VALUE_SOURCE_LABELS = {
     "cy_estimate": "CY Estimate",
 }
 SELLER_TERMS_FIELDS = ("Seller", "Sheet Type", "Seller Rate", "Deduction")
+SELLER_TERMS_FIELD_LABELS = {
+    "Seller Rate": "Seller Rate %",
+    "Deduction": "Deduction %",
+}
 
 
 def build_scrollable_dialog_body(parent: tk.Misc, style_name: str, bg: str = "#121212", padding: int = 16) -> ttk.Frame:
@@ -128,6 +132,30 @@ def write_seller_terms_rows(seller_terms_path: Path, rows: list[dict[str, str]])
         writer.writeheader()
         for row in rows:
             writer.writerow({field: str(row.get(field) or "").strip() for field in SELLER_TERMS_FIELDS})
+
+
+def seller_terms_percent_display(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    has_percent = raw.endswith("%")
+    text = raw[:-1].strip() if has_percent else raw
+    try:
+        numeric = float(text)
+    except ValueError:
+        return raw
+    if not has_percent and 0 <= numeric <= 1:
+        numeric *= 100
+    return f"{numeric:g}"
+
+
+def seller_terms_percent_input_is_number(value: object) -> bool:
+    raw = str(value or "").strip()
+    if not raw:
+        return True
+    if "%" in raw:
+        return False
+    return bool(re.fullmatch(r"\d+(?:\.\d+)?", raw))
 
 
 def seller_terms_rate(value: object) -> float | None:
@@ -1384,7 +1412,7 @@ class PeopleRulesDialog(tk.Toplevel):
         table.grid(row=2, column=0, sticky="nsew")
         shell.rowconfigure(2, weight=1)
         self.rows_frame = table
-        headings = ("Seller", "Sheet Type", "Seller Rate", "Deduction", "")
+        headings = tuple(SELLER_TERMS_FIELD_LABELS.get(field, field) for field in SELLER_TERMS_FIELDS) + ("",)
         widths = (26, 24, 14, 14, 10)
         for column, (heading, width) in enumerate(zip(headings, widths)):
             ttk.Label(table, text=heading, style="AssignTitle.TLabel").grid(row=0, column=column, sticky="w", padx=(0, 8), pady=(0, 8))
@@ -1410,6 +1438,8 @@ class PeopleRulesDialog(tk.Toplevel):
 
     def _add_row(self, row: dict[str, str] | None = None) -> None:
         values = {field: str((row or {}).get(field) or "") for field in SELLER_TERMS_FIELDS}
+        for field in ("Seller Rate", "Deduction"):
+            values[field] = seller_terms_percent_display(values[field])
         vars_by_field = {field: tk.StringVar(value=values[field]) for field in SELLER_TERMS_FIELDS}
         self.row_vars.append(vars_by_field)
         self._render_rows()
@@ -1491,11 +1521,23 @@ class PeopleRulesDialog(tk.Toplevel):
             if row["Seller Rate"] and row["Deduction"]:
                 self.status.set(f"Row {index}: use Seller Rate or Deduction, not both.")
                 return None
+            if row["Seller Rate"] and not seller_terms_percent_input_is_number(row["Seller Rate"]):
+                self.status.set(f"Row {index}: Seller Rate % must be a number only.")
+                return None
+            if row["Deduction"] and not seller_terms_percent_input_is_number(row["Deduction"]):
+                self.status.set(f"Row {index}: Deduction % must be a number only.")
+                return None
             if row["Seller Rate"] and seller_terms_rate(row["Seller Rate"]) is None:
-                self.status.set(f"Row {index}: Seller Rate is invalid.")
+                self.status.set(f"Row {index}: Seller Rate % is invalid.")
                 return None
             if row["Deduction"] and seller_terms_rate(row["Deduction"]) is None:
-                self.status.set(f"Row {index}: Deduction is invalid.")
+                self.status.set(f"Row {index}: Deduction % is invalid.")
+                return None
+            if row["Seller Rate"] and (seller_terms_rate(row["Seller Rate"]) or 0) > 1:
+                self.status.set(f"Row {index}: Seller Rate % cannot be above 100.")
+                return None
+            if row["Deduction"] and (seller_terms_rate(row["Deduction"]) or 0) > 1:
+                self.status.set(f"Row {index}: Deduction % cannot be above 100.")
                 return None
             key = (row["Seller"].lower(), row["Sheet Type"].lower())
             if key in seen:
