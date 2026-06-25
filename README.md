@@ -8,6 +8,8 @@ L.U.C.A.S is a desktop workflow app for card intake, receiving, working-sheet tr
 
 For a click-by-click setup walkthrough for a brand-new Mac, start with [FIRST_RUN_SETUP.md](FIRST_RUN_SETUP.md).
 
+For a full operating manual with workflow pictures, see [docs/LUCAS_USER_GUIDE.md](docs/LUCAS_USER_GUIDE.md).
+
 ## Install
 
 1. Install Google Chrome.

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="500" viewBox="0 0 1100 500" role="img" aria-label="LUCAS tab guide">
+  <rect width="1100" height="500" fill="#f8fafc"/>
+  <text x="40" y="48" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700" fill="#111827">Main tabs</text>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <g fill="#ffffff" stroke="#cbd5e1">
+      <rect x="40" y="95" width="230" height="110" rx="10"/>
+      <rect x="305" y="95" width="230" height="110" rx="10"/>
+      <rect x="570" y="95" width="230" height="110" rx="10"/>
+      <rect x="835" y="95" width="230" height="110" rx="10"/>
+      <rect x="40" y="250" width="230" height="110" rx="10"/>
+      <rect x="305" y="250" width="230" height="110" rx="10"/>
+      <rect x="570" y="250" width="230" height="110" rx="10"/>
+      <rect x="835" y="250" width="230" height="110" rx="10"/>
+    </g>
+    <g font-size="20" font-weight="700" fill="#111827">
+      <text x="65" y="132">Home</text>
+      <text x="330" y="132">Create</text>
+      <text x="595" y="132">Comp</text>
+      <text x="860" y="132">Receive</text>
+      <text x="65" y="287">Assignment</text>
+      <text x="330" y="287">Payouts/Tabs</text>
+      <text x="595" y="287">Inventory</text>
+      <text x="860" y="287">Profit</text>
+    </g>
+    <g font-size="14" fill="#4b5563">
+      <text x="65" y="160">Move sheets, filter by person,</text>
+      <text x="65" y="181">delete/move sheet state safely.</text>
+      <text x="330" y="160">Scan/import/manual add rows,</text>
+      <text x="330" y="181">seller terms if Network Mode.</text>
+      <text x="595" y="160">Queue Card Ladder/CY comps,</text>
+      <text x="595" y="181">write results to sheets.</text>
+      <text x="860" y="160">Mark arrivals and decide</text>
+      <text x="860" y="181">company pile vs inventory.</text>
+      <text x="65" y="315">Run rules, sync Keep, inspect</text>
+      <text x="65" y="336">companies and unassigned players.</text>
+      <text x="330" y="315">See unpaid seller/team</text>
+      <text x="330" y="336">balances and mark paid.</text>
+      <text x="595" y="315">Search, sort, export, edit,</text>
+      <text x="595" y="336">move, recomp, mark sold.</text>
+      <text x="860" y="315">Sales, expenses, refunds,</text>
+      <text x="860" y="336">charts and payouts.</text>
+    </g>
+  </g>
+</svg>

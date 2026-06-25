@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1050" height="560" viewBox="0 0 1050 560" role="img" aria-label="LUCAS shared folder map">
+  <rect width="1050" height="560" fill="#f8fafc"/>
+  <text x="40" y="48" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700" fill="#111827">Shared pipeline folder</text>
+  <text x="40" y="78" font-family="Segoe UI, Arial, sans-serif" font-size="15" fill="#4b5563">Choose the WORKING SHEETS folder. LUCAS uses its parent folder as CARD_PIPELINE.</text>
+  <g font-family="Consolas, Menlo, monospace" font-size="18">
+    <rect x="40" y="115" width="970" height="390" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="75" y="155" fill="#111827">CARD_PIPELINE/</text>
+    <text x="110" y="192" fill="#2563eb">WORKING SHEETS/</text>
+    <text x="110" y="226" fill="#2563eb">INCOMING SHEETS/</text>
+    <text x="110" y="260" fill="#2563eb">RECEIVED SHEETS/</text>
+    <text x="110" y="294" fill="#2563eb">ARCHIVED SHEETS/</text>
+    <text x="110" y="328" fill="#0f766e">COMPANY SHEETS/</text>
+    <text x="110" y="362" fill="#0f766e">ASSIGNMENT RULES/</text>
+    <text x="110" y="396" fill="#7c3aed">inventory_ledger.json</text>
+    <text x="110" y="430" fill="#7c3aed">profit_ledger.json</text>
+    <text x="110" y="464" fill="#7c3aed">sheet_markers.json</text>
+    <text x="520" y="192" fill="#4b5563">active workbooks being built</text>
+    <text x="520" y="226" fill="#4b5563">submitted sheets waiting to arrive</text>
+    <text x="520" y="260" fill="#4b5563">received source sheets</text>
+    <text x="520" y="294" fill="#4b5563">old completed received sheets</text>
+    <text x="520" y="328" fill="#4b5563">weekly company tabs and sold recovery</text>
+    <text x="520" y="362" fill="#4b5563">company rules, payouts, seller terms</text>
+    <text x="520" y="396" fill="#4b5563">active person inventory</text>
+    <text x="520" y="430" fill="#4b5563">actual sold cards and expenses</text>
+    <text x="520" y="464" fill="#4b5563">sheet status, owner, seller metadata</text>
+  </g>
+</svg>

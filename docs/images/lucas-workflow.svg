@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="520" viewBox="0 0 1100 520" role="img" aria-label="LUCAS end to end workflow">
+  <rect width="1100" height="520" fill="#f8fafc"/>
+  <text x="40" y="48" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700" fill="#111827">LUCAS daily workflow</text>
+  <text x="40" y="78" font-family="Segoe UI, Arial, sans-serif" font-size="15" fill="#4b5563">Cards move left to right. Inventory and Profit are the two long-term ledgers.</text>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#2563eb"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#94a3b8" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <g filter="url(#shadow)">
+      <rect x="40" y="125" width="145" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="235" y="125" width="145" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="430" y="125" width="145" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="625" y="125" width="145" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="820" y="125" width="145" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="235" y="330" width="145" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="625" y="330" width="145" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+      <rect x="820" y="330" width="145" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    </g>
+    <text x="112" y="160" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Create</text>
+    <text x="112" y="184" text-anchor="middle" font-size="13" fill="#4b5563">scan, type, photo,</text>
+    <text x="112" y="203" text-anchor="middle" font-size="13" fill="#4b5563">or import rows</text>
+    <text x="307" y="160" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Comp</text>
+    <text x="307" y="184" text-anchor="middle" font-size="13" fill="#4b5563">Card Ladder, comps,</text>
+    <text x="307" y="203" text-anchor="middle" font-size="13" fill="#4b5563">CY values if present</text>
+    <text x="502" y="160" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Assignment</text>
+    <text x="502" y="184" text-anchor="middle" font-size="13" fill="#4b5563">rules choose best</text>
+    <text x="502" y="203" text-anchor="middle" font-size="13" fill="#4b5563">company and payout</text>
+    <text x="697" y="160" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Receive</text>
+    <text x="697" y="184" text-anchor="middle" font-size="13" fill="#4b5563">mark cards in hand</text>
+    <text x="697" y="203" text-anchor="middle" font-size="13" fill="#4b5563">and company pile</text>
+    <text x="892" y="160" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Company Sheets</text>
+    <text x="892" y="184" text-anchor="middle" font-size="13" fill="#4b5563">weekly tabs by</text>
+    <text x="892" y="203" text-anchor="middle" font-size="13" fill="#4b5563">buyer/company</text>
+    <text x="307" y="365" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Inventory</text>
+    <text x="307" y="389" text-anchor="middle" font-size="13" fill="#4b5563">received cards not</text>
+    <text x="307" y="408" text-anchor="middle" font-size="13" fill="#4b5563">sent to company</text>
+    <text x="697" y="365" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Sold Ledger</text>
+    <text x="697" y="389" text-anchor="middle" font-size="13" fill="#4b5563">actual sales, expenses,</text>
+    <text x="697" y="408" text-anchor="middle" font-size="13" fill="#4b5563">refund recovery</text>
+    <text x="892" y="365" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Profit</text>
+    <text x="892" y="389" text-anchor="middle" font-size="13" fill="#4b5563">charts, payouts,</text>
+    <text x="892" y="408" text-anchor="middle" font-size="13" fill="#4b5563">monthly/YTD totals</text>
+    <line x1="185" y1="173" x2="225" y2="173" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
+    <line x1="380" y1="173" x2="420" y2="173" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
+    <line x1="575" y1="173" x2="615" y2="173" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
+    <line x1="770" y1="173" x2="810" y2="173" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M697 221 C690 270 380 270 320 320" fill="none" stroke="#0f766e" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M380 378 C470 378 555 378 615 378" fill="none" stroke="#0f766e" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M770 378 C785 378 800 378 810 378" fill="none" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M892 221 C892 252 892 288 892 320" fill="none" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
+  </g>
+</svg>

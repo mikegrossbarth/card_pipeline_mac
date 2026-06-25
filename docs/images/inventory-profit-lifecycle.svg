@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="520" viewBox="0 0 1080 520" role="img" aria-label="Inventory and profit lifecycle">
+  <rect width="1080" height="520" fill="#f8fafc"/>
+  <text x="40" y="48" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700" fill="#111827">Inventory and profit lifecycle</text>
+  <defs>
+    <marker id="arrow2" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#0f766e"/>
+    </marker>
+  </defs>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="60" y="115" width="230" height="92" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="425" y="115" width="230" height="92" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="790" y="115" width="230" height="92" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="60" y="320" width="230" height="92" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="425" y="320" width="230" height="92" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="790" y="320" width="230" height="92" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="175" y="151" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Received Card</text>
+    <text x="175" y="177" text-anchor="middle" font-size="13" fill="#4b5563">not checked for company pile</text>
+    <text x="540" y="151" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Active Inventory</text>
+    <text x="540" y="177" text-anchor="middle" font-size="13" fill="#4b5563">owned by assigned person</text>
+    <text x="905" y="151" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Move To Company</text>
+    <text x="905" y="177" text-anchor="middle" font-size="13" fill="#4b5563">right-click when best company exists</text>
+    <text x="175" y="356" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Mark Sold</text>
+    <text x="175" y="382" text-anchor="middle" font-size="13" fill="#4b5563">sale price, buyer, optional expense</text>
+    <text x="540" y="356" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Profit Ledger</text>
+    <text x="540" y="382" text-anchor="middle" font-size="13" fill="#4b5563">actual sales minus purchases/expenses</text>
+    <text x="905" y="356" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">Refund</text>
+    <text x="905" y="382" text-anchor="middle" font-size="13" fill="#4b5563">removes sale and returns to inventory</text>
+    <line x1="290" y1="161" x2="415" y2="161" stroke="#0f766e" stroke-width="3" marker-end="url(#arrow2)"/>
+    <line x1="655" y1="161" x2="780" y2="161" stroke="#0f766e" stroke-width="3" marker-end="url(#arrow2)"/>
+    <path d="M540 207 C530 260 245 265 185 310" fill="none" stroke="#0f766e" stroke-width="3" marker-end="url(#arrow2)"/>
+    <line x1="290" y1="366" x2="415" y2="366" stroke="#0f766e" stroke-width="3" marker-end="url(#arrow2)"/>
+    <line x1="655" y1="366" x2="780" y2="366" stroke="#0f766e" stroke-width="3" marker-end="url(#arrow2)"/>
+    <path d="M905 320 C900 245 615 235 555 207" fill="none" stroke="#7c3aed" stroke-width="3" marker-end="url(#arrow2)"/>
+  </g>
+</svg>
