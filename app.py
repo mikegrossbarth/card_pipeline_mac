@@ -507,6 +507,8 @@ class CardPipelineApp(tk.Tk):
         self._tab_scroll_canvases: dict[str, tk.Canvas] = {}
         self._tab_scroll_contents: list[tk.Widget] = []
         self._tab_scroll_bound_widgets: set[str] = set()
+        self._tab_scroll_min_width = 1180
+        self._tab_scroll_min_height = 760
 
         self.events: queue.Queue[str] = queue.Queue()
         self.intake_rows: list[WorkbookRow] = []
@@ -761,17 +763,26 @@ class CardPipelineApp(tk.Tk):
 
         content = ttk.Frame(canvas, style="App.TFrame")
         window_id = canvas.create_window((0, 0), window=content, anchor=tk.NW)
+        sync_pending = False
 
-        def sync_scroll_region(_event: tk.Event | None = None) -> None:
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        def sync_content_width(event: tk.Event) -> None:
+        def sync_scroll_region() -> None:
+            nonlocal sync_pending
+            sync_pending = False
             content.update_idletasks()
-            canvas.itemconfigure(window_id, width=max(content.winfo_reqwidth(), event.width))
-            sync_scroll_region()
+            width = max(content.winfo_reqwidth(), canvas.winfo_width(), self._tab_scroll_min_width)
+            height = max(content.winfo_reqheight(), canvas.winfo_height(), self._tab_scroll_min_height)
+            canvas.itemconfigure(window_id, width=width, height=height)
+            canvas.configure(scrollregion=(0, 0, width, height))
 
-        content.bind("<Configure>", sync_scroll_region)
-        canvas.bind("<Configure>", sync_content_width)
+        def schedule_scroll_region_sync(_event: tk.Event | None = None) -> None:
+            nonlocal sync_pending
+            if sync_pending:
+                return
+            sync_pending = True
+            canvas.after_idle(sync_scroll_region)
+
+        content.bind("<Configure>", schedule_scroll_region_sync)
+        canvas.bind("<Configure>", schedule_scroll_region_sync)
         self._tab_scroll_canvases[str(tab)] = canvas
         self._tab_scroll_contents.append(content)
         return content
