@@ -697,7 +697,7 @@ class CardPipelineApp(tk.Tk):
             return None
 
     def _handle_tab_mousewheel(self, event: tk.Event) -> str | None:
-        if event.widget.winfo_toplevel() is not self:
+        if str(event.widget.winfo_toplevel()) != str(self):
             return None
         canvas = self._current_tab_scroll_canvas()
         if canvas is None:
@@ -706,13 +706,13 @@ class CardPipelineApp(tk.Tk):
         return "break" if self._scroll_canvas_pixels(canvas, orient, self._wheel_pixels(event)) else None
 
     def _handle_tab_button4(self, event: tk.Event) -> str | None:
-        if event.widget.winfo_toplevel() is not self:
+        if str(event.widget.winfo_toplevel()) != str(self):
             return None
         canvas = self._current_tab_scroll_canvas()
         return "break" if canvas is not None and self._scroll_canvas_pixels(canvas, "y", -72) else None
 
     def _handle_tab_button5(self, event: tk.Event) -> str | None:
-        if event.widget.winfo_toplevel() is not self:
+        if str(event.widget.winfo_toplevel()) != str(self):
             return None
         canvas = self._current_tab_scroll_canvas()
         return "break" if canvas is not None and self._scroll_canvas_pixels(canvas, "y", 72) else None
