@@ -505,6 +505,8 @@ class CardPipelineApp(tk.Tk):
         self.minsize(760, 520)
         self.logo_image: tk.PhotoImage | None = None
         self._tab_scroll_canvases: dict[str, tk.Canvas] = {}
+        self._tab_scroll_contents: list[tk.Widget] = []
+        self._tab_scroll_bound_widgets: set[str] = set()
 
         self.events: queue.Queue[str] = queue.Queue()
         self.intake_rows: list[WorkbookRow] = []
@@ -641,6 +643,7 @@ class CardPipelineApp(tk.Tk):
 
         self._build_ui()
         self._show_mode()
+        self.after_idle(self._refresh_tab_scroll_bindings)
         self.refresh_profit_tab()
         self._poll_events()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -717,6 +720,25 @@ class CardPipelineApp(tk.Tk):
         self.bind_all("<Button-4>", self._handle_tab_button4)
         self.bind_all("<Button-5>", self._handle_tab_button5)
 
+    def _should_skip_direct_tab_scroll(self, widget: tk.Widget) -> bool:
+        widget_class = widget.winfo_class()
+        return widget_class in {"Entry", "TEntry", "TCombobox", "Text", "Listbox", "Treeview"}
+
+    def _bind_direct_tab_scroll(self, widget: tk.Widget) -> None:
+        widget_id = str(widget)
+        if widget_id not in self._tab_scroll_bound_widgets and not self._should_skip_direct_tab_scroll(widget):
+            widget.bind("<MouseWheel>", self._handle_tab_mousewheel, add="+")
+            widget.bind("<Button-4>", self._handle_tab_button4, add="+")
+            widget.bind("<Button-5>", self._handle_tab_button5, add="+")
+            self._tab_scroll_bound_widgets.add(widget_id)
+        for child in widget.winfo_children():
+            self._bind_direct_tab_scroll(child)
+
+    def _refresh_tab_scroll_bindings(self) -> None:
+        for content in self._tab_scroll_contents:
+            if content.winfo_exists():
+                self._bind_direct_tab_scroll(content)
+
     def _make_scrollable_tab(self, tab: ttk.Frame) -> ttk.Frame:
         host = ttk.Frame(tab, style="App.TFrame")
         host.pack(fill=tk.BOTH, expand=True)
@@ -751,6 +773,7 @@ class CardPipelineApp(tk.Tk):
         content.bind("<Configure>", sync_scroll_region)
         canvas.bind("<Configure>", sync_content_width)
         self._tab_scroll_canvases[str(tab)] = canvas
+        self._tab_scroll_contents.append(content)
         return content
 
     def _build_ui(self) -> None:
@@ -7058,6 +7081,7 @@ class CardPipelineApp(tk.Tk):
             self._build_file_mode(photo=False)
         if hasattr(self, "intake_tree"):
             self._refresh_table()
+        self.after_idle(self._refresh_tab_scroll_bindings)
 
     def _show_review_mode(self) -> None:
         if not hasattr(self, "review_mode_host"):
@@ -7069,6 +7093,7 @@ class CardPipelineApp(tk.Tk):
         else:
             self._build_automatic_review_mode()
         self._refresh_table()
+        self.after_idle(self._refresh_tab_scroll_bindings)
 
     def _build_manual_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
