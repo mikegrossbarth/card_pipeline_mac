@@ -682,36 +682,60 @@ class CardPipelineApp(tk.Tk):
             canvas.itemconfigure(window_id, width=max(content.winfo_reqwidth(), event.width))
             sync_scroll_region()
 
-        def wheel_units(event: tk.Event) -> int:
+        def scroll_pixels(orient: str, pixels: int) -> None:
+            if pixels == 0:
+                return
+            bbox = canvas.bbox("all")
+            if not bbox:
+                return
+            if orient == "x":
+                content_size = bbox[2] - bbox[0]
+                viewport_size = canvas.winfo_width()
+                first, _last = canvas.xview()
+                view = canvas.xview_moveto
+            else:
+                content_size = bbox[3] - bbox[1]
+                viewport_size = canvas.winfo_height()
+                first, _last = canvas.yview()
+                view = canvas.yview_moveto
+            scrollable = max(1, content_size - viewport_size)
+            view(max(0.0, min(1.0, first + (pixels / scrollable))))
+
+        def wheel_pixels(event: tk.Event) -> int:
             delta = getattr(event, "delta", 0)
             if not delta:
                 return 0
-            return -1 if delta > 0 else 1
+            if sys.platform == "darwin":
+                return int(-delta)
+            return int(-delta / 120 * 72)
 
         def on_mousewheel(event: tk.Event) -> str:
-            units = wheel_units(event)
-            if units:
-                canvas.yview_scroll(units, "units")
+            scroll_pixels("y", wheel_pixels(event))
             return "break"
 
         def on_shift_mousewheel(event: tk.Event) -> str:
-            units = wheel_units(event)
-            if units:
-                canvas.xview_scroll(units, "units")
+            scroll_pixels("x", wheel_pixels(event))
+            return "break"
+
+        def on_button4(_event: tk.Event) -> str:
+            scroll_pixels("y", -72)
+            return "break"
+
+        def on_button5(_event: tk.Event) -> str:
+            scroll_pixels("y", 72)
             return "break"
 
         def bind_wheel(_event: tk.Event) -> None:
             canvas.bind_all("<MouseWheel>", on_mousewheel)
             canvas.bind_all("<Shift-MouseWheel>", on_shift_mousewheel)
-
-        def unbind_wheel(_event: tk.Event) -> None:
-            canvas.unbind_all("<MouseWheel>")
-            canvas.unbind_all("<Shift-MouseWheel>")
+            canvas.bind_all("<Button-4>", on_button4)
+            canvas.bind_all("<Button-5>", on_button5)
 
         content.bind("<Configure>", sync_scroll_region)
         canvas.bind("<Configure>", sync_content_width)
+        host.bind("<Enter>", bind_wheel)
         canvas.bind("<Enter>", bind_wheel)
-        canvas.bind("<Leave>", unbind_wheel)
+        content.bind("<Enter>", bind_wheel)
         return content
 
     def _build_ui(self) -> None:
