@@ -50,7 +50,7 @@ import assignment_engine  # noqa: E402
 from assignment_engine import AssignmentEngine  # noqa: E402
 from assignment_engine import CONFIG_PATH as ASSIGNMENT_CONFIG_PATH  # noqa: E402
 from assignment_engine import gsheet_shortcut_url, is_google_keep_url, keep_note_cache_path, load_gsheet_shortcut, normalize_source_value, path_from_source_value, safe_filename  # noqa: E402
-from assignment_config_ui import open_assignment_rules_dialog, seller_terms_health_lines  # noqa: E402
+from assignment_config_ui import open_assignment_rules_dialog, open_people_rules_dialog, seller_terms_health_lines  # noqa: E402
 from google_sheets_import import export_google_sheet_to_xlsx  # noqa: E402
 from lucas_diagnostics import diagnostic_json, lucas_version_label, setup_doctor_results  # noqa: E402
 from shared_state import atomic_write_json, local_identity, shared_lock  # noqa: E402
@@ -483,6 +483,25 @@ INVENTORY_COLUMN_WIDTHS = {
     "notes": 240,
 }
 
+INVENTORY_EDIT_COLUMN_FIELDS = {
+    "date": "date_added",
+    "person": "assigned_person",
+    "sport": "sport",
+    "cert": "cert_number",
+    "grader": "grader",
+    "card": "card_title",
+    "purchase": "purchase_price",
+    "card_ladder": "card_ladder_value",
+    "comps": "card_ladder_comps_average",
+    "cy_estimate": "cy_value",
+    "cy_confidence": "cy_confidence",
+    "company": "best_company",
+    "payout": "estimated_payout",
+    "source": "source_sheet",
+    "notes": "notes",
+}
+INVENTORY_EDIT_MONEY_COLUMNS = {"purchase", "card_ladder", "comps", "cy_estimate", "payout"}
+
 AUTO_INVENTORY_NOTES = {
     "backfilled from received sheets",
     "received without company pile",
@@ -623,10 +642,14 @@ class CardPipelineApp(tk.Tk):
         self.inventory_search_var = tk.StringVar()
         self.inventory_min_var = tk.StringVar()
         self.inventory_max_var = tk.StringVar()
+        self.inventory_bulk_edit_var = tk.BooleanVar(value=False)
         self.inventory_rows: list[dict[str, object]] = []
         self.filtered_inventory_rows: list[dict[str, object]] = []
         self.inventory_tree_records: dict[str, dict[str, object]] = {}
         self.inventory_recomp_context: dict[str, object] | None = None
+        self.inventory_bulk_cell: tuple[str, str] | None = None
+        self.inventory_cell_editor: ttk.Entry | None = None
+        self.inventory_cell_edit: tuple[str, str] | None = None
         self.inventory_filter_after_id: str | None = None
         self.inventory_sort_column = "date"
         self.inventory_sort_descending = True
@@ -1196,12 +1219,13 @@ class CardPipelineApp(tk.Tk):
         self.received_sheet_combo.grid(row=0, column=1, sticky="ew", padx=(8, 8))
         ttk.Button(review_controls, text="Load", command=self.load_selected_received_sheet_for_review, style="Primary.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
         ttk.Button(review_controls, text="Refresh Received Sheets", command=self.refresh_received_sheets, style="Soft.TButton").grid(row=0, column=3, sticky="w")
-        ttk.Button(review_controls, text="Assignment Rules", command=self.open_assignment_rules, style="Soft.TButton").grid(row=0, column=4, sticky="w", padx=(8, 0))
-        ttk.Button(review_controls, text="Sync Google Keep", command=self.sync_google_keep_notes, style="Soft.TButton").grid(row=0, column=5, sticky="w", padx=(8, 0))
-        ttk.Button(review_controls, text="Unassigned Players", command=self.open_unassigned_players_dialog, style="Soft.TButton").grid(row=0, column=6, sticky="w", padx=(8, 0))
+        ttk.Button(review_controls, text="Company Rules", command=self.open_assignment_rules, style="Soft.TButton").grid(row=0, column=4, sticky="w", padx=(8, 0))
+        ttk.Button(review_controls, text="People Rules", command=self.open_people_rules, style="Soft.TButton").grid(row=0, column=5, sticky="w", padx=(8, 0))
+        ttk.Button(review_controls, text="Sync Google Keep", command=self.sync_google_keep_notes, style="Soft.TButton").grid(row=0, column=6, sticky="w", padx=(8, 0))
+        ttk.Button(review_controls, text="Unassigned Players", command=self.open_unassigned_players_dialog, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(8, 0))
         review_controls.columnconfigure(1, weight=1)
-        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=7, sticky="w", pady=(10, 0))
-        ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
+        ttk.Label(review_controls, textvariable=self.review_status, style="Muted.TLabel").grid(row=1, column=0, columnspan=8, sticky="w", pady=(10, 0))
+        ttk.Label(review_controls, textvariable=self.assignment_config_status, style="Muted.TLabel").grid(row=2, column=0, columnspan=8, sticky="w", pady=(4, 0))
         self.assignment_progress = ttk.Progressbar(
             review_controls,
             style="Assignment.Horizontal.TProgressbar",
@@ -1209,7 +1233,7 @@ class CardPipelineApp(tk.Tk):
             maximum=100,
             mode="determinate",
         )
-        self.assignment_progress.grid(row=3, column=0, columnspan=7, sticky="ew", pady=(8, 0))
+        self.assignment_progress.grid(row=3, column=0, columnspan=8, sticky="ew", pady=(8, 0))
         self.review_tree = self._build_table(self.review_tab, editable=True, columns=REVIEW_COLUMNS)
         review_bottom = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
         review_bottom.pack(fill=tk.X, pady=(10, 0))
@@ -1610,6 +1634,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(action_row, text="Recomp Visible Cards", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Import Mobile Queue", command=self.import_mobile_queue_file, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Checkbutton(action_row, text="Bulk Edit", variable=self.inventory_bulk_edit_var, command=self._toggle_inventory_bulk_edit, style="TCheckbutton").pack(side=tk.LEFT, padx=(14, 0))
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var):
             var.trace_add("write", lambda *_args: self._schedule_inventory_filter_refresh())
@@ -1626,6 +1651,14 @@ class CardPipelineApp(tk.Tk):
         self._configure_sortable_tree_headings(self.inventory_tree, INVENTORY_HEADINGS, "inventory")
         self.inventory_tree.bind("<Button-3>", self._show_inventory_context_menu)
         self.inventory_tree.bind("<Button-2>", self._show_inventory_context_menu)
+        self.inventory_tree.bind("<Button-1>", self._inventory_bulk_click, add="+")
+        self.inventory_tree.bind("<Double-1>", self._begin_inventory_bulk_edit, add="+")
+        self.inventory_tree.bind("<Return>", self._begin_inventory_bulk_edit, add="+")
+        self.inventory_tree.bind("<F2>", self._begin_inventory_bulk_edit, add="+")
+        self.inventory_tree.bind("<Up>", lambda event: self._move_inventory_bulk_cell(-1, 0), add="+")
+        self.inventory_tree.bind("<Down>", lambda event: self._move_inventory_bulk_cell(1, 0), add="+")
+        self.inventory_tree.bind("<Left>", lambda event: self._move_inventory_bulk_cell(0, -1), add="+")
+        self.inventory_tree.bind("<Right>", lambda event: self._move_inventory_bulk_cell(0, 1), add="+")
         self.refresh_inventory_tab()
 
     def _build_profit_tab(self) -> None:
@@ -3234,6 +3267,8 @@ class CardPipelineApp(tk.Tk):
         normalized = self._normalize_inventory_record(record)
         popup = tk.Toplevel(self)
         popup.title("Edit Inventory Row")
+        popup.geometry("980x640")
+        popup.minsize(760, 420)
         popup.transient(self)
         popup.grab_set()
         popup.configure(bg="#121212")
@@ -3259,8 +3294,7 @@ class CardPipelineApp(tk.Tk):
         money_fields = {"purchase_price", "card_ladder_value", "card_ladder_comps_average", "cy_value", "estimated_payout"}
         vars_by_field: dict[str, tk.StringVar] = {}
 
-        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
-        frame.pack(fill=tk.BOTH, expand=True)
+        frame = self._scrollable_popup_frame(popup, style_name="Panel.TFrame", bg="#121212", padding=(18, 16))
         ttk.Label(frame, text="Edit Inventory Row", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 2))
         ttk.Label(frame, text=str(normalized.get("status") or "Active"), style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 14))
         for index, (field, label) in enumerate(fields):
@@ -3313,6 +3347,47 @@ class CardPipelineApp(tk.Tk):
         self.wait_window(popup)
         return result or None
 
+    def _scrollable_popup_frame(self, popup: tk.Toplevel, style_name: str = "Panel.TFrame", bg: str = "#121212", padding: tuple[int, int] = (18, 16)) -> ttk.Frame:
+        outer = ttk.Frame(popup, style=style_name)
+        outer.pack(fill=tk.BOTH, expand=True)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+        canvas = tk.Canvas(outer, bg=bg, highlightthickness=0, borderwidth=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        y_scroll = ttk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll = ttk.Scrollbar(outer, orient=tk.HORIZONTAL, command=canvas.xview)
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        canvas.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        frame = ttk.Frame(canvas, style=style_name, padding=padding)
+        window_id = canvas.create_window((0, 0), window=frame, anchor="nw")
+
+        def update_scrollregion(_event: tk.Event | None = None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def resize_window(event: tk.Event) -> None:
+            canvas.itemconfigure(window_id, width=max(event.width, frame.winfo_reqwidth()))
+            update_scrollregion()
+
+        def on_mousewheel(event: tk.Event) -> str:
+            delta = int(getattr(event, "delta", 0) or 0)
+            if delta:
+                canvas.yview_scroll(int(-1 * (delta / 120)), "units")
+            return "break"
+
+        def on_shift_mousewheel(event: tk.Event) -> str:
+            delta = int(getattr(event, "delta", 0) or 0)
+            if delta:
+                canvas.xview_scroll(int(-1 * (delta / 120)), "units")
+            return "break"
+
+        frame.bind("<Configure>", update_scrollregion)
+        canvas.bind("<Configure>", resize_window)
+        for widget in (outer, canvas, frame):
+            widget.bind("<MouseWheel>", on_mousewheel, add="+")
+            widget.bind("<Shift-MouseWheel>", on_shift_mousewheel, add="+")
+        return frame
+
     def edit_selected_inventory_row(self) -> None:
         if not hasattr(self, "inventory_tree"):
             return
@@ -3351,6 +3426,195 @@ class CardPipelineApp(tk.Tk):
             if updated:
                 self._save_inventory_ledger(rows)
         return updated
+
+    def _toggle_inventory_bulk_edit(self) -> None:
+        self._destroy_inventory_cell_editor()
+        if not self.inventory_bulk_edit_var.get():
+            self.inventory_bulk_cell = None
+            self.inventory_status_var.set("Bulk edit off.")
+            return
+        rows = self.inventory_tree.get_children() if hasattr(self, "inventory_tree") else ()
+        if rows:
+            selected = self.inventory_tree.selection()
+            iid = selected[0] if selected else rows[0]
+            self._set_inventory_bulk_cell(iid, self._inventory_editable_columns()[0])
+        self.inventory_tree.focus_set()
+        self.inventory_status_var.set("Bulk edit on. Use arrows to move, Enter/F2 to edit, Esc to cancel a cell.")
+
+    def _inventory_editable_columns(self) -> list[str]:
+        return [column for column in INVENTORY_TABLE_COLUMNS if column in INVENTORY_EDIT_COLUMN_FIELDS]
+
+    def _inventory_bulk_click(self, event: tk.Event) -> None:
+        if not getattr(self, "inventory_bulk_edit_var", None) or not self.inventory_bulk_edit_var.get():
+            return
+        column_id = self.inventory_tree.identify_column(event.x)
+        row_id = self.inventory_tree.identify_row(event.y)
+        if not row_id or not column_id:
+            return
+        try:
+            column_index = int(str(column_id).replace("#", "")) - 1
+        except ValueError:
+            return
+        columns = list(self.inventory_tree["columns"])
+        if column_index < 0 or column_index >= len(columns):
+            return
+        column = columns[column_index]
+        if column in INVENTORY_EDIT_COLUMN_FIELDS:
+            self._set_inventory_bulk_cell(row_id, column)
+
+    def _set_inventory_bulk_cell(self, iid: str, column: str) -> None:
+        if not iid or column not in INVENTORY_EDIT_COLUMN_FIELDS:
+            return
+        self.inventory_bulk_cell = (iid, column)
+        self.inventory_tree.selection_set(iid)
+        self.inventory_tree.focus(iid)
+        self.inventory_tree.see(iid)
+        heading = INVENTORY_HEADINGS.get(column, column)
+        self.inventory_status_var.set(f"Bulk edit cell: {heading}. Press Enter or F2 to edit.")
+
+    def _move_inventory_bulk_cell(self, row_delta: int, column_delta: int, reopen: bool = False) -> str | None:
+        if not getattr(self, "inventory_bulk_edit_var", None) or not self.inventory_bulk_edit_var.get():
+            return None
+        if self.inventory_cell_editor is not None:
+            return self._commit_inventory_bulk_edit(row_delta, column_delta, reopen=True)
+        rows = list(self.inventory_tree.get_children())
+        columns = self._inventory_editable_columns()
+        if not rows or not columns:
+            return "break"
+        iid, column = self.inventory_bulk_cell or (self.inventory_tree.focus() or rows[0], columns[0])
+        if iid not in rows:
+            iid = rows[0]
+        if column not in columns:
+            column = columns[0]
+        row_index = max(0, min(len(rows) - 1, rows.index(iid) + row_delta))
+        col_index = max(0, min(len(columns) - 1, columns.index(column) + column_delta))
+        self._set_inventory_bulk_cell(rows[row_index], columns[col_index])
+        if reopen:
+            self._begin_inventory_bulk_edit()
+        return "break"
+
+    def _begin_inventory_bulk_edit(self, event: tk.Event | None = None) -> str | None:
+        if not getattr(self, "inventory_bulk_edit_var", None) or not self.inventory_bulk_edit_var.get():
+            return None
+        if event is not None and getattr(event, "x", None) is not None:
+            self._inventory_bulk_click(event)
+        rows = list(self.inventory_tree.get_children())
+        columns = self._inventory_editable_columns()
+        if not rows or not columns:
+            return "break"
+        iid, column = self.inventory_bulk_cell or (self.inventory_tree.focus() or rows[0], columns[0])
+        if iid not in rows:
+            iid = rows[0]
+        if column not in columns:
+            column = columns[0]
+        bbox = self.inventory_tree.bbox(iid, column)
+        if not bbox:
+            self.inventory_tree.see(iid)
+            bbox = self.inventory_tree.bbox(iid, column)
+        if not bbox:
+            return "break"
+        self._destroy_inventory_cell_editor()
+        x, y, width, height = bbox
+        editor = ttk.Entry(self.inventory_tree)
+        editor.insert(0, self.inventory_tree.set(iid, column))
+        editor.select_range(0, tk.END)
+        editor.place(x=x, y=y, width=width, height=height)
+        editor.focus_set()
+        self.inventory_cell_editor = editor
+        self.inventory_cell_edit = (iid, column)
+        editor.bind("<Return>", lambda _event: self._commit_inventory_bulk_edit(1, 0, reopen=True))
+        editor.bind("<KP_Enter>", lambda _event: self._commit_inventory_bulk_edit(1, 0, reopen=True))
+        editor.bind("<Tab>", lambda _event: self._commit_inventory_bulk_edit(0, 1, reopen=True))
+        editor.bind("<Shift-Tab>", lambda _event: self._commit_inventory_bulk_edit(0, -1, reopen=True))
+        editor.bind("<Up>", lambda _event: self._commit_inventory_bulk_edit(-1, 0, reopen=True))
+        editor.bind("<Down>", lambda _event: self._commit_inventory_bulk_edit(1, 0, reopen=True))
+        editor.bind("<Left>", lambda _event: self._commit_inventory_bulk_edit(0, -1, reopen=True))
+        editor.bind("<Right>", lambda _event: self._commit_inventory_bulk_edit(0, 1, reopen=True))
+        editor.bind("<Escape>", lambda _event: self._cancel_inventory_bulk_edit())
+        editor.bind("<FocusOut>", lambda _event: self._commit_inventory_bulk_edit(0, 0, reopen=False))
+        return "break"
+
+    def _commit_inventory_bulk_edit(self, row_delta: int = 0, column_delta: int = 0, reopen: bool = False) -> str:
+        if self.inventory_cell_editor is None or self.inventory_cell_edit is None:
+            self._move_inventory_bulk_cell(row_delta, column_delta, reopen=reopen)
+            return "break"
+        iid, column = self.inventory_cell_edit
+        raw = self.inventory_cell_editor.get().strip()
+        self._destroy_inventory_cell_editor()
+        record = self.inventory_tree_records.get(iid)
+        if not record:
+            return "break"
+        updates = self._inventory_bulk_updates_for_cell(column, raw)
+        if updates is None:
+            self._set_inventory_bulk_cell(iid, column)
+            self._begin_inventory_bulk_edit()
+            return "break"
+        key = str(record.get("inventory_key") or "")
+        updated = self._update_inventory_record_by_key(key, updates)
+        if updated:
+            merged = dict(record)
+            merged.update(updates)
+            merged.pop("inventory_key", None)
+            normalized = self._normalize_inventory_record(merged)
+            self.inventory_tree_records[iid] = normalized
+            self._refresh_inventory_tree_row(iid, normalized)
+            self.status_var.set("Inventory cell saved.")
+        self.inventory_bulk_cell = (iid, column)
+        self._move_inventory_bulk_cell(row_delta, column_delta, reopen=reopen)
+        return "break"
+
+    def _inventory_bulk_updates_for_cell(self, column: str, raw: str) -> dict[str, object] | None:
+        field = INVENTORY_EDIT_COLUMN_FIELDS.get(column)
+        if not field:
+            return {}
+        if column in INVENTORY_EDIT_MONEY_COLUMNS:
+            if not raw:
+                return {field: None}
+            value = self._money_value(raw)
+            if value is None or value < 0:
+                self.inventory_status_var.set(f"Enter a valid number for {INVENTORY_HEADINGS.get(column, column)}.")
+                return None
+            return {field: float(value)}
+        return {field: raw}
+
+    def _refresh_inventory_tree_row(self, iid: str, record: dict[str, object]) -> None:
+        values = {
+            "date": record.get("date_added") or "",
+            "type": record.get("item_type") or "",
+            "item_id": record.get("item_id") or "",
+            "person": record.get("assigned_person") or "Unassigned",
+            "sport": record.get("sport") or "",
+            "cert": record.get("cert_number") or "",
+            "grader": record.get("grader") or "",
+            "card": record.get("card_title") or "",
+            "purchase": format_money(record.get("purchase_price")),
+            "card_ladder": format_money(record.get("card_ladder_value")),
+            "comps": format_money(record.get("card_ladder_comps_average")),
+            "cy_estimate": format_money(record.get("cy_value")),
+            "cy_confidence": record.get("cy_confidence") if record.get("cy_confidence") is not None else "",
+            "company": record.get("best_company") or "",
+            "payout": format_money(record.get("estimated_payout")),
+            "source": record.get("source_sheet") or "",
+            "status": record.get("status") or "",
+            "notes": inventory_display_notes(record),
+        }
+        for column, value in values.items():
+            if column in self.inventory_tree["columns"]:
+                self.inventory_tree.set(iid, column, value)
+
+    def _cancel_inventory_bulk_edit(self) -> str:
+        self._destroy_inventory_cell_editor()
+        return "break"
+
+    def _destroy_inventory_cell_editor(self) -> None:
+        editor = self.inventory_cell_editor
+        self.inventory_cell_editor = None
+        self.inventory_cell_edit = None
+        if editor is not None:
+            try:
+                editor.destroy()
+            except tk.TclError:
+                pass
 
     def move_selected_inventory_to_company_sheets(self) -> None:
         if not hasattr(self, "inventory_tree"):
@@ -5432,8 +5696,8 @@ class CardPipelineApp(tk.Tk):
         self._refresh_keep_source_registry()
         sources = self._saved_google_keep_sources()
         if not sources:
-            messagebox.showinfo("Google Keep Sync", "No Google Keep note sources are saved in Assignment Rules.")
-            self.assignment_config_status.set("No Google Keep notes are configured in Assignment Rules.")
+            messagebox.showinfo("Google Keep Sync", "No Google Keep note sources are saved in Company Rules.")
+            self.assignment_config_status.set("No Google Keep notes are configured in Company Rules.")
             return
         opened = 0
         for source in sources:
@@ -6205,7 +6469,7 @@ class CardPipelineApp(tk.Tk):
         details = self._seller_terms_no_match_details(rows, seller_sheet_type)
         message = (
             f"No Create rows produced a {seller_sheet_type} seller payout. "
-            f"L.U.C.A.S found the seller_terms.csv row, but this Sheet Type needs a {seller_sheet_type} {basis} on at least one card."
+            f"L.U.C.A.S found the People Rules row, but this Sheet Type needs a {seller_sheet_type} {basis} on at least one card."
         )
         if details:
             message = f"{message}\n\nRow reasons:\n{details}"
@@ -8234,7 +8498,7 @@ class CardPipelineApp(tk.Tk):
                 if not seller_term:
                     messagebox.showinfo(
                         "Seller terms not found",
-                        f"No seller terms were found for {seller} / {seller_sheet_type}. Update seller_terms.csv or leave both fields blank.",
+                        f"No People Rules were found for {seller} / {seller_sheet_type}. Open People Rules or leave both fields blank.",
                     )
                     return
                 rate = self._money_value(seller_term.get("rate"))
@@ -9036,6 +9300,15 @@ class CardPipelineApp(tk.Tk):
 
     def open_assignment_rules(self) -> None:
         open_assignment_rules_dialog(self, CARD_PIPELINE_DIR, self.reload_assignment_rules)
+
+    def open_people_rules(self) -> None:
+        open_people_rules_dialog(self, CARD_PIPELINE_DIR, self._assignment_company_health_payload(), self._after_people_rules_saved)
+
+    def _after_people_rules_saved(self) -> None:
+        self._refresh_seller_terms_dropdowns()
+        self._refresh_person_combo_values()
+        self.assignment_config_status.set(self._assignment_config_status())
+        self.status_var.set("People rules saved.")
 
     def _assignment_config_status(self) -> str:
         if self.assignment_engine.error:

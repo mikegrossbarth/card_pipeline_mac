@@ -55,6 +55,77 @@ VALUE_SOURCE_LABELS = {
     "card_ladder": "Card Ladder value",
     "cy_estimate": "CY Estimate",
 }
+SELLER_TERMS_FIELDS = ("Seller", "Sheet Type", "Seller Rate", "Deduction")
+
+
+def build_scrollable_dialog_body(parent: tk.Misc, style_name: str, bg: str = "#121212", padding: int = 16) -> ttk.Frame:
+    outer = ttk.Frame(parent, style=style_name)
+    outer.pack(fill=tk.BOTH, expand=True)
+    outer.columnconfigure(0, weight=1)
+    outer.rowconfigure(0, weight=1)
+    canvas = tk.Canvas(outer, bg=bg, highlightthickness=0, borderwidth=0)
+    canvas.grid(row=0, column=0, sticky="nsew")
+    y_scroll = ttk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+    y_scroll.grid(row=0, column=1, sticky="ns")
+    x_scroll = ttk.Scrollbar(outer, orient=tk.HORIZONTAL, command=canvas.xview)
+    x_scroll.grid(row=1, column=0, sticky="ew")
+    canvas.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+    body = ttk.Frame(canvas, style=style_name, padding=padding)
+    window_id = canvas.create_window((0, 0), window=body, anchor="nw")
+
+    def update_scrollregion(_event: tk.Event | None = None) -> None:
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def resize_window(event: tk.Event) -> None:
+        required = body.winfo_reqwidth()
+        canvas.itemconfigure(window_id, width=max(event.width, required))
+        update_scrollregion()
+
+    def on_mousewheel(event: tk.Event) -> str:
+        delta = int(getattr(event, "delta", 0) or 0)
+        if delta:
+            canvas.yview_scroll(int(-1 * (delta / 120)), "units")
+        return "break"
+
+    def on_shift_mousewheel(event: tk.Event) -> str:
+        delta = int(getattr(event, "delta", 0) or 0)
+        if delta:
+            canvas.xview_scroll(int(-1 * (delta / 120)), "units")
+        return "break"
+
+    body.bind("<Configure>", update_scrollregion)
+    canvas.bind("<Configure>", resize_window)
+    for widget in (outer, canvas, body):
+        widget.bind("<MouseWheel>", on_mousewheel, add="+")
+        widget.bind("<Shift-MouseWheel>", on_shift_mousewheel, add="+")
+    return body
+
+
+def read_seller_terms_rows(seller_terms_path: Path) -> list[dict[str, str]]:
+    if not seller_terms_path.exists():
+        return []
+    with seller_terms_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        rows = []
+        for row in csv.DictReader(handle):
+            normalized = {re.sub(r"[^a-z0-9]+", "", str(key or "").lower()): value for key, value in row.items()}
+            rows.append(
+                {
+                    "Seller": str(normalized.get("seller") or normalized.get("person") or normalized.get("name") or "").strip(),
+                    "Sheet Type": str(normalized.get("sheettype") or normalized.get("type") or normalized.get("company") or "").strip(),
+                    "Seller Rate": str(normalized.get("sellerrate") or normalized.get("rate") or normalized.get("payout") or normalized.get("percentage") or "").strip(),
+                    "Deduction": str(normalized.get("deduction") or normalized.get("sellerdeduction") or normalized.get("deductionpercent") or normalized.get("deductionpercentage") or "").strip(),
+                }
+            )
+    return rows
+
+
+def write_seller_terms_rows(seller_terms_path: Path, rows: list[dict[str, str]]) -> None:
+    seller_terms_path.parent.mkdir(parents=True, exist_ok=True)
+    with seller_terms_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(SELLER_TERMS_FIELDS))
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: str(row.get(field) or "").strip() for field in SELLER_TERMS_FIELDS})
 
 
 def seller_terms_rate(value: object) -> float | None:
@@ -83,16 +154,15 @@ def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str,
     }
     if not seller_terms_path.exists():
         return [
-            "Seller Terms: not found",
+            "People Rules: not found",
             f"Path: {seller_terms_path}",
-            "Create seller_terms.csv when Network Mode seller payouts are needed.",
+            "Open People Rules when Network Mode seller payouts are needed.",
         ]
     try:
-        with seller_terms_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            rows = list(csv.DictReader(handle))
+        rows = read_seller_terms_rows(seller_terms_path)
     except Exception as error:
         return [
-            "Seller Terms: unreadable",
+            "People Rules: unreadable",
             f"Path: {seller_terms_path}",
             f"Error: {error}",
         ]
@@ -102,11 +172,10 @@ def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str,
     seen: dict[tuple[str, str], int] = {}
     valid_count = 0
     for index, row in enumerate(rows, start=2):
-        normalized = {re.sub(r"[^a-z0-9]+", "", str(key or "").lower()): value for key, value in row.items()}
-        seller = str(normalized.get("seller") or normalized.get("person") or normalized.get("name") or "").strip()
-        sheet_type = str(normalized.get("sheettype") or normalized.get("type") or normalized.get("company") or "").strip()
-        rate_raw = normalized.get("sellerrate") or normalized.get("rate") or normalized.get("payout") or normalized.get("percentage")
-        deduction_raw = normalized.get("deduction") or normalized.get("sellerdeduction") or normalized.get("deductionpercent") or normalized.get("deductionpercentage")
+        seller = str(row.get("Seller") or "").strip()
+        sheet_type = str(row.get("Sheet Type") or "").strip()
+        rate_raw = row.get("Seller Rate")
+        deduction_raw = row.get("Deduction")
         rate = seller_terms_rate(rate_raw)
         deduction = seller_terms_rate(deduction_raw)
         row_errors: list[str] = []
@@ -155,11 +224,11 @@ def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str,
     errors = sum(1 for level, _message in issues if level == "ERROR")
     warnings = sum(1 for level, _message in issues if level == "WARN")
     lines = [
-        f"Seller Terms: {valid_count} valid row(s), {warnings} warning(s), {errors} error(s)",
+        f"People Rules: {valid_count} valid row(s), {warnings} warning(s), {errors} error(s)",
         f"Path: {seller_terms_path}",
     ]
     if not rows:
-        lines.append("seller_terms.csv is empty.")
+        lines.append("People Rules are empty.")
     if parsed:
         lines.append("Parsed terms:")
         lines.extend(f"- {line}" for line in parsed[:10])
@@ -178,9 +247,9 @@ def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str,
 class AssignmentRulesDialog(tk.Toplevel):
     def __init__(self, parent: tk.Tk, pipeline_root: Path, on_saved: Callable[[], None]) -> None:
         super().__init__(parent)
-        self.title("Assignment Rules")
+        self.title("Company Rules")
         self.geometry("1380x920")
-        self.minsize(1240, 860)
+        self.minsize(900, 560)
         self.transient(parent)
         self.configure(bg="#121212")
         self.on_saved = on_saved
@@ -254,12 +323,11 @@ class AssignmentRulesDialog(tk.Toplevel):
         style.configure("Assign.TLabelframe.Label", background=palette["panel"], foreground=palette["text"], font=("Segoe UI Semibold", 10))
 
     def _build_ui(self) -> None:
-        shell = ttk.Frame(self, style="Assign.TFrame", padding=16)
-        shell.pack(fill=tk.BOTH, expand=True)
+        shell = build_scrollable_dialog_body(self, "Assign.TFrame", padding=16)
         shell.columnconfigure(1, weight=1)
         shell.rowconfigure(1, weight=1)
 
-        ttk.Label(shell, text="Assignment Rules", style="AssignHeader.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ttk.Label(shell, text="Company Rules", style="AssignHeader.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
 
         side = ttk.Frame(shell, style="AssignPanel.TFrame", padding=12)
         side.grid(row=1, column=0, sticky="ns", padx=(0, 12))
@@ -416,13 +484,14 @@ class AssignmentRulesDialog(tk.Toplevel):
         return frame
 
     def _build_seller_terms_panel(self, parent: ttk.Frame) -> ttk.Frame:
-        frame = ttk.LabelFrame(parent, text="Seller Terms Health", style="Assign.TLabelframe", padding=10)
+        frame = ttk.LabelFrame(parent, text="People Rules Health", style="Assign.TLabelframe", padding=10)
         frame.columnconfigure(0, weight=1)
         self._refresh_seller_terms_status()
-        ttk.Label(frame, textvariable=self.seller_terms_status, style="AssignMuted.TLabel", wraplength=520, justify=tk.LEFT).grid(row=0, column=0, columnspan=3, sticky="ew")
-        ttk.Button(frame, text="Refresh Terms", command=self._refresh_seller_terms_status, style="AssignSoft.TButton").grid(row=1, column=0, sticky="ew", pady=(8, 0), padx=(0, 4))
-        ttk.Button(frame, text="Open Terms Folder", command=self._open_seller_terms_folder, style="AssignSoft.TButton").grid(row=1, column=1, sticky="ew", pady=(8, 0), padx=4)
-        ttk.Button(frame, text="Copy Terms Details", command=self._copy_seller_terms_details, style="AssignSoft.TButton").grid(row=1, column=2, sticky="ew", pady=(8, 0), padx=(4, 0))
+        ttk.Label(frame, textvariable=self.seller_terms_status, style="AssignMuted.TLabel", wraplength=520, justify=tk.LEFT).grid(row=0, column=0, columnspan=4, sticky="ew")
+        ttk.Button(frame, text="Edit People Rules", command=self._open_people_rules, style="AssignPrimary.TButton").grid(row=1, column=0, sticky="ew", pady=(8, 0), padx=(0, 4))
+        ttk.Button(frame, text="Refresh", command=self._refresh_seller_terms_status, style="AssignSoft.TButton").grid(row=1, column=1, sticky="ew", pady=(8, 0), padx=4)
+        ttk.Button(frame, text="Open Folder", command=self._open_seller_terms_folder, style="AssignSoft.TButton").grid(row=1, column=2, sticky="ew", pady=(8, 0), padx=4)
+        ttk.Button(frame, text="Copy Details", command=self._copy_seller_terms_details, style="AssignSoft.TButton").grid(row=1, column=3, sticky="ew", pady=(8, 0), padx=(4, 0))
         return frame
 
     def _build_payout_source_panel(self, parent: ttk.Frame) -> ttk.Frame:
@@ -1085,6 +1154,9 @@ class AssignmentRulesDialog(tk.Toplevel):
     def _refresh_seller_terms_status(self) -> None:
         self.seller_terms_status.set("\n".join(seller_terms_health_lines(self._seller_terms_path(), self.companies)))
 
+    def _open_people_rules(self) -> None:
+        open_people_rules_dialog(self, self.pipeline_root, self.companies, self._refresh_seller_terms_status)
+
     def _open_seller_terms_folder(self) -> None:
         folder = self.rules_dir
         try:
@@ -1099,7 +1171,7 @@ class AssignmentRulesDialog(tk.Toplevel):
     def _copy_seller_terms_details(self) -> None:
         self._refresh_seller_terms_status()
         details = {
-            "title": "Seller Terms Health",
+            "title": "People Rules Health",
             "seller_terms_path": str(self._seller_terms_path()),
             "seller_terms_status": self.seller_terms_status.get(),
             "assignment_companies": [
@@ -1185,6 +1257,158 @@ class AssignmentRulesDialog(tk.Toplevel):
 
 def open_assignment_rules_dialog(parent: tk.Tk, pipeline_root: Path, on_saved: Callable[[], None]) -> None:
     dialog = AssignmentRulesDialog(parent, pipeline_root, on_saved)
+    dialog.focus_set()
+    dialog.grab_set()
+
+
+class PeopleRulesDialog(tk.Toplevel):
+    def __init__(self, parent: tk.Misc, pipeline_root: Path, companies: list[dict[str, Any]], on_saved: Callable[[], None] | None = None) -> None:
+        super().__init__(parent)
+        self.title("People Rules")
+        self.geometry("980x620")
+        self.minsize(760, 420)
+        self.transient(parent)
+        self.configure(bg="#121212")
+        self.pipeline_root = Path(pipeline_root)
+        self.rules_dir = self.pipeline_root / "ASSIGNMENT RULES"
+        self.seller_terms_path = self.rules_dir / "seller_terms.csv"
+        self.companies = companies
+        self.on_saved = on_saved
+        self.row_vars: list[dict[str, tk.StringVar]] = []
+        self.status = tk.StringVar(value="People rules control Network Mode seller payouts.")
+        AssignmentRulesDialog._configure_styles(self)  # type: ignore[misc]
+        self._build_ui()
+        self._load_rows()
+
+    def _active_sheet_types(self) -> list[str]:
+        names = [
+            str(company.get("name") or "").strip()
+            for company in self.companies
+            if str(company.get("name") or "").strip() and company.get("active") is not False
+        ]
+        return sorted(set(names), key=str.lower)
+
+    def _build_ui(self) -> None:
+        shell = build_scrollable_dialog_body(self, "Assign.TFrame", padding=16)
+        shell.columnconfigure(0, weight=1)
+        ttk.Label(shell, text="People Rules", style="AssignHeader.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ttk.Label(
+            shell,
+            text="Add seller payout terms here. Sheet Type must match an active company rule.",
+            style="AssignBgMuted.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(0, 12))
+        table = ttk.Frame(shell, style="AssignPanel.TFrame", padding=12)
+        table.grid(row=2, column=0, sticky="nsew")
+        shell.rowconfigure(2, weight=1)
+        self.rows_frame = table
+        headings = ("Seller", "Sheet Type", "Seller Rate", "Deduction", "")
+        widths = (26, 24, 14, 14, 10)
+        for column, (heading, width) in enumerate(zip(headings, widths)):
+            ttk.Label(table, text=heading, style="AssignTitle.TLabel").grid(row=0, column=column, sticky="w", padx=(0, 8), pady=(0, 8))
+            table.columnconfigure(column, weight=1 if column in {0, 1} else 0, minsize=width * 8)
+        actions = ttk.Frame(shell, style="Assign.TFrame")
+        actions.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        actions.columnconfigure(0, weight=1)
+        ttk.Label(actions, textvariable=self.status, style="AssignBgMuted.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Button(actions, text="Add Rule", command=self._add_row, style="AssignSoft.TButton").grid(row=0, column=1, padx=(8, 0))
+        ttk.Button(actions, text="Save", command=self._save, style="AssignPrimary.TButton").grid(row=0, column=2, padx=(8, 0))
+        ttk.Button(actions, text="Close", command=self.destroy, style="AssignSoft.TButton").grid(row=0, column=3, padx=(8, 0))
+
+    def _load_rows(self) -> None:
+        try:
+            rows = read_seller_terms_rows(self.seller_terms_path)
+        except Exception as error:
+            rows = []
+            self.status.set(f"Could not read People Rules: {error}")
+        for row in rows:
+            self._add_row(row)
+        if not rows:
+            self._add_row()
+
+    def _add_row(self, row: dict[str, str] | None = None) -> None:
+        values = {field: str((row or {}).get(field) or "") for field in SELLER_TERMS_FIELDS}
+        vars_by_field = {field: tk.StringVar(value=values[field]) for field in SELLER_TERMS_FIELDS}
+        self.row_vars.append(vars_by_field)
+        self._render_rows()
+
+    def _delete_row(self, index: int) -> None:
+        if 0 <= index < len(self.row_vars):
+            self.row_vars.pop(index)
+        if not self.row_vars:
+            self._add_row()
+            return
+        self._render_rows()
+
+    def _render_rows(self) -> None:
+        for child in self.rows_frame.grid_slaves():
+            row = int(child.grid_info().get("row") or 0)
+            if row > 0:
+                child.destroy()
+        sheet_types = self._active_sheet_types()
+        for index, vars_by_field in enumerate(self.row_vars, start=1):
+            ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller"], style="Assign.TEntry", width=26).grid(row=index, column=0, sticky="ew", padx=(0, 8), pady=(0, 8))
+            ttk.Combobox(
+                self.rows_frame,
+                textvariable=vars_by_field["Sheet Type"],
+                values=sheet_types,
+                style="Assign.TCombobox",
+                width=24,
+            ).grid(row=index, column=1, sticky="ew", padx=(0, 8), pady=(0, 8))
+            ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller Rate"], style="Assign.TEntry", width=14).grid(row=index, column=2, sticky="ew", padx=(0, 8), pady=(0, 8))
+            ttk.Entry(self.rows_frame, textvariable=vars_by_field["Deduction"], style="Assign.TEntry", width=14).grid(row=index, column=3, sticky="ew", padx=(0, 8), pady=(0, 8))
+            ttk.Button(self.rows_frame, text="Delete", command=lambda row_index=index - 1: self._delete_row(row_index), style="AssignSoft.TButton").grid(row=index, column=4, sticky="ew", pady=(0, 8))
+
+    def _validated_rows(self) -> list[dict[str, str]] | None:
+        active_types = {name.lower(): name for name in self._active_sheet_types()}
+        rows: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for index, vars_by_field in enumerate(self.row_vars, start=1):
+            row = {field: var.get().strip() for field, var in vars_by_field.items()}
+            if not any(row.values()):
+                continue
+            if not row["Seller"]:
+                self.status.set(f"Row {index}: Seller is required.")
+                return None
+            if not row["Sheet Type"]:
+                self.status.set(f"Row {index}: Sheet Type is required.")
+                return None
+            if row["Sheet Type"].lower() not in active_types:
+                self.status.set(f"Row {index}: Sheet Type must match an active Company Rule.")
+                return None
+            if not row["Seller Rate"] and not row["Deduction"]:
+                self.status.set(f"Row {index}: enter Seller Rate or Deduction.")
+                return None
+            if row["Seller Rate"] and seller_terms_rate(row["Seller Rate"]) is None:
+                self.status.set(f"Row {index}: Seller Rate is invalid.")
+                return None
+            if row["Deduction"] and seller_terms_rate(row["Deduction"]) is None:
+                self.status.set(f"Row {index}: Deduction is invalid.")
+                return None
+            key = (row["Seller"].lower(), row["Sheet Type"].lower())
+            if key in seen:
+                self.status.set(f"Row {index}: duplicate Seller and Sheet Type.")
+                return None
+            seen.add(key)
+            row["Sheet Type"] = active_types[row["Sheet Type"].lower()]
+            rows.append(row)
+        return rows
+
+    def _save(self) -> None:
+        rows = self._validated_rows()
+        if rows is None:
+            return
+        try:
+            write_seller_terms_rows(self.seller_terms_path, rows)
+        except Exception as error:
+            messagebox.showerror("Save People Rules", str(error))
+            return
+        self.status.set(f"Saved {len(rows)} People Rule(s).")
+        if self.on_saved:
+            self.on_saved()
+
+
+def open_people_rules_dialog(parent: tk.Misc, pipeline_root: Path, companies: list[dict[str, Any]], on_saved: Callable[[], None] | None = None) -> None:
+    dialog = PeopleRulesDialog(parent, pipeline_root, companies, on_saved)
     dialog.focus_set()
     dialog.grab_set()
 

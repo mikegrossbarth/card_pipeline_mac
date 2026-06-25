@@ -2102,7 +2102,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy.save_working_sheet()
         self.assertTrue(showinfo.called)
         self.assertEqual(showinfo.call_args.args[0], "No seller payout rows")
-        self.assertIn("seller_terms.csv row", showinfo.call_args.args[1])
+        self.assertIn("People Rules row", showinfo.call_args.args[1])
         self.assertIn("137915162", showinfo.call_args.args[1])
         self.assertIn("missing comp/card ladder value", showinfo.call_args.args[1])
         self.assertFalse(dummy.applied_terms)
