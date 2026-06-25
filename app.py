@@ -808,16 +808,32 @@ class CardPipelineApp(tk.Tk):
             "Soft.TButton",
             font=("Segoe UI Semibold", 10),
             padding=(16, 9),
-            background=palette["soft_button"],
-            foreground=palette["text"],
+            background=palette["button"],
+            foreground="#000000",
             borderwidth=0,
             focusthickness=0,
             relief=tk.FLAT,
         )
         style.map(
             "Soft.TButton",
-            background=[("pressed", palette["border"]), ("active", palette["soft_button_hover"]), ("disabled", "#1a1a1a")],
-            foreground=[("disabled", "#777777")],
+            background=[("pressed", palette["button_pressed"]), ("active", palette["button_hover"]), ("disabled", "#535353")],
+            foreground=[("disabled", "#b3b3b3")],
+            relief=[("pressed", tk.FLAT), ("!pressed", tk.FLAT)],
+        )
+        style.configure(
+            "TButton",
+            font=("Segoe UI Semibold", 10),
+            padding=(16, 9),
+            background=palette["button"],
+            foreground="#000000",
+            borderwidth=0,
+            focusthickness=0,
+            relief=tk.FLAT,
+        )
+        style.map(
+            "TButton",
+            background=[("pressed", palette["button_pressed"]), ("active", palette["button_hover"]), ("disabled", "#535353")],
+            foreground=[("disabled", "#b3b3b3")],
             relief=[("pressed", tk.FLAT), ("!pressed", tk.FLAT)],
         )
         style.configure(
@@ -5057,10 +5073,10 @@ class CardPipelineApp(tk.Tk):
             pressed = str(palette.get("button_pressed") or "#169c46")
             fg = "#000000"
         else:
-            bg = str(palette.get("soft_button") or "#2a2a2a")
-            hover = str(palette.get("soft_button_hover") or "#3a3a3a")
-            pressed = str(palette.get("border") or "#333333")
-            fg = str(palette.get("text") or "#ffffff")
+            bg = str(palette.get("button") or "#1ed760")
+            hover = str(palette.get("button_hover") or "#1fdf64")
+            pressed = str(palette.get("button_pressed") or "#169c46")
+            fg = "#000000"
         button = tk.Label(
             parent,
             text=text,
