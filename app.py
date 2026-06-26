@@ -1937,6 +1937,8 @@ class CardPipelineApp(tk.Tk):
         normalized["card_ladder_value"] = self._money_value(normalized.get("card_ladder_value"))
         normalized["card_ladder_comps_average"] = self._money_value(normalized.get("card_ladder_comps_average") or normalized.get("comps"))
         normalized["cy_value"] = self._money_value(normalized.get("cy_value") or normalized.get("cy_estimate"))
+        cy_confidence = normalized.get("cy_confidence")
+        normalized["cy_confidence"] = cy_confidence.strip() if isinstance(cy_confidence, str) else "" if cy_confidence is None else cy_confidence
         normalized["inventory_value"] = self._money_value(normalized.get("inventory_value") or normalized.get("value") or normalized.get("sale_price") or normalized.get("estimated_payout"))
         normalized["best_company"] = str(normalized.get("best_company") or normalized.get("company") or "").strip()
         normalized["estimated_payout"] = self._money_value(normalized.get("estimated_payout") or normalized.get("payout"))
@@ -1973,6 +1975,7 @@ class CardPipelineApp(tk.Tk):
                 "card_ladder_value": row.card_ladder_value,
                 "card_ladder_comps_average": row.card_ladder_comps_average,
                 "cy_value": row.cy_value,
+                "cy_confidence": getattr(row, "cy_confidence", None),
                 "inventory_value": row.card_ladder_comps_average or row.card_ladder_value or row.cy_value,
                 "best_company": row.best_company,
                 "estimated_payout": row.estimated_payout,
@@ -2772,6 +2775,7 @@ class CardPipelineApp(tk.Tk):
                         "card_ladder_value": row.get("card_ladder_value"),
                         "card_ladder_comps_average": row.get("card_ladder_comps_average"),
                         "cy_value": row.get("cy_value"),
+                        "cy_confidence": row.get("cy_confidence"),
                         "inventory_value": row.get("card_ladder_comps_average") or row.get("card_ladder_value") or row.get("cy_value"),
                         "best_company": row.get("best_company") or "",
                         "estimated_payout": row.get("estimated_payout"),
@@ -2828,6 +2832,7 @@ class CardPipelineApp(tk.Tk):
             card_ladder_value=card_ladder_value,
             card_ladder_comps_average=comps_average,
             cy_value=cy_value,
+            cy_confidence=record.get("cy_confidence"),
             best_company=str(record.get("best_company") or ""),
             estimated_payout=self._money_value(record.get("estimated_payout")),
             company_pile=True,
@@ -2872,6 +2877,7 @@ class CardPipelineApp(tk.Tk):
             normalized.get("card_ladder_value") is not None
             and normalized.get("card_ladder_comps_average") is not None
             and normalized.get("cy_value") is not None
+            and str(normalized.get("cy_confidence") or "").strip()
         ):
             return normalized
         cert = scan_to_cert(normalized.get("cert_number"))
@@ -2893,6 +2899,8 @@ class CardPipelineApp(tk.Tk):
         for source_field in ("card_ladder_value", "card_ladder_comps_average", "cy_value"):
             if normalized.get(source_field) is None:
                 normalized[source_field] = self._money_value(row.get(source_field))
+        if not str(normalized.get("cy_confidence") or "").strip() and row.get("cy_confidence") is not None:
+            normalized["cy_confidence"] = row.get("cy_confidence")
         return self._normalize_inventory_record(normalized)
 
     def _enrich_inventory_record_assignment(self, record: dict[str, object], force: bool = False) -> dict[str, object]:
@@ -3921,6 +3929,7 @@ class CardPipelineApp(tk.Tk):
             f"CL value: {format_money(self._money_value(normalized.get('card_ladder_value')) or 0.0)}",
             f"Comps: {format_money(self._money_value(normalized.get('card_ladder_comps_average')) or 0.0)}",
             f"CY estimate: {format_money(self._money_value(normalized.get('cy_value')) or 0.0)}",
+            f"CY confidence: {normalized.get('cy_confidence') or 'blank'}",
             "",
             f"Recommended: {recommendation.company or NO_COMPANY_TAKES_LABEL} | {format_money(recommendation.payout) if recommendation.payout is not None else 'no payout'}",
             "",

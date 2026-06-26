@@ -14,6 +14,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from openpyxl import Workbook
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -3888,6 +3890,29 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(rows[0]["cy_confidence"], 4)
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_received_inventory_candidate_preserves_cy_confidence(self) -> None:
+        class InventoryCandidateDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "POKE_TEST.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Company", "Sport", "Card Description", "Purchase Price", "Card Ladder Value", "Comps", "CY Estimate", "CY Confidence", "Source", "RECEIVED"])
+            sheet.append(["12345678", "PSA", "pokemon", "Pokemon Test PSA 10", 50, None, None, 86, 6, "CY import", "X"])
+            workbook.save(path)
+            workbook.close()
+
+            records = InventoryCandidateDummy()._received_inventory_candidate_records_for_sheet("Received", path, "Kevin Hambone", company_keys=set())
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["cy_value"], 86.0)
+        self.assertEqual(records[0]["cy_confidence"], 6)
 
     def test_edit_inventory_row_updates_visible_fields_and_rebuilds_key(self) -> None:
         class FakeTree:
