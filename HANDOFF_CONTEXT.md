@@ -38,6 +38,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Mac installer now assumes a fresh Mac may have nothing installed: `install_dependencies.sh` bootstraps Homebrew when missing, installs/verifies Homebrew Python, the matching versioned `python-tk@...` formula, `cliclick`, and `tesseract`, marks `scripts/macos/cgscroll` executable, and best-effort installs Google Chrome and Google Drive for desktop through Homebrew casks. CourtYard/CYCardScanner still has to be installed/opened/logged-in manually and granted macOS privacy permissions.
 - Release-readiness audit: Company Rules naming was aligned across setup docs, user guide images, diagnostics, and OAuth error copy; the stale Network Mode handoff note was corrected so seller sheets may save before value data exists and show pending seller-payout warnings until comps/CL/CY values are available. No Card Ladder helper fallback behavior was changed.
 - Documentation refresh: `docs/LUCAS_USER_GUIDE.md`, `FIRST_RUN_SETUP.md`, `README.md`, and this handoff were updated for current Network Mode/People Rules behavior, per-company Google Keep sync, Fanatics weekly sheet format, and current setup workflow. The user guide now includes `docs/images/network-mode-people-rules.svg`.
 - People Rules now labels seller percentage fields as `Seller Rate %` and `Deduction %`. The UI accepts numbers only, such as `90`, `92.5`, `10`, or `10.5`, and rejects values with percent signs. Legacy CSV values with `%` still load and display as number-only values. Live shared `seller_terms.csv` was normalized to `Jon,ARENA CLUB,,10`, preserving deduction semantics without the percent sign.
@@ -146,8 +147,9 @@ Keep this Mac-only unless the user explicitly requests Windows CourtYard support
 
 Each Mac needs:
 
-- Google Chrome.
-- Python 3.11+ with Tkinter.
+- Google Chrome, installed manually or by `install_dependencies.sh`.
+- Python 3.11+ with Tkinter, installed manually or by `install_dependencies.sh`.
+- Homebrew, `cliclick`, `tesseract`, and executable `scripts/macos/cgscroll`; `install_dependencies.sh` handles these on a clean Mac.
 - Project `.venv` created by `./install_dependencies.sh`.
 - Local `.env` created from `.env.example`.
 - `GOOGLE_API_KEY` for Photo OCR and Card Ladder screenshot OCR fallback.

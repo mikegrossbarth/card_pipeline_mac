@@ -9,8 +9,9 @@ L.U.C.A.S stands for Lot Upload, Comping & Assignment System. It helps you creat
 For a complete Mac setup, the computer needs:
 
 - macOS with Terminal access
-- Google Chrome
-- Python 3.11 or newer with Tkinter
+- Google Chrome, installed manually or by `install_dependencies.sh`
+- Python 3.11 or newer with Tkinter, installed manually or by `install_dependencies.sh`
+- Homebrew, `cliclick`, and `tesseract`, installed automatically by `install_dependencies.sh` when missing
 - this L.U.C.A.S Mac project folder
 - a local `.venv` created by `install_dependencies.sh`
 - a data folder with `WORKING SHEETS`, `INCOMING SHEETS`, and `RECEIVED SHEETS`
@@ -69,17 +70,17 @@ cardladder-autocomp
 
 ## Step 2: Install Google Chrome
 
-Install Google Chrome from:
+Google Chrome is required for Card Ladder automation because the app talks to a local Chrome extension.
+
+`install_dependencies.sh` tries to install Chrome through Homebrew automatically. If that fails or you prefer to install it yourself, download Chrome from:
 
 ```text
 https://www.google.com/chrome/
 ```
 
-Chrome is required for Card Ladder automation because the app talks to a local Chrome extension.
-
 ## Step 3: Install Python
 
-Install Python 3.11 or newer for macOS.
+L.U.C.A.S needs Python 3.11 or newer with Tkinter.
 
 Recommended path:
 
@@ -89,11 +90,11 @@ https://www.python.org/downloads/macos/
 
 The python.org installer is recommended because it normally includes Tkinter, which L.U.C.A.S needs for the desktop UI.
 
-Homebrew can also work:
+`install_dependencies.sh` now bootstraps Homebrew when needed and installs Homebrew Python plus matching Tkinter support automatically. Manual Homebrew commands, if ever needed, are:
 
 ```bash
 brew install python
-brew install python-tk
+brew install python-tk@3.13
 ```
 
 ## Step 4: Run The Installer
@@ -107,13 +108,17 @@ chmod +x install_dependencies.sh run_card_pipeline.sh "Run Card Pipeline.command
 
 The installer will:
 
-1. find Python 3.11 or newer
-2. create `.venv`
-3. install dependencies from `requirements.txt`
-4. verify Tkinter is available
-5. create `.env` from `.env.example` if `.env` does not exist
+1. install Homebrew if it is missing
+2. install or verify Python, `python-tk`, `cliclick`, and `tesseract`
+3. best-effort install Google Chrome and Google Drive for desktop through Homebrew casks
+4. find Python 3.11 or newer with Tkinter
+5. create `.venv`
+6. install dependencies from `requirements.txt`
+7. verify Tkinter is available
+8. make launcher scripts and the CY scroll helper executable
+9. create `.env` from `.env.example` if `.env` does not exist
 
-If Tkinter is missing, install the python.org Python build or install tkinter support for your Homebrew Python.
+If Homebrew cask install cannot install Chrome or Google Drive automatically, install those manually. CourtYard/CYCardScanner is still manual: install it, open it once, log in, and grant macOS privacy permissions.
 
 ## Step 5: Create The Sheet Folders
 

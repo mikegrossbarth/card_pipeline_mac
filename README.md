@@ -12,20 +12,21 @@ For a full operating manual with workflow pictures, see [docs/LUCAS_USER_GUIDE.m
 
 ## Install
 
-1. Install Google Chrome.
-2. Install Python 3.11 or newer for macOS. The python.org installer is the easiest path because it includes Tkinter.
-3. Download or clone this project.
-4. Open Terminal in the project folder.
-5. Run:
+1. Download or clone this project.
+2. Open Terminal in the project folder.
+3. Run:
 
 ```bash
 chmod +x install_dependencies.sh run_card_pipeline.sh "Run Card Pipeline.command" create_macos_app.sh install_macos_shortcut.sh
 ./install_dependencies.sh
 ```
 
-6. Open `.env`, which the installer creates from `.env.example`.
-7. Add `GOOGLE_API_KEY`, `GOOGLE_SHEETS_OAUTH_CLIENT_ID`, `GOOGLE_SHEETS_OAUTH_CLIENT_SECRET`, and `LUCAS_WORKING_SHEETS_DIR`.
-8. Launch with:
+The installer is meant for a brand-new Mac. It installs Homebrew when missing, installs/verifies Python, Tkinter support, `cliclick`, and `tesseract`, makes the CY scroll helper executable, and best-effort installs Google Chrome and Google Drive for desktop through Homebrew casks.
+
+4. Open `.env`, which the installer creates from `.env.example`.
+5. Add `GOOGLE_API_KEY`, `GOOGLE_SHEETS_OAUTH_CLIENT_ID`, `GOOGLE_SHEETS_OAUTH_CLIENT_SECRET`, and `LUCAS_WORKING_SHEETS_DIR`.
+6. Install/open/log into CourtYard/CYCardScanner manually if you need CY comps.
+7. Launch with:
 
 ```bash
 ./run_card_pipeline.sh
@@ -118,7 +119,7 @@ Use the `Comp` tab for comping. Select a saved sheet, choose whether to run `Car
 
 The app stores Card Ladder value, comps, assignment, payout, and status in the active workbook output. Rows marked `invalid_cert` are skipped by empty-comps-only runs.
 
-On macOS, L.U.C.A.S can submit certs to the local CourtYard app and fill `CY value`. This uses the bundled macOS CourtYard automation in `comp_engine/cy_automation` plus `scripts/macos/cgscroll`. It expects `CYCardScanner`, `cliclick`, and `tesseract` to be installed locally. When a CY batch finishes, L.U.C.A.S quits CourtYard. Disable the lookup with `LUCAS_DISABLE_CY_LOOKUP=1`.
+On macOS, L.U.C.A.S can submit certs to the local CourtYard app and fill `CY value`. This uses the bundled macOS CourtYard automation in `comp_engine/cy_automation` plus `scripts/macos/cgscroll`. `install_dependencies.sh` installs `cliclick` and `tesseract` and marks `cgscroll` executable. CourtYard/CYCardScanner itself must still be installed, opened, logged in, and granted macOS Accessibility/Screen Recording permissions. When a CY batch finishes, L.U.C.A.S quits CourtYard. Disable the lookup with `LUCAS_DISABLE_CY_LOOKUP=1`.
 
 ## Assignment
 
@@ -185,6 +186,6 @@ outputs/
 
 If the app does not open, run `./run_card_pipeline.sh` from Terminal so macOS keeps the error visible.
 
-If `import tkinter` fails, install a Python build with Tkinter. The python.org macOS installer is usually the simplest fix. With Homebrew Python, install `python-tk`.
+If `import tkinter` fails, install a Python build with Tkinter. The python.org macOS installer is usually the simplest fix. With Homebrew Python, install the matching Tk package, such as `python-tk@3.13`.
 
 If Chrome blocks the extension or it does not check in, make sure the unpacked extension is loaded from this Mac project copy, Chrome is open, and Card Ladder is logged in.
