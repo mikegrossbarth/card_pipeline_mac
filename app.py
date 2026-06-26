@@ -1631,6 +1631,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(action_row, text="Add Card", command=self.add_raw_inventory_card, style="Primary.TButton").pack(side=tk.LEFT)
         ttk.Button(action_row, text="Sync Received to Inventory", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Update Best Company/Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Explain Selected", command=self.explain_selected_inventory_assignment, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Recomp Visible Cards", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Import Mobile Queue", command=self.import_mobile_queue_file, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
