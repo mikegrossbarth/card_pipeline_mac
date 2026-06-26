@@ -1012,14 +1012,20 @@ class AssignmentEngineTests(unittest.TestCase):
         rules = assignment_engine.parse_rules(
             "\n".join(
                 [
+                    "SPORTS: PSA BGS SGC",
                     "1 Piece $1.75-2.5k None 5 4+",
+                    "Poke $10-100(FIRM)3 No Limit 3+",
                     "- NO 7-10k CGC",
                     "- DO NOT BUY ANY MARIO OR LUIGI",
                 ]
             )
         )
 
+        self.assertEqual(rules.include, [])
         self.assertEqual((rules.ranges[0].min_price, rules.ranges[0].max_price), (1750.0, 2500.0))
+        poke_rule = next(rule for rule in rules.ranges if rule.min_price == 10.0 and rule.max_price == 100.0)
+        self.assertEqual(assignment_engine.canonical_sport_label(poke_rule.matcher), "pokemon")
+        self.assertTrue(assignment_engine.rule_matches(poke_rule, "Pokemon test PSA 10", 86.0))
         self.assertTrue(any(rule.block and rule.min_price == 7000.0 and rule.max_price == 10000.0 for rule in rules.blocks))
         self.assertTrue(any(rule.block and "MARIO OR LUIGI" in rule.matcher for rule in rules.blocks))
 

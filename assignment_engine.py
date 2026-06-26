@@ -1369,6 +1369,8 @@ def parse_rules(text: str, accept_all: bool = False) -> CompanyRules:
         if key_value:
             key = normalize_key(key_value.group(1))
             value = key_value.group(2).strip()
+            if key in {"sports", "sport"} and is_grader_list(value):
+                continue
             if key in {"include", "includekeywords", "keywords", "sports", "sport"}:
                 rules.include.extend(split_values(value))
                 continue
@@ -1481,10 +1483,18 @@ def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:
         )
     range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|–|—)\s*\$?\s*([\d,.]+k?)", text, re.I)
     if range_match:
-        matcher = f"{text[:range_match.start()]} {text[range_match.end():]}".strip(" -:|")
+        matcher = range_rule_matcher_text(text, range_match.start(), range_match.end(), block=block)
         min_price, max_price = parse_money_range(range_match.group(1), range_match.group(2))
         return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=min_price, max_price=max_price, block=block)
     return AssignmentRule(matcher=text, block=block)
+
+
+def range_rule_matcher_text(text: str, range_start: int, range_end: int, block: bool = False) -> str:
+    before = text[:range_start].strip(" -:|")
+    after = text[range_end:].strip(" -:|")
+    if block:
+        return f"{before} {after}".strip(" -:|")
+    return before or after
 
 
 def rule_matcher_label(value: Any) -> str:
@@ -1492,6 +1502,11 @@ def rule_matcher_label(value: Any) -> str:
     if is_generic_rule_label(label):
         return ""
     return label
+
+
+def is_grader_list(value: Any) -> bool:
+    tokens = re.findall(r"\b[A-Z]{2,4}\b", str(value or "").upper())
+    return bool(tokens) and all(token in {"PSA", "BGS", "SGC", "CGC"} for token in tokens)
 
 
 def is_generic_rule_label(value: Any) -> bool:
