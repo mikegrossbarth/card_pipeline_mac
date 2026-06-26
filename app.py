@@ -1409,8 +1409,7 @@ class CardPipelineApp(tk.Tk):
         )
         self.home_sheet_list.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         self.home_sheet_list.bind("<<ListboxSelect>>", lambda _event: self._load_home_selected_marker())
-        self.home_sheet_list.bind("<Button-3>", self._show_home_sheet_context_menu)
-        self.home_sheet_list.bind("<Button-2>", self._show_home_sheet_context_menu)
+        self._bind_context_menu(self.home_sheet_list, self._show_home_sheet_context_menu)
         self._make_colored_button(sheet_panel, "Refresh Home View", self.refresh_home, variant="primary").pack(fill=tk.X)
 
         right = ttk.Frame(body, style="App.TFrame")
@@ -1665,8 +1664,7 @@ class CardPipelineApp(tk.Tk):
         )
         self.inventory_tree.configure(selectmode="extended")
         self._configure_sortable_tree_headings(self.inventory_tree, INVENTORY_HEADINGS, "inventory")
-        self.inventory_tree.bind("<Button-3>", self._show_inventory_context_menu)
-        self.inventory_tree.bind("<Button-2>", self._show_inventory_context_menu)
+        self._bind_context_menu(self.inventory_tree, self._show_inventory_context_menu)
         self.inventory_tree.bind("<Button-1>", self._inventory_bulk_click, add="+")
         self.inventory_tree.bind("<Double-1>", self._begin_inventory_bulk_edit, add="+")
         self.inventory_tree.bind("<Return>", self._begin_inventory_bulk_edit, add="+")
@@ -1779,8 +1777,7 @@ class CardPipelineApp(tk.Tk):
             "profit": "Profit",
             "sheet": "Company Sheet",
         }, "profit")
-        self.profit_tree.bind("<Button-3>", self._show_profit_context_menu)
-        self.profit_tree.bind("<Button-2>", self._show_profit_context_menu)
+        self._bind_context_menu(self.profit_tree, self._show_profit_context_menu)
 
     def _load_profit_ledger(self) -> list[dict[str, object]]:
         if not PROFIT_LEDGER_PATH.exists():
@@ -3967,6 +3964,10 @@ class CardPipelineApp(tk.Tk):
         actions.pack(fill=tk.X, pady=(12, 0))
         ttk.Button(actions, text="Copy Details", command=lambda: self._copy_inventory_text(explanation, "assignment explanation"), style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(actions, text="Close", command=popup.destroy, style="Primary.TButton").pack(side=tk.RIGHT)
+
+    def _bind_context_menu(self, widget: tk.Widget, callback) -> None:
+        for sequence in ("<Button-3>", "<Button-2>", "<Control-Button-1>", "<Command-Button-1>"):
+            widget.bind(sequence, callback, add="+")
 
     def _show_inventory_context_menu(self, event) -> str:
         if not hasattr(self, "inventory_tree"):
