@@ -472,7 +472,7 @@ class CYLookupTests(unittest.TestCase):
         state.set_rows([row])
 
         with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
-                patch.object(bridge_server, "lookup_cy_buy_price", return_value=(87.5, "ok")):
+                patch.object(bridge_server, "lookup_cy_buy_price", return_value=(87.5, 4, "ok")):
             state.post_cardladder_result(
                 {
                     "excelRow": 2,
@@ -489,6 +489,7 @@ class CYLookupTests(unittest.TestCase):
 
         self.assertEqual(row.card_ladder_value, 100)
         self.assertEqual(row.cy_value, 87.5)
+        self.assertEqual(row.cy_confidence, 4)
         self.assertEqual(row.status, "Card Ladder OK")
         self.assertIn("CY value: $87.50", row.notes)
 
@@ -564,7 +565,7 @@ class CYLookupTests(unittest.TestCase):
         state.set_rows(rows)
 
         with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
-                patch.object(bridge_server, "lookup_cy_buy_price", return_value=(87.5, "ok")), \
+                patch.object(bridge_server, "lookup_cy_buy_price", return_value=(87.5, 4, "ok")), \
                 patch.object(bridge_server, "close_cy_adapter") as close_cy:
             state.start_cy_lookups(rows)
             deadline = time.time() + 2
@@ -574,6 +575,7 @@ class CYLookupTests(unittest.TestCase):
                 time.sleep(0.01)
 
         self.assertEqual([row.cy_value for row in rows], [87.5])
+        self.assertEqual(rows[0].cy_confidence, 4)
         self.assertEqual(rows[0].status, "CY OK")
         self.assertGreaterEqual(close_cy.call_count, 1)
 

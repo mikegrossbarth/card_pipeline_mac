@@ -361,10 +361,15 @@ class BridgeState:
 
     def _cy_lookup_worker(self, excel_row: int, cert_number: str, slab_type: str) -> None:
         value = None
+        confidence = None
         message = ""
         should_close = False
         try:
-            value, message = lookup_cy_buy_price(cert_number, slab_type)
+            result = lookup_cy_buy_price(cert_number, slab_type)
+            if len(result) == 3:
+                value, confidence, message = result
+            else:
+                value, message = result
         except Exception as error:
             message = str(error)
             debug_log(f"cy_lookup_error row={excel_row} cert={cert_number} slab={slab_type} error={message}")
@@ -377,10 +382,11 @@ class BridgeState:
                 is_cy_only_status = existing_status in {"CY queued", "CY unavailable", "CY OK"}
                 if value is not None:
                     row.cy_value = value
+                    row.cy_confidence = confidence
                     if is_cy_only_status:
                         row.status = "CY OK"
                     row.notes = append_note(row.notes, f"CY value: ${value:,.2f}")
-                    debug_log(f"cy_lookup_ok row={excel_row} cert={cert_number} value={value}")
+                    debug_log(f"cy_lookup_ok row={excel_row} cert={cert_number} value={value} confidence={confidence}")
                 elif message:
                     if is_cy_only_status:
                         row.status = "CY unavailable"
@@ -557,13 +563,13 @@ def cy_lookup_enabled(platform: str | None = None) -> bool:
     return (platform or sys.platform) == "darwin"
 
 
-def lookup_cy_buy_price(cert_number: str, slab_type: str) -> tuple[float | None, str]:
+def lookup_cy_buy_price(cert_number: str, slab_type: str) -> tuple[float | None, object | None, str]:
     cert_number = str(cert_number or "").strip()
     slab_type = clean_grader(slab_type)
     if not cert_number:
-        return None, "missing cert number"
+        return None, None, "missing cert number"
     if slab_type not in {"PSA", "BGS", "CGC", "SGC"}:
-        return None, f"unsupported slab type {slab_type or 'unknown'}"
+        return None, None, f"unsupported slab type {slab_type or 'unknown'}"
     # CourtYard is a single macOS GUI, so only one automation sequence can safely
     # click/type/read at a time even when LUCAS has several CY worker threads.
     with _CY_LOOKUP_LOCK:
@@ -571,11 +577,12 @@ def lookup_cy_buy_price(cert_number: str, slab_type: str) -> tuple[float | None,
         payload = get_cy_adapter().submit_cert_lookup(cert_number, slab_type)
         debug_log(f"cy_lookup_gui_done cert={cert_number} slab={slab_type}")
     value = parse_value(payload.get("cy_buy_price"))
+    confidence = payload.get("cy_confidence")
     if value is not None:
-        return value, str(payload.get("message") or "CY lookup OK")
+        return value, confidence, str(payload.get("message") or "CY lookup OK")
     status = str(payload.get("status") or "").strip()
     message = str(payload.get("message") or payload.get("detail") or "CY value unavailable").strip()
-    return None, f"{status}: {message}" if status else message
+    return None, confidence, f"{status}: {message}" if status else message
 
 
 def get_cy_adapter() -> CYMacOSAdapter:
