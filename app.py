@@ -1365,7 +1365,7 @@ class CardPipelineApp(tk.Tk):
 
     def _build_table(self, parent: ttk.Frame, editable: bool = False, columns: tuple[str, ...] = DISPLAY_COLUMNS) -> ttk.Treeview:
         content = ttk.Frame(parent, style="Panel.TFrame", padding=(1, 1))
-        content.configure(width=900, height=320)
+        content.configure(width=900, height=260)
         content.grid_propagate(False)
         content.pack(fill=tk.BOTH, expand=True)
         tree = ttk.Treeview(content, columns=columns, show="headings", selectmode="extended")
@@ -1425,7 +1425,7 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_list = tk.Listbox(
             sheet_panel,
             width=1,
-            height=28,
+            height=10,
             activestyle="none",
             exportselection=False,
             bg=palette["panel"],
@@ -1482,24 +1482,26 @@ class CardPipelineApp(tk.Tk):
         widths: dict[str, int],
         height: int,
         scrollbars: bool = False,
+        max_height: int = 180,
     ) -> ttk.Treeview:
-        container = ttk.Frame(parent, style="Panel.TFrame") if scrollbars else parent
+        container = ttk.Frame(parent, style="Panel.TFrame")
+        table_height = max(120, min(max_height, height * 24 + 42))
+        container.configure(width=560, height=table_height)
+        container.grid_propagate(False)
+        container.pack_propagate(False)
         tree = ttk.Treeview(container, columns=columns, show="headings", selectmode="browse", height=height)
         for col in columns:
             tree.heading(col, text=headings[col], anchor=tk.W)
             tree.column(col, width=widths[col], minwidth=60, stretch=col == "sheet", anchor=tk.W)
-        if scrollbars:
-            container.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-            tree.grid(row=0, column=0, sticky="nsew")
-            y_scroll = ttk.Scrollbar(container, orient=tk.VERTICAL, command=tree.yview)
-            y_scroll.grid(row=0, column=1, sticky="ns")
-            x_scroll = ttk.Scrollbar(container, orient=tk.HORIZONTAL, command=tree.xview)
-            x_scroll.grid(row=1, column=0, sticky="ew")
-            tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
-            container.columnconfigure(0, weight=1)
-            container.rowconfigure(0, weight=1)
-        else:
-            tree.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        container.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        tree.grid(row=0, column=0, sticky="nsew")
+        y_scroll = ttk.Scrollbar(container, orient=tk.VERTICAL, command=tree.yview)
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll = ttk.Scrollbar(container, orient=tk.HORIZONTAL, command=tree.xview)
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
         return tree
 
     def _configure_sortable_tree_headings(self, tree: ttk.Treeview, headings: dict[str, str], table: str) -> None:
@@ -1640,26 +1642,26 @@ class CardPipelineApp(tk.Tk):
     def _build_inventory_tab(self) -> None:
         controls = ttk.Frame(self.inventory_tab, style="Panel.TFrame", padding=(16, 12))
         controls.pack(fill=tk.X, pady=(0, 10))
+        controls.columnconfigure(9, weight=1)
         ttk.Label(controls, text="Inventory", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, sticky="w")
-        ttk.Label(controls, text="Person", style="Muted.TLabel").grid(row=0, column=1, sticky="e", padx=(18, 6))
+        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=1, columnspan=8, sticky="e", padx=(18, 0))
+        ttk.Label(controls, text="Person", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.inventory_person_combo = ttk.Combobox(controls, textvariable=self.inventory_person_var, width=22)
-        self.inventory_person_combo.grid(row=0, column=2, sticky="w")
+        self.inventory_person_combo.grid(row=1, column=1, sticky="w", padx=(8, 14), pady=(10, 0))
         self._bind_person_autocomplete(self.inventory_person_combo, refresh_callback=self.refresh_inventory_tab)
         self.inventory_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_inventory_tab(), add="+")
-        ttk.Label(controls, text="Sport", style="Muted.TLabel").grid(row=0, column=3, sticky="e", padx=(14, 6))
+        ttk.Label(controls, text="Sport", style="Muted.TLabel").grid(row=1, column=2, sticky="e", padx=(0, 6), pady=(10, 0))
         sport_combo = ttk.Combobox(controls, textvariable=self.inventory_sport_var, values=ASSIGNMENT_CATEGORY_OPTIONS, width=14)
-        sport_combo.grid(row=0, column=4, sticky="w")
+        sport_combo.grid(row=1, column=3, sticky="w", padx=(0, 14), pady=(10, 0))
         sport_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_inventory_tab(), add="+")
-        ttk.Label(controls, text="Min", style="Muted.TLabel").grid(row=0, column=5, sticky="e", padx=(14, 6))
-        ttk.Entry(controls, textvariable=self.inventory_min_var, width=9).grid(row=0, column=6, sticky="w")
-        ttk.Label(controls, text="Max", style="Muted.TLabel").grid(row=0, column=7, sticky="e", padx=(10, 6))
-        ttk.Entry(controls, textvariable=self.inventory_max_var, width=9).grid(row=0, column=8, sticky="w")
-        controls.columnconfigure(9, weight=1)
-        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=9, sticky="e", padx=(18, 0))
-        ttk.Label(controls, text="Search ID/Cert/Card", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
+        ttk.Label(controls, text="Min", style="Muted.TLabel").grid(row=1, column=4, sticky="e", padx=(0, 6), pady=(10, 0))
+        ttk.Entry(controls, textvariable=self.inventory_min_var, width=9).grid(row=1, column=5, sticky="w", pady=(10, 0))
+        ttk.Label(controls, text="Max", style="Muted.TLabel").grid(row=1, column=6, sticky="e", padx=(10, 6), pady=(10, 0))
+        ttk.Entry(controls, textvariable=self.inventory_max_var, width=9).grid(row=1, column=7, sticky="w", pady=(10, 0))
+        ttk.Label(controls, text="Search ID/Cert/Card", style="Muted.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=2, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
         action_row = ttk.Frame(controls, style="Panel.TFrame")
-        action_row.grid(row=2, column=0, columnspan=11, sticky="w", pady=(10, 0))
+        action_row.grid(row=3, column=0, columnspan=10, sticky="w", pady=(10, 0))
         ttk.Button(action_row, text="Add Card", command=self.add_raw_inventory_card, style="Primary.TButton").pack(side=tk.LEFT)
         ttk.Button(action_row, text="Sync Received to Inventory", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Update Best Company/Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
@@ -1682,7 +1684,7 @@ class CardPipelineApp(tk.Tk):
         )
         self.inventory_bulk_toggle.pack(side=tk.LEFT, padx=(14, 0))
         self._style_inventory_bulk_toggle()
-        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=11, sticky="w", pady=(8, 0))
+        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=4, column=0, columnspan=10, sticky="w", pady=(8, 0))
         for var in (self.inventory_sport_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var):
             var.trace_add("write", lambda *_args: self._schedule_inventory_filter_refresh())
 
@@ -1754,7 +1756,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(chart_panel, textvariable=self.profit_chart_title_var, style="Panel.TLabel").pack(anchor=tk.W)
         self.profit_chart_canvas = tk.Canvas(
             chart_panel,
-            height=230,
+            height=90,
             bg="#1f1f1f",
             highlightthickness=1,
             highlightbackground="#333333",
@@ -1794,6 +1796,7 @@ class CardPipelineApp(tk.Tk):
             },
             widths={"date": 95, "company": 150, "card": 440, "cert": 110, "purchase": 105, "sale": 105, "profit": 105, "sheet": 220},
             height=18,
+            max_height=120,
         )
         self.profit_tree.tag_configure("profit_positive", foreground="#d7fbe8")
         self.profit_tree.tag_configure("profit_negative", foreground="#ffd1d1")
