@@ -527,8 +527,6 @@ class CardPipelineApp(tk.Tk):
         self._tab_scroll_hosts: dict[str, tk.Widget] = {}
         self._tab_scroll_contents: list[tk.Widget] = []
         self._tab_scroll_bound_widgets: set[str] = set()
-        self._tab_scroll_min_width = 1180
-        self._tab_scroll_min_height = 760
 
         self.events: queue.Queue[str] = queue.Queue()
         self.intake_rows: list[WorkbookRow] = []
@@ -807,10 +805,9 @@ class CardPipelineApp(tk.Tk):
         x_scroll = ttk.Scrollbar(host, orient=tk.HORIZONTAL, command=canvas.xview)
         canvas.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
         canvas.grid(row=0, column=0, sticky="nsew")
-        y_scroll.grid(row=0, column=1, sticky="ns")
-        x_scroll.grid(row=1, column=0, sticky="ew")
         host.columnconfigure(0, weight=1)
         host.rowconfigure(0, weight=1)
+        scrollbars_visible = {"x": False, "y": False}
 
         content = ttk.Frame(canvas, style="App.TFrame")
         window_id = canvas.create_window((0, 0), window=content, anchor=tk.NW)
@@ -820,8 +817,30 @@ class CardPipelineApp(tk.Tk):
             nonlocal sync_pending
             sync_pending = False
             content.update_idletasks()
-            width = max(content.winfo_reqwidth(), canvas.winfo_width(), self._tab_scroll_min_width)
-            height = max(content.winfo_reqheight(), canvas.winfo_height(), self._tab_scroll_min_height)
+            req_width = content.winfo_reqwidth()
+            req_height = content.winfo_reqheight()
+            canvas_width = max(canvas.winfo_width(), 1)
+            canvas_height = max(canvas.winfo_height(), 1)
+            needs_x = req_width > canvas_width
+            needs_y = req_height > canvas_height
+            if needs_y != scrollbars_visible["y"]:
+                if needs_y:
+                    y_scroll.grid(row=0, column=1, sticky="ns")
+                else:
+                    y_scroll.grid_remove()
+                    canvas.yview_moveto(0)
+                scrollbars_visible["y"] = needs_y
+                canvas.after_idle(schedule_scroll_region_sync)
+            if needs_x != scrollbars_visible["x"]:
+                if needs_x:
+                    x_scroll.grid(row=1, column=0, sticky="ew")
+                else:
+                    x_scroll.grid_remove()
+                    canvas.xview_moveto(0)
+                scrollbars_visible["x"] = needs_x
+                canvas.after_idle(schedule_scroll_region_sync)
+            width = max(req_width, canvas_width)
+            height = max(req_height, canvas_height)
             canvas.itemconfigure(window_id, width=width, height=height)
             canvas.configure(scrollregion=(0, 0, width, height))
 
