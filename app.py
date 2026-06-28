@@ -6841,36 +6841,45 @@ class CardPipelineApp(tk.Tk):
         people = {
             str(marker.get("assigned_person") or "").strip()
             for marker in self.home_sheet_markers.values()
-            if str(marker.get("assigned_person") or "").strip()
+            if CardPipelineApp._is_real_person_name(marker.get("assigned_person"))
         }
         return sorted(people, key=str.lower)
 
+    @staticmethod
+    def _is_real_person_name(value: object) -> bool:
+        person = str(value or "").strip()
+        return bool(person and person.lower() != "unassigned")
+
     def _known_people(self) -> list[str]:
-        people_set = set(self._known_assigned_people())
+        people_set = {
+            person
+            for person in self._known_assigned_people()
+            if CardPipelineApp._is_real_person_name(person)
+        }
         people_set.update(
             str(term.get("seller") or "").strip()
             for term in self._load_seller_terms()
-            if str(term.get("seller") or "").strip()
+            if CardPipelineApp._is_real_person_name(term.get("seller"))
         )
         if hasattr(self, "profit_rows"):
             people_set.update(
                 str(record.get("assigned_person") or "").strip()
                 for record in self.profit_rows
-                if str(record.get("assigned_person") or "").strip()
+                if CardPipelineApp._is_real_person_name(record.get("assigned_person"))
             )
         if hasattr(self, "inventory_rows"):
             people_set.update(
                 str(record.get("assigned_person") or "").strip()
                 for record in self.inventory_rows
-                if str(record.get("assigned_person") or "").strip()
+                if CardPipelineApp._is_real_person_name(record.get("assigned_person"))
             )
         for record in self._load_profit_ledger():
             person = str(record.get("assigned_person") or record.get("person") or "").strip()
-            if person:
+            if CardPipelineApp._is_real_person_name(person):
                 people_set.add(person)
         for record in self._load_inventory_ledger():
             person = str(record.get("assigned_person") or record.get("person") or "").strip()
-            if person:
+            if CardPipelineApp._is_real_person_name(person):
                 people_set.add(person)
         return sorted(people_set, key=str.lower)
 

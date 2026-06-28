@@ -2187,18 +2187,21 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _known_people = app.CardPipelineApp._known_people
 
             def _known_assigned_people(self):
-                return ["Kevin Hambone"]
+                return ["Kevin Hambone", "Unassigned"]
 
             def _load_seller_terms(self):
-                return [{"seller": "John Seller", "sheet_type": "Arena Club", "rate": 0.9}]
+                return [
+                    {"seller": "John Seller", "sheet_type": "Arena Club", "rate": 0.9},
+                    {"seller": "Unassigned", "sheet_type": "Fanatics", "rate": 0.9},
+                ]
 
             def _load_profit_ledger(self):
-                return []
+                return [{"assigned_person": "Unassigned"}, {"assigned_person": "James Copeland"}]
 
             def _load_inventory_ledger(self):
-                return []
+                return [{"assigned_person": "Unassigned"}, {"assigned_person": "Tyler Hamlin"}]
 
-        self.assertEqual(PeopleDummy()._known_people(), ["John Seller", "Kevin Hambone"])
+        self.assertEqual(PeopleDummy()._known_people(), ["James Copeland", "John Seller", "Kevin Hambone", "Tyler Hamlin"])
 
     def test_save_working_sheet_requires_valid_network_seller_terms(self) -> None:
         class Var:
