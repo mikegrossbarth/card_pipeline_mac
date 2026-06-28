@@ -1642,6 +1642,33 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertIsNone(decisions["No Payout Match"].payout)
         self.assertIn("no payout tier", decisions["No Payout Match"].reason)
 
+    def test_sport_payout_does_not_use_conflicting_single_token_player_hint(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="67474515",
+            grader="PSA",
+            category="baseball",
+            card_title="2021 Bowman Sapphire Edition Chrome Prospects Bcp71 Blaze Jordan PSA 10",
+            card_ladder_comps_average=57.31,
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Arena",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("baseball", 10, 500)]),
+                    [
+                        assignment_engine.PayoutTier(51, 99, 0.82, "Baseball"),
+                        assignment_engine.PayoutTier(51, 99, 0.95, "Soccer"),
+                    ],
+                )
+            ]
+        )
+
+        decision = engine.evaluate(row)[0]
+
+        self.assertTrue(decision.accepted)
+        self.assertAlmostEqual(decision.payout or 0, 46.9942)
+
     def test_dnb_over_50_section_only_blocks_cards_above_50(self) -> None:
         values = [
             ["", "", "", "Do Not Buy these Players", "", "", "", "Do Not Buy these Players over $50"],

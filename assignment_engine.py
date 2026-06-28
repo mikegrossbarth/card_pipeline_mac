@@ -1980,8 +1980,19 @@ def sport_label_matches_value(expected_sport: str, value: dict[str, Any], haysta
 
 def sport_matches_value(expected_sport: str, value: dict[str, Any], haystack: str) -> bool:
     expected = clean_rule_text(expected_sport)
+    expected_canonical = canonical_sport_label(expected_sport)
     parsed_sport = clean_rule_text(value.get("sport") or "")
     parsed_player = clean_rule_text(value.get("playerName") or "")
+    if expected_canonical and parsed_sport:
+        parsed_matches_expected = parsed_sport == expected or any(
+            clean_rule_text(alias) == parsed_sport
+            for alias in aliases_for(expected)
+        )
+        if not parsed_matches_expected and any(
+            text_contains_clean_term(haystack, alias)
+            for alias in CATEGORY_ALIASES.get(parsed_sport, [parsed_sport])
+        ):
+            return False
     if parsed_player and parsed_player == expected:
         return True
     if player_matches_value(expected_sport, value):
