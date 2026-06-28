@@ -1145,13 +1145,18 @@ class CardPipelineApp(tk.Tk):
 
         comp_body = ttk.Frame(self.comp_tab, style="App.TFrame")
         comp_body.pack(fill=tk.BOTH, expand=True)
+        comp_body.columnconfigure(0, weight=0)
+        comp_body.columnconfigure(1, weight=1)
+        comp_body.rowconfigure(0, weight=1)
         sheet_panel = ttk.Frame(comp_body, style="Panel.TFrame", padding=(12, 12))
-        sheet_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
-        ttk.Label(sheet_panel, text="Active Sheets", style="Panel.TLabel").pack(anchor=tk.W)
+        sheet_panel.grid(row=0, column=0, sticky="ns", padx=(0, 10))
+        sheet_panel.rowconfigure(1, weight=1)
+        sheet_panel.columnconfigure(0, weight=1)
+        ttk.Label(sheet_panel, text="Active Sheets", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
         self.working_sheet_list = tk.Listbox(
             sheet_panel,
             width=34,
-            height=24,
+            height=10,
             activestyle="none",
             exportselection=False,
             bg=palette["panel"],
@@ -1165,40 +1170,46 @@ class CardPipelineApp(tk.Tk):
             borderwidth=0,
             font=("Segoe UI", 10),
         )
-        self.working_sheet_list.pack(fill=tk.Y, expand=True, pady=(8, 8))
+        self.working_sheet_list.grid(row=1, column=0, sticky="nsew", pady=(8, 8))
         self.working_sheet_list.bind("<Double-Button-1>", lambda _event: self.load_selected_working_sheet())
-        ttk.Button(sheet_panel, text="Load Selected Sheet", command=self.load_selected_working_sheet, style="Primary.TButton").pack(fill=tk.X, pady=(0, 8))
-        ttk.Button(sheet_panel, text="Refresh Sheet List", command=self.refresh_pipeline, style="Soft.TButton").pack(fill=tk.X)
+        ttk.Button(sheet_panel, text="Load Selected Sheet", command=self.load_selected_working_sheet, style="Primary.TButton").grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        ttk.Button(sheet_panel, text="Refresh Sheet List", command=self.refresh_pipeline, style="Soft.TButton").grid(row=3, column=0, sticky="ew")
         comp_main = ttk.Frame(comp_body, style="App.TFrame")
-        comp_main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        comp_main.grid(row=0, column=1, sticky="nsew")
+        comp_main.rowconfigure(0, weight=1)
+        comp_main.columnconfigure(0, weight=1)
         self.comp_tree = self._build_table(comp_main, editable=True, columns=COMP_COLUMNS)
         comp_controls = ttk.Frame(comp_main, style="Panel.TFrame", padding=(16, 12))
         comp_controls.pack(fill=tk.X, pady=(10, 0))
-        ttk.Button(comp_controls, text="Save Output", command=self.save_output, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(comp_controls, text="Save Back to Source Sheet", command=self.save_comp_to_source_sheet, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(comp_controls, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(comp_controls, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(comp_controls, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        comp_actions = ttk.Frame(comp_controls, style="Panel.TFrame")
+        comp_actions.pack(fill=tk.X)
+        comp_options = ttk.Frame(comp_controls, style="Panel.TFrame")
+        comp_options.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(comp_actions, text="Save Output", command=self.save_output, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(comp_actions, text="Save Back to Source Sheet", command=self.save_comp_to_source_sheet, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(comp_actions, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(comp_actions, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(comp_actions, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         self.comp_scope_combo = ttk.Combobox(
-            comp_controls,
+            comp_options,
             textvariable=self.comp_scope_label,
             state="readonly",
             values=(COMP_SCOPE_EMPTY, COMP_SCOPE_ALL),
             width=17,
         )
         self.comp_scope_combo.pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Label(comp_controls, text="Run Scope", style="Panel.TLabel").pack(side=tk.RIGHT)
+        ttk.Label(comp_options, text="Run Scope", style="Panel.TLabel").pack(side=tk.RIGHT)
         self.comp_source_combo = ttk.Combobox(
-            comp_controls,
+            comp_options,
             textvariable=self.comp_source_label,
             state="readonly",
             values=(COMP_SOURCE_BOTH, COMP_SOURCE_CARD_LADDER, COMP_SOURCE_CY),
             width=18,
         )
         self.comp_source_combo.pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Label(comp_controls, text="Run", style="Panel.TLabel").pack(side=tk.RIGHT)
+        ttk.Label(comp_options, text="Run", style="Panel.TLabel").pack(side=tk.RIGHT)
         self.comp_method_combo = ttk.Combobox(
-            comp_controls,
+            comp_options,
             textvariable=self.comp_strategy_label,
             state="readonly",
             values=list(COMP_STRATEGY_DISPLAY.keys()),
@@ -1206,7 +1217,7 @@ class CardPipelineApp(tk.Tk):
         )
         self.comp_method_combo.pack(side=tk.RIGHT, padx=(8, 0))
         self.comp_method_combo.bind("<<ComboboxSelected>>", self.recalculate_comp_method)
-        ttk.Label(comp_controls, text="Comp Method", style="Panel.TLabel").pack(side=tk.RIGHT)
+        ttk.Label(comp_options, text="Comp Method", style="Panel.TLabel").pack(side=tk.RIGHT)
 
         receive_controls = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
         receive_controls.pack(fill=tk.X, pady=(0, 10))
@@ -1354,6 +1365,8 @@ class CardPipelineApp(tk.Tk):
 
     def _build_table(self, parent: ttk.Frame, editable: bool = False, columns: tuple[str, ...] = DISPLAY_COLUMNS) -> ttk.Treeview:
         content = ttk.Frame(parent, style="Panel.TFrame", padding=(1, 1))
+        content.configure(width=900, height=320)
+        content.grid_propagate(False)
         content.pack(fill=tk.BOTH, expand=True)
         tree = ttk.Treeview(content, columns=columns, show="headings", selectmode="extended")
         setattr(tree, "_display_columns", columns)
