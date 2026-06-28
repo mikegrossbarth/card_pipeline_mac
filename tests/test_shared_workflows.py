@@ -2700,6 +2700,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_identity_keys = app.CardPipelineApp._profit_record_identity_keys
             _money_value = app.CardPipelineApp._money_value
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             record_profit_sales = app.CardPipelineApp.record_profit_sales
@@ -2733,11 +2734,56 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
 
+    def test_profit_sales_dedupe_inventory_sale_against_company_sheet_recovery(self) -> None:
+        class ProfitDummy:
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_identity_keys = app.CardPipelineApp._profit_record_identity_keys
+            _money_value = app.CardPipelineApp._money_value
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            record_profit_sales = app.CardPipelineApp.record_profit_sales
+            refresh_profit_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_ledger = app.PROFIT_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            dummy = ProfitDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            try:
+                inventory_sale = {
+                    "date_added": "2026-06-20",
+                    "company": "Arena Club",
+                    "weekly_sheet_name": "Inventory Sale",
+                    "source_sheet": "Lot A.xlsx",
+                    "cert_number": "123",
+                    "card_title": "Test Card",
+                    "purchase_price": 40,
+                    "sale_price": 90,
+                }
+                recovered_company_sale = dict(
+                    inventory_sale,
+                    date_added="2026-06-22",
+                    weekly_sheet_name="Arena Club.xlsx:Week of 2026-06-22",
+                )
+
+                self.assertEqual(dummy.record_profit_sales([inventory_sale]), 1)
+                self.assertEqual(dummy.record_profit_sales([recovered_company_sale]), 0)
+                ledger = json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8"))
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger[0]["weekly_sheet_name"], "Inventory Sale")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.PROFIT_LEDGER_PATH = old_ledger
+
     def test_profit_refresh_skips_company_scan_until_deep_sync(self) -> None:
         class ProfitRefreshDummy:
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_identity_keys = app.CardPipelineApp._profit_record_identity_keys
             _is_manual_company_profit_backfill = app.CardPipelineApp._is_manual_company_profit_backfill
             _money_value = app.CardPipelineApp._money_value
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
@@ -2788,6 +2834,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(len(ledger), 1)
                 self.assertEqual(ledger[0]["cert_number"], "123")
                 self.assertEqual(ledger[0]["profit"], 50.0)
+
+                existing_inventory_sale = dummy._normalize_profit_record(dict(company_record, weekly_sheet_name="Inventory Sale"))
+                app.PROFIT_LEDGER_PATH.write_text(json.dumps([existing_inventory_sale]), encoding="utf-8")
+                with patch("app.read_company_profit_records", return_value=[company_record]):
+                    dummy.refresh_profit_tab(deep_sync=True)
+                ledger = json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8"))
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger[0]["weekly_sheet_name"], "Inventory Sale")
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.COMPANY_SHEETS_DIR = old_company

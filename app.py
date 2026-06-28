@@ -4500,6 +4500,35 @@ class CardPipelineApp(tk.Tk):
             for field in ("cert_number", "company", "date_added", "weekly_sheet_name", "source_sheet")
         )
 
+    def _profit_record_identity_keys(self, record: dict[str, object]) -> set[str]:
+        normalized = dict(record)
+        primary = str(normalized.get("ledger_key") or self._profit_record_key(normalized) or "").strip().lower()
+        keys = {primary} if primary else set()
+        if str(normalized.get("record_type") or "").strip().lower() == "expense":
+            return keys
+        company = str(normalized.get("company") or normalized.get("best_company") or "").strip().lower()
+        source_sheet = Path(str(normalized.get("source_sheet") or "")).name.strip().lower()
+        cert = scan_to_cert(normalized.get("cert_number"))
+        item_id = str(normalized.get("item_id") or "").strip().lower()
+        stable_id = cert or item_id
+        if company and source_sheet and stable_id:
+            keys.add(f"sold-card|{company}|{source_sheet}|{stable_id}")
+        return keys
+
+    def _dedupe_profit_records(self, rows: list[dict[str, object]]) -> tuple[list[dict[str, object]], int]:
+        kept: list[dict[str, object]] = []
+        seen: set[str] = set()
+        removed = 0
+        for record in rows:
+            normalized = self._normalize_profit_record(record)
+            keys = CardPipelineApp._profit_record_identity_keys(self, normalized)
+            if keys and keys & seen:
+                removed += 1
+                continue
+            kept.append(normalized)
+            seen.update(keys)
+        return kept, removed
+
     def _is_manual_company_profit_backfill(self, record: dict[str, object]) -> bool:
         if str(record.get("record_type") or "").strip().lower() == "expense":
             return False
@@ -4848,17 +4877,17 @@ class CardPipelineApp(tk.Tk):
             return 0
         with shared_lock(CARD_PIPELINE_DIR, "profit-ledger", self.lucas_identity):
             ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
-            existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
+            existing_keys = set().union(*(CardPipelineApp._profit_record_identity_keys(self, record) for record in ledger)) if ledger else set()
             added = 0
             for record in records:
                 normalized = self._normalize_profit_record(record)
-                key = str(normalized.get("ledger_key") or "")
-                if not key or key in existing_keys:
+                keys = CardPipelineApp._profit_record_identity_keys(self, normalized)
+                if not keys or keys & existing_keys:
                     continue
                 normalized["recorded_by"] = self.lucas_identity.get("display_name", "")
                 normalized["recorded_machine"] = self.lucas_identity.get("machine", "")
                 ledger.append(normalized)
-                existing_keys.add(key)
+                existing_keys.update(keys)
                 added += 1
             if added:
                 self._save_profit_ledger(ledger)
@@ -5209,26 +5238,26 @@ class CardPipelineApp(tk.Tk):
         pruned_manual = len([record for record in ledger if self._is_manual_company_profit_backfill(record)])
         if pruned_manual:
             ledger = [record for record in ledger if not self._is_manual_company_profit_backfill(record)]
-        existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
+        existing_keys = set().union(*(CardPipelineApp._profit_record_identity_keys(self, record) for record in ledger)) if ledger else set()
         backfilled = 0
         for record in company_profit_records:
             normalized = self._normalize_profit_record(record)
-            key = str(normalized.get("ledger_key") or "")
-            if not key or key in existing_keys:
+            keys = CardPipelineApp._profit_record_identity_keys(self, normalized)
+            if not keys or keys & existing_keys:
                 continue
             ledger.append(normalized)
-            existing_keys.add(key)
+            existing_keys.update(keys)
             backfilled += 1
         if backfilled or pruned_manual:
             with shared_lock(CARD_PIPELINE_DIR, "profit-ledger", self.lucas_identity):
                 current = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
                 current = [record for record in current if not self._is_manual_company_profit_backfill(record)]
-                current_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in current}
+                current_keys = set().union(*(CardPipelineApp._profit_record_identity_keys(self, record) for record in current)) if current else set()
                 for record in ledger:
-                    key = str(record.get("ledger_key") or "")
-                    if key and key not in current_keys:
+                    keys = CardPipelineApp._profit_record_identity_keys(self, record)
+                    if keys and not (keys & current_keys):
                         current.append(record)
-                        current_keys.add(key)
+                        current_keys.update(keys)
                 self._save_profit_ledger(current)
         return backfilled, pruned_manual
 
@@ -5259,12 +5288,16 @@ class CardPipelineApp(tk.Tk):
         pruned_manual = len([record for record in ledger if self._is_manual_company_profit_backfill(record)])
         if pruned_manual:
             ledger = [record for record in ledger if not self._is_manual_company_profit_backfill(record)]
+        ledger, pruned_duplicates = CardPipelineApp._dedupe_profit_records(self, ledger)
+        if pruned_manual or pruned_duplicates:
             with shared_lock(CARD_PIPELINE_DIR, "profit-ledger", self.lucas_identity):
                 current = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
                 kept = [record for record in current if not self._is_manual_company_profit_backfill(record)]
+                kept, _removed = CardPipelineApp._dedupe_profit_records(self, kept)
                 if len(kept) != len(current):
                     self._save_profit_ledger(kept)
-        existing_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in ledger}
+                    ledger = kept
+        existing_keys = set().union(*(CardPipelineApp._profit_record_identity_keys(self, record) for record in ledger)) if ledger else set()
         backfilled = 0
         if deep_sync:
             company_backfill_start = time.perf_counter()
@@ -5272,21 +5305,21 @@ class CardPipelineApp(tk.Tk):
             record_performance_event("profit.company_sheet_scan", company_backfill_start, f"records={len(company_profit_records)}")
             for record in company_profit_records:
                 normalized = self._normalize_profit_record(record)
-                key = str(normalized.get("ledger_key") or "")
-                if not key or key in existing_keys:
+                keys = CardPipelineApp._profit_record_identity_keys(self, normalized)
+                if not keys or keys & existing_keys:
                     continue
                 ledger.append(normalized)
-                existing_keys.add(key)
+                existing_keys.update(keys)
                 backfilled += 1
         if backfilled:
             with shared_lock(CARD_PIPELINE_DIR, "profit-ledger", self.lucas_identity):
                 current = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
-                current_keys = {str(record.get("ledger_key") or self._profit_record_key(record)) for record in current}
+                current_keys = set().union(*(CardPipelineApp._profit_record_identity_keys(self, record) for record in current)) if current else set()
                 for record in ledger:
-                    key = str(record.get("ledger_key") or "")
-                    if key and key not in current_keys:
+                    keys = CardPipelineApp._profit_record_identity_keys(self, record)
+                    if keys and not (keys & current_keys):
                         current.append(record)
-                        current_keys.add(key)
+                        current_keys.update(keys)
                 self._save_profit_ledger(current)
                 ledger = current
         self.profit_rows = self._enrich_profit_records_with_people(ledger)
@@ -5426,7 +5459,12 @@ class CardPipelineApp(tk.Tk):
         period_suffix = f" | Period: {self._profit_period_label()}"
         backfill_suffix = f" | backfilled {backfilled} from company sheets" if backfilled else ""
         sync_suffix = " | deep sync checked company sheets" if deep_sync and not backfilled else ""
-        cleanup_suffix = f" | removed {pruned_manual} manual row(s)" if pruned_manual else ""
+        cleanup_parts = []
+        if pruned_manual:
+            cleanup_parts.append(f"removed {pruned_manual} manual row(s)")
+        if pruned_duplicates:
+            cleanup_parts.append(f"removed {pruned_duplicates} duplicate row(s)")
+        cleanup_suffix = f" | {'; '.join(cleanup_parts)}" if cleanup_parts else ""
         self.profit_status_var.set(f"Loaded {display_count}/{len(self.profit_rows)} profit row(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{search_suffix}{period_suffix}{suffix}{backfill_suffix}{sync_suffix}{cleanup_suffix}.")
         self._draw_profit_chart()
         record_performance_event(
