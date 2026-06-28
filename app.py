@@ -1751,30 +1751,26 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=10, sticky="w", pady=(10, 0))
         ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=10, sticky="w", pady=(6, 0))
 
-        profit_body = ttk.Frame(self.profit_tab, style="App.TFrame")
-        profit_body.pack(fill=tk.BOTH, expand=True)
-
-        chart_panel = ttk.Frame(profit_body, style="Panel.TFrame", padding=(12, 12))
-        chart_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        chart_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
+        chart_panel.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(chart_panel, textvariable=self.profit_chart_title_var, style="Panel.TLabel").pack(anchor=tk.W)
         self.profit_chart_canvas = tk.Canvas(
             chart_panel,
-            height=300,
+            height=230,
             bg="#1f1f1f",
             highlightthickness=1,
             highlightbackground="#333333",
         )
-        self.profit_chart_canvas.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        self.profit_chart_canvas.pack(fill=tk.X, expand=False, pady=(8, 0))
         self.profit_chart_canvas.bind("<Configure>", lambda _event: self._draw_profit_chart())
 
-        ledger_panel = ttk.Frame(profit_body, style="Panel.TFrame", padding=(12, 12))
-        ledger_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        search_panel = ttk.Frame(ledger_panel, style="Panel.TFrame")
+        search_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 10))
         search_panel.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(search_panel, text="Search Profit Rows", style="Muted.TLabel").pack(side=tk.LEFT)
         ttk.Entry(search_panel, textvariable=self.profit_search_var, width=44).pack(side=tk.LEFT, padx=(8, 0))
 
+        ledger_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
+        ledger_panel.pack(fill=tk.BOTH, expand=True)
         view_row = ttk.Frame(ledger_panel, style="Panel.TFrame")
         view_row.pack(anchor=tk.W, pady=(0, 10))
         self.profit_cards_button = ttk.Button(view_row, text="Sold Cards", command=lambda: self._set_profit_view_mode("Sold Cards"), style="Soft.TButton")
@@ -1800,7 +1796,6 @@ class CardPipelineApp(tk.Tk):
             },
             widths={"date": 95, "company": 150, "card": 440, "cert": 110, "purchase": 105, "sale": 105, "profit": 105, "sheet": 220},
             height=18,
-            max_height=120,
         )
         self.profit_tree.tag_configure("profit_positive", foreground="#d7fbe8")
         self.profit_tree.tag_configure("profit_negative", foreground="#ffd1d1")
