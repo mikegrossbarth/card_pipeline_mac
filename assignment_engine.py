@@ -41,6 +41,9 @@ BASEBALL_PRODUCT_PATTERNS = (
     re.compile(r"\bbowman\b(?!\s+u\b).*\b(chrome|prospects?|draft|autographs?|refractors?)\b"),
     re.compile(r"\b(chrome|prospects?|draft|autographs?|refractors?)\b.*\bbowman\b(?!\s+u\b)"),
 )
+MODERN_YEAR_MIN = 1980
+MODERN_YEAR_MAX = 2017
+ULTRA_MODERN_YEAR_MIN = 2018
 SINGLE_TOKEN_CONTEXT_REQUIRED_CATEGORIES = {
     "pokemon",
     "one piece",
@@ -468,6 +471,13 @@ class AssignmentRule:
     max_price: float | None = None
     block: bool = False
     min_price_exclusive: bool = False
+    min_year: int | None = None
+    max_year: int | None = None
+    grade_companies: tuple[str, ...] = ()
+    min_grade: float | None = None
+    max_grade: float | None = None
+    min_grade_exclusive: bool = False
+    max_grade_exclusive: bool = False
 
 
 @dataclass
@@ -1473,20 +1483,86 @@ def parse_custom_rule_group(payload: dict[str, Any]) -> CompanyRules:
 
 def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:
     text = str(line or "").strip()
-    over_match = re.match(r"(.+?)\s+(?:over|above)\s+\$?\s*([\d,.]+k?)\+?$", text, re.I)
+    text, constraints = parse_structured_rule_constraints(text)
+    pre_year_match = re.search(r"\bpre[- ]?(\d{4})\b", text, re.I)
+    max_year = int(pre_year_match.group(1)) - 1 if pre_year_match else None
+    text_without_year = re.sub(r"\(?\bpre[- ]?\d{4}\b\)?", " ", text, flags=re.I).strip()
+    if max_year is not None:
+        text_without_year = re.sub(r"\bvintage\s+(?=basketball|football|baseball|soccer|hockey|ufc)\b", "", text_without_year, flags=re.I).strip()
+    constraints = merge_rule_constraints(constraints, {"max_year": max_year})
+    over_match = re.match(r"(.+?)\s+(?:over|above|more\s+than)\s+\$?\s*([\d,.]+k?)\+?$", text_without_year, re.I)
+    bare_over_match = None if over_match else re.match(r"(?:over|above|more\s+than)\s+\$?\s*([\d,.]+k?)\+?$", text_without_year, re.I)
     if over_match:
         return AssignmentRule(
             matcher=rule_matcher_label(over_match.group(1)),
             min_price=parse_money(over_match.group(2)),
             block=block,
             min_price_exclusive=True,
+            **constraints,
+        )
+    if bare_over_match:
+        return AssignmentRule(
+            matcher="",
+            min_price=parse_money(bare_over_match.group(1)),
+            block=block,
+            min_price_exclusive=True,
+            **constraints,
         )
     range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|–|—)\s*\$?\s*([\d,.]+k?)", text, re.I)
     if range_match:
-        matcher = range_rule_matcher_text(text, range_match.start(), range_match.end(), block=block)
+        matcher = range_rule_matcher_text(text_without_year, range_match.start(), range_match.end(), block=block)
         min_price, max_price = parse_money_range(range_match.group(1), range_match.group(2))
-        return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=min_price, max_price=max_price, block=block)
-    return AssignmentRule(matcher=text, block=block)
+        return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=min_price, max_price=max_price, block=block, **constraints)
+    plus_match = re.search(r"\$?\s*([\d,.]+k?)\s*\+", text_without_year, re.I)
+    if plus_match:
+        matcher = range_rule_matcher_text(text_without_year, plus_match.start(), plus_match.end(), block=block)
+        return AssignmentRule(matcher=rule_matcher_label(matcher), min_price=parse_money(plus_match.group(1)), block=block, **constraints)
+    return AssignmentRule(matcher=rule_matcher_label(text_without_year), block=block, **constraints)
+
+
+def parse_structured_rule_constraints(text: str) -> tuple[str, dict[str, Any]]:
+    remaining = str(text or "")
+    constraints: dict[str, Any] = {}
+    if re.search(r"\bultra\s*modern\b", remaining, re.I):
+        constraints["min_year"] = ULTRA_MODERN_YEAR_MIN
+        remaining = re.sub(r"\bultra\s*modern\b", " ", remaining, flags=re.I)
+    elif re.search(r"\bmodern\b", remaining, re.I):
+        constraints["min_year"] = MODERN_YEAR_MIN
+        constraints["max_year"] = MODERN_YEAR_MAX
+        remaining = re.sub(r"\bmodern\b", " ", remaining, flags=re.I)
+
+    grade_match = re.search(
+        r"\b(?:less\s+than|under|below)\s+((?:(?:PSA|BGS|SGC|CGC)\s*(?:/|,|\bor\b|\band\b)?\s*)+)\s*([0-9]+(?:[._][0-9])?)\b",
+        remaining,
+        re.I,
+    )
+    if not grade_match:
+        grade_match = re.search(
+            r"\b((?:(?:PSA|BGS|SGC|CGC)\s*(?:/|,|\bor\b|\band\b)?\s*)+)\s*(?:less\s+than|under|below)\s*([0-9]+(?:[._][0-9])?)\b",
+            remaining,
+            re.I,
+        )
+    if grade_match:
+        constraints["grade_companies"] = tuple(unique_values([grader.upper() for grader in re.findall(r"\b(PSA|BGS|SGC|CGC)\b", grade_match.group(1), re.I)]))
+        constraints["max_grade"] = to_number(grade_match.group(2).replace("_", "."))
+        constraints["max_grade_exclusive"] = True
+        remaining = f"{remaining[:grade_match.start()]} {remaining[grade_match.end():]}"
+
+    explicit_graders = tuple(unique_values([grader.upper() for grader in re.findall(r"\b(PSA|BGS|SGC|CGC)\b", remaining, re.I)]))
+    if explicit_graders:
+        existing = list(constraints.get("grade_companies") or [])
+        constraints["grade_companies"] = tuple(unique_values([*existing, *explicit_graders]))
+        remaining = re.sub(r"\b(PSA|BGS|SGC|CGC)\b", " ", remaining, flags=re.I)
+
+    return re.sub(r"\s+", " ", remaining).strip(" -:/|"), constraints
+
+
+def merge_rule_constraints(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in extra.items():
+        if value is not None:
+            merged[key] = value
+    return merged
 
 
 def range_rule_matcher_text(text: str, range_start: int, range_end: int, block: bool = False) -> str:
@@ -1744,7 +1820,7 @@ def parse_payout_table_line(line: str) -> PayoutTier | None:
     text = str(line or "").strip()
     if not text or re.search(r"\bcategory\b|\bvalue range\b|\bpayout\b", text, re.I):
         return None
-    range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|â€“|â€”)\s*\$?\s*([\d,.]+k?)", text, re.I)
+    range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|â€“|â€”)\s*\$?\s*([\d,.]+k?)", text_without_year, re.I)
     if not range_match:
         range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|\u2013|\u2014|to|through|thru)\s*\$?\s*([\d,.]+k?)", text, re.I)
     if not range_match:
@@ -2081,7 +2157,39 @@ def rule_matches(rule: AssignmentRule, haystack: str, price: float) -> bool:
             return False
     if rule.max_price is not None and price > rule.max_price:
         return False
+    if rule.min_year is not None or rule.max_year is not None:
+        year = card_year_from_text(haystack)
+        if year is None:
+            return False
+        if rule.min_year is not None and year < rule.min_year:
+            return False
+        if rule.max_year is not None and year > rule.max_year:
+            return False
+    if rule.grade_companies or rule.min_grade is not None or rule.max_grade is not None:
+        grade_company, grade = parse_grade(haystack)
+        if rule.grade_companies and grade_company not in set(rule.grade_companies):
+            return False
+        if grade is None and (rule.min_grade is not None or rule.max_grade is not None):
+            return False
+        if grade is not None and rule.min_grade is not None:
+            if rule.min_grade_exclusive and grade <= rule.min_grade:
+                return False
+            if not rule.min_grade_exclusive and grade < rule.min_grade:
+                return False
+        if grade is not None and rule.max_grade is not None:
+            if rule.max_grade_exclusive and grade >= rule.max_grade:
+                return False
+            if not rule.max_grade_exclusive and grade > rule.max_grade:
+                return False
     return True
+
+
+def card_year_from_text(value: Any) -> int | None:
+    for match in re.finditer(r"\b(19\d{2}|20\d{2})\b", str(value or "")):
+        year = int(match.group(1))
+        if 1900 <= year <= 2099:
+            return year
+    return None
 
 
 def term_matches(term: str, haystack: str) -> bool:
@@ -2142,9 +2250,11 @@ def word_matches(word: str, haystack: str) -> bool:
 
 
 def parse_grade(text: str, fallback_grader: str = "") -> tuple[str, float | None]:
-    match = re.search(r"\b(PSA|BGS|SGC|CGC)\s*(?:g(?:rade)?\s*)?([0-9]+(?:[._][0-9])?)?\b", text, re.I)
+    match = re.search(r"\b(PSA|BGS|SGC|CGC)\s*(?:g(?:rade)?\s*)?([0-9]+(?:[._][0-9])?)\b", text, re.I)
+    if not match:
+        match = re.search(r"\b(PSA|BGS|SGC|CGC)\b", text, re.I)
     company = match.group(1).upper() if match else str(fallback_grader or "").upper()
-    grade = to_number(match.group(2).replace("_", ".") if match and match.group(2) else None)
+    grade = to_number(match.group(2).replace("_", ".") if match and (match.lastindex or 0) >= 2 and match.group(2) else None)
     return company, grade
 
 
@@ -2209,7 +2319,15 @@ def normalize_key(value: Any) -> str:
 
 
 def clean_text(value: Any) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9/.' -]+", " ", strip_accents(str(value or "")).lower())).strip()
+    text = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9/.' -]+", " ", strip_accents(str(value or "")).lower())).strip()
+    return normalize_common_name_typos(text)
+
+
+def normalize_common_name_typos(value: Any) -> str:
+    text = str(value or "")
+    text = re.sub(r"\bmchael\b", "michael", text, flags=re.I)
+    text = re.sub(r"\b(jr|sr)\.", r"\1", text, flags=re.I)
+    return text
 
 
 initialize_player_sport_data()

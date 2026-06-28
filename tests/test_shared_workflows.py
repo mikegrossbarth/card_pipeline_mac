@@ -1701,6 +1701,79 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertTrue(engine.evaluate(low_value)[0].accepted)
         self.assertFalse(engine.evaluate(high_value)[0].accepted)
 
+    def test_dnb_over_50_blocks_misspelled_penix_jr_above_threshold(self) -> None:
+        rules = assignment_engine.parse_rules("football $10-$500\nblock: Football Mchael Penix Jr. over 50")
+        engine = assignment_engine.AssignmentEngine([
+            assignment_engine.AssignmentCompany("Arena", rules, [assignment_engine.PayoutTier(10, 500, 0.9)])
+        ])
+        low_value = WorkbookRow(
+            excel_row=2,
+            cert_number="",
+            grader="PSA",
+            category="football",
+            card_title="2024 Panini Prizm Michael Penix Jr PSA 10",
+            card_ladder_comps_average=50,
+        )
+        high_value = WorkbookRow(
+            excel_row=3,
+            cert_number="",
+            grader="PSA",
+            category="football",
+            card_title="2024 Panini Prizm Michael Penix Jr. PSA 10",
+            card_ladder_comps_average=51,
+        )
+
+        self.assertTrue(engine.evaluate(low_value)[0].accepted)
+        self.assertFalse(engine.evaluate(high_value)[0].accepted)
+
+    def test_broad_modern_dnb_rules_apply_year_and_grade_constraints(self) -> None:
+        rules = assignment_engine.parse_rules(
+            "football $10-$500\n"
+            "baseball $10-$500\n"
+            "block: Ultra modern less than PSA/BGS 9\n"
+            "block: Modern SGC over 30"
+        )
+        engine = assignment_engine.AssignmentEngine([
+            assignment_engine.AssignmentCompany("Arena", rules, [assignment_engine.PayoutTier(10, 500, 0.9)])
+        ])
+        ultra_psa8 = WorkbookRow(
+            excel_row=2,
+            cert_number="",
+            grader="PSA",
+            category="football",
+            card_title="2024 Panini Prizm Test Player PSA 8",
+            card_ladder_comps_average=20,
+        )
+        ultra_psa9 = WorkbookRow(
+            excel_row=3,
+            cert_number="",
+            grader="PSA",
+            category="football",
+            card_title="2024 Panini Prizm Test Player PSA 9",
+            card_ladder_comps_average=20,
+        )
+        modern_sgc = WorkbookRow(
+            excel_row=4,
+            cert_number="",
+            grader="SGC",
+            category="baseball",
+            card_title="2015 Topps Test Player SGC 10",
+            card_ladder_comps_average=31,
+        )
+        ultra_sgc = WorkbookRow(
+            excel_row=5,
+            cert_number="",
+            grader="SGC",
+            category="baseball",
+            card_title="2024 Topps Test Player SGC 10",
+            card_ladder_comps_average=31,
+        )
+
+        self.assertFalse(engine.evaluate(ultra_psa8)[0].accepted)
+        self.assertTrue(engine.evaluate(ultra_psa9)[0].accepted)
+        self.assertFalse(engine.evaluate(modern_sgc)[0].accepted)
+        self.assertTrue(engine.evaluate(ultra_sgc)[0].accepted)
+
 
 class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_bridge_only_hands_commands_to_expected_extension_version(self) -> None:
