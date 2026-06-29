@@ -6450,11 +6450,11 @@ class CardPipelineApp(tk.Tk):
                     int(values["cards"]),
                     format_money(float(values["expenses"])),
                     format_money(float(values["net_profit"])),
-                    format_money(max(0.0, float(values["balance"]))),
+                    format_money(float(values["balance"])),
                 ),
             )
 
-        total_balance = sum(max(0.0, float(values["balance"])) for values in balances.values())
+        total_balance = sum(float(values["balance"]) for values in balances.values())
         total_sheets = sum(int(values["sheets"]) for values in balances.values())
         total_cards = sum(int(values["cards"]) for values in balances.values())
         total_expenses = sum(float(values["expenses"]) for values in balances.values())
@@ -6549,7 +6549,7 @@ class CardPipelineApp(tk.Tk):
             if self._source_sheet_is_seller_payout(str(group.get("source_sheet") or ""), str(group.get("person") or ""), seller_names):
                 continue
             realized_profit_total = float(group.get("profit") or 0.0)
-            if realized_profit_total <= 0:
+            if realized_profit_total == 0:
                 continue
             person = str(group.get("person") or "").strip() or "Unassigned"
             source_sheet = str(group.get("source_sheet") or "").strip() or "Sold Cards"
@@ -6732,7 +6732,7 @@ class CardPipelineApp(tk.Tk):
         if seller_payout is True or (seller_payout is None and normalized_person and normalized_person in seller_names):
             return round(float(purchase_total or 0.0), 2), "Seller purchase total"
         realized_profit = float(realized_profit_total or 0.0)
-        return max(0.0, round(realized_profit / 2.0, 2)), "Team half sold profit"
+        return round(realized_profit / 2.0, 2), "Team half sold profit"
 
     def _payout_sheet_status(self, stage: str, marker: dict[str, object], summary: dict[str, object]) -> str:
         received_count = int(summary.get("received_count") or 0)
@@ -7144,7 +7144,7 @@ class CardPipelineApp(tk.Tk):
         if not matching_items:
             self.payout_status_var.set(f"No unpaid sheets found for {person}.")
             return
-        total_balance = max(0.0, sum(float(item["payout_balance"]) for item in matching_items))
+        total_balance = sum(float(item["payout_balance"]) for item in matching_items)
         total_cards = sum(int(item["row_count"]) for item in matching_items)
         self.open_mark_payout_person_paid_popup(person, matching_items, total_cards, total_balance)
 

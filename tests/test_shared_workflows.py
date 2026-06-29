@@ -2160,7 +2160,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy._active_payout_balance("John Seller", 80.0, 150.0, sellers), (80.0, "Seller purchase total"))
         self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers), (0.0, "Team half sold profit"))
         self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers, realized_profit_total=70.0), (35.0, "Team half sold profit"))
-        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 100.0, 80.0, sellers, realized_profit_total=-20.0), (0.0, "Team half sold profit"))
+        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 100.0, 80.0, sellers, realized_profit_total=-20.0), (-10.0, "Team half sold profit"))
 
     def test_sheet_marker_controls_seller_payout_classification(self) -> None:
         class PayoutDummy:
