@@ -8508,25 +8508,25 @@ class CardPipelineApp(tk.Tk):
             sheet_source = str(row.get("sheet_source") or match.get("sheet") or ("NO SHEET FOUND" if cert else ""))
             status = str(row.get("status") or ("Needs setup" if not cert else ("Received" if match else "Received - no incoming match")))
             excel_row = start + offset
-            existing.append(
-                WorkbookRow(
-                    excel_row=excel_row,
-                    cert_number=cert,
-                    card_title=card,
-                    grader=grader,
-                    category=category,
-                    existing_value=purchase_price,
-                    card_ladder_value=card_ladder_value,
-                    card_ladder_comps_average=comps_average,
-                    cy_value=cy_value,
-                    cy_confidence=cy_confidence,
-                    card_ladder_comps=comp_details,
-                    best_company=best_company,
-                    estimated_payout=estimated_payout,
-                    status=status,
-                    notes=str(row.get("notes") or ""),
-                )
+            workbook_row = WorkbookRow(
+                excel_row=excel_row,
+                cert_number=cert,
+                card_title=card,
+                grader=grader,
+                category=category,
+                existing_value=purchase_price,
+                card_ladder_value=card_ladder_value,
+                card_ladder_comps_average=comps_average,
+                cy_value=cy_value,
+                cy_confidence=cy_confidence,
+                card_ladder_comps=comp_details,
+                best_company=best_company,
+                estimated_payout=estimated_payout,
+                status=status,
+                notes=str(row.get("notes") or ""),
             )
+            self._ensure_receive_row_assignment(workbook_row)
+            existing.append(workbook_row)
             self.review_sources[excel_row] = str(row.get("source") or "")
             self.review_sheet_sources[excel_row] = sheet_source
             added_excel_rows.append(excel_row)
@@ -8564,9 +8564,22 @@ class CardPipelineApp(tk.Tk):
                     row.best_company = str(match.get("best_company") or "")
                 if row.estimated_payout is None and match.get("estimated_payout") is not None:
                     row.estimated_payout = match.get("estimated_payout")
+                self._ensure_receive_row_assignment(row)
                 row.status = "Received"
             elif row.status == "Received":
                 row.status = "Received - no incoming match"
+
+    def _ensure_receive_row_assignment(self, row: WorkbookRow) -> None:
+        if row.best_company and row.estimated_payout is not None:
+            return
+        recommendation = self.assignment_engine.recommend(row, person=getattr(self, "_assignment_person_for_row", lambda _row: "")(row))
+        if recommendation.payout is None:
+            if not row.best_company:
+                row.best_company = NO_COMPANY_TAKES_LABEL
+                row.estimated_payout = None
+            return
+        row.best_company = recommendation.company
+        row.estimated_payout = recommendation.payout
 
     def clear_review_rows(self) -> None:
         self.review_rows = []

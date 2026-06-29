@@ -38,6 +38,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Receive rows now guarantee visible Best Company and Est. Payout when enough value data exists. If a matched incoming/working sheet row lacks saved assignment fields, Receive immediately recalculates through the assignment engine so barcode-scanned rows are not left blank.
 - Receive barcode scans now refresh the incoming/working cert index when an existing cert match is stale and missing assignment fields, so Best Company and Est. Payout populate from sheets that were assigned after startup. Startup indexing now uses the same incoming plus working merge behavior and preserves sport/category in the receive match.
 - Automatic Card Ladder comp results now fill a blank `Sport`/`Category` from the returned profile/card title, matching the manual title-edit behavior. Manually entered sport values are preserved and not overwritten.
 - Receive now looks up scanned/manual rows across both `INCOMING SHEETS` and `WORKING SHEETS` and merges duplicate cert matches so nonblank assignment fields win. `write_working_sheet()` now persists `Best Company`, `Estimated Payout`, and `Status`, fixing blank Best Company/Est. Payout values in the Receive tab after assignment values were saved back to a Working sheet.

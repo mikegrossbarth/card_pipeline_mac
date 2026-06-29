@@ -1975,6 +1975,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             refresh_incoming_index = app.CardPipelineApp.refresh_incoming_index
             _incoming_match = app.CardPipelineApp._incoming_match
             _match_all_review_rows = app.CardPipelineApp._match_all_review_rows
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
 
             def _refresh_table(self, schedule_recommendations=False):
                 self.refreshed = True
@@ -2025,6 +2026,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class Dummy:
             _append_review_rows = app.CardPipelineApp._append_review_rows
             _incoming_match = app.CardPipelineApp._incoming_match
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
 
             def refresh_incoming_index(self):
                 self.refresh_count += 1
@@ -2040,6 +2042,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.refreshed = True
 
         dummy = Dummy()
+        dummy.assignment_engine = types.SimpleNamespace(
+            recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("Fanatics", 88.0, 100.0)
+        )
         dummy.incoming_cert_index = {
             "12345678": {
                 "sheet": "Thin Startup Lot.xlsx",
@@ -2062,6 +2067,46 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.review_rows[0].best_company, "Fanatics")
         self.assertEqual(dummy.review_rows[0].estimated_payout, 88.0)
         self.assertEqual(dummy.review_sheet_sources[2], "Assigned Lot.xlsx")
+
+    def test_receive_row_recalculates_assignment_when_sheet_match_has_values_but_no_company(self) -> None:
+        class Dummy:
+            _append_review_rows = app.CardPipelineApp._append_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+
+            def refresh_incoming_index(self):
+                self.refresh_count += 1
+
+            def _refresh_table(self, schedule_recommendations=False):
+                self.refreshed = True
+
+        dummy = Dummy()
+        dummy.assignment_engine = types.SimpleNamespace(
+            recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("Arena Club", 369.89, 410.99)
+        )
+        dummy.incoming_cert_index = {
+            "21366909": {
+                "sheet": "NASHVILLE_KEVIN_HAMBONE.xlsx",
+                "card_title": "1989 Star Griffey Jr. 10 Ken Griffey Jr. Mariners-Yellow Back PSA 10",
+                "grader": "PSA",
+                "purchase_price": 350.0,
+                "card_ladder_value": 410.99,
+                "card_ladder_comps_average": 410.99,
+                "best_company": "",
+                "estimated_payout": None,
+            }
+        }
+        dummy.review_rows = []
+        dummy.review_sources = {}
+        dummy.review_sheet_sources = {}
+        dummy.refresh_count = 0
+        dummy.refreshed = False
+
+        dummy._append_review_rows([{"cert_number": "21366909", "source": "Receive Barcode", "notes": "Received"}])
+
+        self.assertEqual(dummy.refresh_count, 1)
+        self.assertEqual(dummy.review_rows[0].best_company, "Arena Club")
+        self.assertEqual(dummy.review_rows[0].estimated_payout, 369.89)
 
     def test_scoped_assignment_results_leave_unreturned_rows_unchanged(self) -> None:
         class FieldVar:
