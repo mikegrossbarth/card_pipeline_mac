@@ -7310,7 +7310,7 @@ class CardPipelineApp(tk.Tk):
             "Move sheet?",
             (
                 f"Move this sheet from {source_stage} to {target_stage}?\n\n{name}\n\n"
-                "If moving out of Received, L.U.C.A.S will clear received/paid markers and remove company-sheet/profit rows created from this sheet."
+                "If moving out of Received, L.U.C.A.S will clear received/paid markers and remove inventory, company-sheet, and profit rows created from this sheet."
             ),
         )
         if not confirmed:
@@ -7331,7 +7331,8 @@ class CardPipelineApp(tk.Tk):
             cleanup_note = (
                 f" Cleared {cleanup.get('received_rows_cleared', 0)} received mark(s), "
                 f"removed {cleanup.get('company_rows_removed', 0)} company row(s), "
-                f"and removed {cleanup.get('profit_rows_removed', 0)} profit ledger row(s)."
+                f"removed {cleanup.get('profit_rows_removed', 0)} profit ledger row(s), "
+                f"and removed {cleanup.get('inventory_rows_removed', 0)} inventory row(s)."
             )
         self.status_var.set(f"Moved {name} from {source_stage} to {target_stage}.{cleanup_note}")
         self._append_activity("Sheet Move", f"Moved {name} from {source_stage} to {target_stage}.", {"sheet": name, "from": source_stage, "to": target_stage, "cleanup": cleanup})
@@ -7619,6 +7620,7 @@ class CardPipelineApp(tk.Tk):
         clear_result = clear_received_in_workbooks([source_path])
         company_result = remove_company_sheet_rows_for_source(COMPANY_SHEETS_DIR, source_sheet_name)
         profit_rows_removed = self._remove_profit_ledger_rows_for_source(source_sheet_name)
+        inventory_rows_removed = self._remove_inventory_rows_for_source(source_sheet_name)
         errors = list(clear_result.get("errors") or []) + list(company_result.get("errors") or [])
         if errors:
             raise RuntimeError("Move cleanup failed: " + "; ".join(str(error) for error in errors[:5]))
@@ -7626,6 +7628,7 @@ class CardPipelineApp(tk.Tk):
             "received_rows_cleared": int(clear_result.get("rows_cleared") or 0),
             "company_rows_removed": int(company_result.get("rows_removed") or 0),
             "profit_rows_removed": profit_rows_removed,
+            "inventory_rows_removed": inventory_rows_removed,
         }
 
     def _remove_profit_ledger_rows_for_source(self, source_sheet_name: str) -> int:

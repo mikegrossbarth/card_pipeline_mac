@@ -77,6 +77,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 - `Inventory` tracks active person-level inventory in `inventory_ledger.json`.
 - Received cards that are not checked for the company pile are automatically added to active inventory for the assigned person.
 - Marking a sheet `All Received` from Home now also syncs that newly received sheet's non-company rows into active inventory for the assigned person; older sheets can still be backfilled with `Inventory` -> `Reconcile Received`.
+- Moving a sheet backward out of `Received` now removes inventory rows for that source sheet in addition to clearing received marks and removing company/profit rows. This fixes the case where an Incoming sheet could still appear in Inventory after being temporarily marked/moved as Received.
 - `Inventory` fast-loads the saved ledger on app open. `Reconcile Received` backfills active inventory from received-marked sheet rows that are not already present in company sheets. This is needed for sheets received before inventory capture existed.
 - Inventory reconcile skips orphan/deleted sheet files that no longer have an assigned-person Home marker, so deleted sheets are not re-backfilled as `Unassigned`.
 - `Inventory` displays and exports `Best Company` and `Payout`; table export uses only the current filtered rows, and the Inventory `Refresh` button enriches only rows visible under the current person/sport/search/price/status filters.
