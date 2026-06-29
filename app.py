@@ -1617,9 +1617,16 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(summary_panel, text="Active Balances", style="Panel.TLabel").pack(anchor=tk.W)
         self.payout_summary_tree = self._build_home_tree(
             summary_panel,
-            columns=("person", "sheets", "cards", "balance"),
-            headings={"person": "Person", "sheets": "Sheets", "cards": "Cards", "balance": "Balance Owed"},
-            widths={"person": 220, "sheets": 80, "cards": 80, "balance": 130},
+            columns=("person", "sheets", "cards", "expenses", "net_profit", "balance"),
+            headings={
+                "person": "Person",
+                "sheets": "Sheets",
+                "cards": "Cards",
+                "expenses": "Expenses",
+                "net_profit": "Net Profit",
+                "balance": "Balance Owed",
+            },
+            widths={"person": 190, "sheets": 70, "cards": 70, "expenses": 105, "net_profit": 115, "balance": 130},
             height=18,
         )
         self.payout_summary_tree.tag_configure("total_divider", background="#1f1f1f", foreground="#ffffff", font=("Segoe UI Semibold", 10))
@@ -4591,10 +4598,12 @@ class CardPipelineApp(tk.Tk):
             if expense_type not in EXPENSE_CATEGORY_OPTIONS:
                 expense_type = "Fees"
             notes = str(normalized.get("notes") or "").strip()
-            related_type = str(normalized.get("related_type") or normalized.get("tie_to") or "General").strip()
+            related_sheet = str(normalized.get("source_sheet") or normalized.get("related_sheet") or "").strip()
+            related_type = str(normalized.get("related_type") or normalized.get("tie_to") or "").strip()
+            if not related_type:
+                related_type = "Sheet" if related_sheet and Path(related_sheet).name.lower() != "expenses" else "General"
             if related_type not in EXPENSE_LINK_OPTIONS:
                 related_type = "General"
-            related_sheet = str(normalized.get("source_sheet") or normalized.get("related_sheet") or "").strip()
             related_item_id = str(normalized.get("item_id") or normalized.get("related_item_id") or "").strip()
             related_cert = str(normalized.get("cert_number") or normalized.get("related_cert") or "").strip()
             normalized["record_type"] = "expense"
@@ -6404,9 +6413,11 @@ class CardPipelineApp(tk.Tk):
             if filter_person and filter_person not in person.lower():
                 continue
             if not item["paid"] and item.get("payable", True):
-                balance = balances.setdefault(person, {"sheets": 0, "cards": 0, "balance": 0.0})
+                balance = balances.setdefault(person, {"sheets": 0, "cards": 0, "expenses": 0.0, "net_profit": 0.0, "balance": 0.0})
                 balance["sheets"] = int(balance["sheets"]) + 1
                 balance["cards"] = int(balance["cards"]) + int(item["row_count"])
+                balance["expenses"] = float(balance["expenses"]) + float(item.get("expense_total") or 0.0)
+                balance["net_profit"] = float(balance["net_profit"]) + float(item.get("net_profit_total") or 0.0)
                 balance["balance"] = float(balance["balance"]) + float(item["payout_balance"])
             iid = f"payout:{detail_count}"
             self.payout_detail_keys[iid] = str(item["key"])
@@ -6437,25 +6448,29 @@ class CardPipelineApp(tk.Tk):
                     person,
                     int(values["sheets"]),
                     int(values["cards"]),
-                    format_money(float(values["balance"])),
+                    format_money(float(values["expenses"])),
+                    format_money(float(values["net_profit"])),
+                    format_money(max(0.0, float(values["balance"]))),
                 ),
             )
 
-        total_balance = sum(float(values["balance"]) for values in balances.values())
+        total_balance = sum(max(0.0, float(values["balance"])) for values in balances.values())
         total_sheets = sum(int(values["sheets"]) for values in balances.values())
         total_cards = sum(int(values["cards"]) for values in balances.values())
+        total_expenses = sum(float(values["expenses"]) for values in balances.values())
+        total_net_profit = sum(float(values["net_profit"]) for values in balances.values())
         if balances:
             self.payout_summary_tree.insert(
                 "",
                 tk.END,
                 tags=("total_divider",),
-                values=("------", "------", "------", "------"),
+                values=("------", "------", "------", "------", "------", "------"),
             )
             self.payout_summary_tree.insert(
                 "",
                 tk.END,
                 tags=("total_row",),
-                values=("TOTAL", total_sheets, total_cards, format_money(total_balance)),
+                values=("TOTAL", total_sheets, total_cards, format_money(total_expenses), format_money(total_net_profit), format_money(total_balance)),
             )
         filter_label = self.payout_person_var.get().strip()
         suffix = f" | Filter: {filter_label}" if filter_label else ""
@@ -6463,13 +6478,14 @@ class CardPipelineApp(tk.Tk):
         record_performance_event(
             "payouts.refresh",
             perf_start,
-            f"details={detail_count} people={len(balances)} balance={total_balance:.2f}",
+            f"details={detail_count} people={len(balances)} net={total_net_profit:.2f} expenses={total_expenses:.2f} balance={total_balance:.2f}",
         )
 
     def _payout_sheet_items(self) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
         seller_names = self._seller_terms_seller_names()
         realized_profit_groups = self._realized_profit_groups_by_person_sheet()
+        loose_expense_groups = self._loose_expense_adjustments_by_person()
         for stage in ("Incoming", "Received"):
             for name in self.home_sheet_paths.get(stage, {}):
                 key = self._home_sheet_key(stage, name)
@@ -6521,6 +6537,8 @@ class CardPipelineApp(tk.Tk):
                         "estimated_payout_total": estimated_payout_total,
                         "estimated_profit": round(estimated_payout_total - purchase_total, 2),
                         "realized_profit_total": round(realized_profit_total, 2),
+                        "expense_total": 0.0,
+                        "net_profit_total": round(realized_profit_total, 2),
                         "payout_balance": payout_balance,
                         "payout_basis": payout_basis,
                         "payable": seller_payable,
@@ -6559,9 +6577,39 @@ class CardPipelineApp(tk.Tk):
                     "estimated_payout_total": float(group.get("sale_total") or 0.0),
                     "estimated_profit": round(float(group.get("sale_total") or 0.0) - float(group.get("purchase_total") or 0.0), 2),
                     "realized_profit_total": round(realized_profit_total, 2),
+                    "expense_total": round(float(group.get("expense_total") or 0.0), 2),
+                    "net_profit_total": round(realized_profit_total, 2),
                     "payout_balance": payout_balance,
                     "payout_basis": payout_basis,
                     "status": "Paid" if paid else "Sold",
+                }
+            )
+        for person_key, group in sorted(loose_expense_groups.items(), key=lambda pair: pair[1]["person"].lower()):
+            person = str(group.get("person") or "").strip() or "Unassigned"
+            source_sheet = "Expense Adjustments"
+            key = self._sold_payout_key(person, source_sheet)
+            marker = self.home_sheet_markers.get(key, {})
+            paid = bool(marker.get("paid"))
+            net_profit_total = float(group.get("profit") or 0.0)
+            payout_balance = min(0.0, round(net_profit_total / 2.0, 2))
+            items.append(
+                {
+                    "key": key,
+                    "stage": "Sold",
+                    "name": source_sheet,
+                    "person": person,
+                    "paid": paid,
+                    "row_count": 0,
+                    "received_count": 0,
+                    "purchase_total": 0.0,
+                    "estimated_payout_total": 0.0,
+                    "estimated_profit": round(net_profit_total, 2),
+                    "realized_profit_total": round(net_profit_total, 2),
+                    "expense_total": round(float(group.get("expense_total") or 0.0), 2),
+                    "net_profit_total": round(net_profit_total, 2),
+                    "payout_balance": payout_balance,
+                    "payout_basis": "Expense adjustment to team net profit",
+                    "status": "Paid" if paid else "Expenses",
                 }
             )
         return items
@@ -6581,6 +6629,11 @@ class CardPipelineApp(tk.Tk):
             profit = self._money_value(record.get("profit"))
             if not person or not source_sheet or profit is None:
                 continue
+            is_expense = str(record.get("record_type") or "").strip().lower() == "expense"
+            if is_expense:
+                related_type = str(record.get("related_type") or "").strip()
+                if source_sheet.lower() == "expenses" or (related_type and related_type not in {"Card", "Sheet"}):
+                    continue
             key = (person.lower(), source_sheet.lower())
             group = groups.setdefault(
                 key,
@@ -6590,16 +6643,41 @@ class CardPipelineApp(tk.Tk):
                     "row_count": 0,
                     "purchase_total": 0.0,
                     "sale_total": 0.0,
+                    "expense_total": 0.0,
                     "profit": 0.0,
                 },
             )
             purchase = self._money_value(record.get("purchase_price")) or 0.0
             sale = self._money_value(record.get("sale_price")) or 0.0
-            group["row_count"] = int(group["row_count"]) + 1
-            group["purchase_total"] = float(group["purchase_total"]) + purchase
-            group["sale_total"] = float(group["sale_total"]) + sale
+            if is_expense:
+                group["expense_total"] = float(group["expense_total"]) + abs(profit)
+            else:
+                group["row_count"] = int(group["row_count"]) + 1
+                group["purchase_total"] = float(group["purchase_total"]) + purchase
+                group["sale_total"] = float(group["sale_total"]) + sale
             totals[key] += profit
             group["profit"] = totals[key]
+        return groups
+
+    def _loose_expense_adjustments_by_person(self) -> dict[str, dict[str, object]]:
+        groups: dict[str, dict[str, object]] = {}
+        for record in self._enrich_profit_records_with_people(self._load_profit_ledger()):
+            if str(record.get("record_type") or "").strip().lower() != "expense":
+                continue
+            person = str(record.get("assigned_person") or "").strip()
+            source_sheet = Path(str(record.get("source_sheet") or "")).name.strip()
+            related_type = str(record.get("related_type") or "").strip()
+            is_loose = source_sheet.lower() == "expenses" or not source_sheet or (related_type and related_type not in {"Card", "Sheet"})
+            if not person or not is_loose:
+                continue
+            profit = self._money_value(record.get("profit"))
+            amount = abs(profit if profit is not None else (self._money_value(record.get("expense_amount")) or 0.0))
+            if amount <= 0:
+                continue
+            key = person.lower()
+            group = groups.setdefault(key, {"person": person, "expense_total": 0.0, "profit": 0.0})
+            group["expense_total"] = float(group["expense_total"]) + amount
+            group["profit"] = float(group["profit"]) - amount
         return groups
 
     def _sold_payout_key(self, person: str, source_sheet: str) -> str:
@@ -7066,7 +7144,7 @@ class CardPipelineApp(tk.Tk):
         if not matching_items:
             self.payout_status_var.set(f"No unpaid sheets found for {person}.")
             return
-        total_balance = sum(float(item["payout_balance"]) for item in matching_items)
+        total_balance = max(0.0, sum(float(item["payout_balance"]) for item in matching_items))
         total_cards = sum(int(item["row_count"]) for item in matching_items)
         self.open_mark_payout_person_paid_popup(person, matching_items, total_cards, total_balance)
 

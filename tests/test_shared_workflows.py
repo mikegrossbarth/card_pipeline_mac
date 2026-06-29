@@ -2545,6 +2545,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _sold_payout_key = app.CardPipelineApp._sold_payout_key
             _realized_profit_totals_by_person_sheet = app.CardPipelineApp._realized_profit_totals_by_person_sheet
             _realized_profit_groups_by_person_sheet = app.CardPipelineApp._realized_profit_groups_by_person_sheet
+            _loose_expense_adjustments_by_person = app.CardPipelineApp._loose_expense_adjustments_by_person
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
@@ -2583,14 +2584,36 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 "company": "Arena Club",
                 "cert_number": "123",
                 "date_added": "2026-06-19",
+            },
+            {
+                "record_type": "expense",
+                "assigned_person": "Kevin Hambone",
+                "source_sheet": "Lot A.xlsx",
+                "expense_amount": 20.0,
+                "profit": -20.0,
+                "date_added": "2026-06-19",
+            },
+            {
+                "record_type": "expense",
+                "assigned_person": "Kevin Hambone",
+                "source_sheet": "",
+                "expense_amount": 10.0,
+                "profit": -10.0,
+                "date_added": "2026-06-19",
             }
         ]
         payout_items = dummy._payout_sheet_items()
-        self.assertEqual(len(payout_items), 1)
-        self.assertEqual(payout_items[0]["stage"], "Sold")
-        self.assertEqual(payout_items[0]["name"], "Lot A.xlsx")
-        self.assertEqual(payout_items[0]["realized_profit_total"], 70.0)
-        self.assertEqual(payout_items[0]["payout_balance"], 35.0)
+        self.assertEqual(len(payout_items), 2)
+        by_name = {item["name"]: item for item in payout_items}
+        self.assertEqual(by_name["Lot A.xlsx"]["stage"], "Sold")
+        self.assertEqual(by_name["Lot A.xlsx"]["row_count"], 1)
+        self.assertEqual(by_name["Lot A.xlsx"]["expense_total"], 20.0)
+        self.assertEqual(by_name["Lot A.xlsx"]["realized_profit_total"], 50.0)
+        self.assertEqual(by_name["Lot A.xlsx"]["payout_balance"], 25.0)
+        self.assertEqual(by_name["Expense Adjustments"]["expense_total"], 10.0)
+        self.assertEqual(by_name["Expense Adjustments"]["net_profit_total"], -10.0)
+        self.assertEqual(by_name["Expense Adjustments"]["payout_balance"], -5.0)
+        self.assertEqual(sum(float(item["payout_balance"]) for item in payout_items), 20.0)
 
     def test_moving_received_sheet_back_clears_received_profit_and_company_rows(self) -> None:
         class MoveDummy:
