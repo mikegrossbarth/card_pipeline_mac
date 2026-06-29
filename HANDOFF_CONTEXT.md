@@ -38,6 +38,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Automatic Card Ladder comp results now fill a blank `Sport`/`Category` from the returned profile/card title, matching the manual title-edit behavior. Manually entered sport values are preserved and not overwritten.
 - Receive now looks up scanned/manual rows across both `INCOMING SHEETS` and `WORKING SHEETS` and merges duplicate cert matches so nonblank assignment fields win. `write_working_sheet()` now persists `Best Company`, `Estimated Payout`, and `Status`, fixing blank Best Company/Est. Payout values in the Receive tab after assignment values were saved back to a Working sheet.
 - Payouts/Tabs now includes expenses in team payout math. Sold-sheet expenses reduce that sheet's realized profit before the 50% team split, loose person expenses appear as an `Expense Adjustments` payout row, summary balances show Expenses and Net Profit, and balance owed can go negative if expenses exceed profit. Seller payouts remain based on seller terms/purchase obligations.
 - Mac installer now assumes a fresh Mac may have nothing installed: `install_dependencies.sh` bootstraps Homebrew when missing, installs/verifies Homebrew Python, the matching versioned `python-tk@...` formula, `cliclick`, and `tesseract`, marks `scripts/macos/cgscroll` executable, and best-effort installs Google Chrome and Google Drive for desktop through Homebrew casks. CourtYard/CYCardScanner still has to be installed/opened/logged-in manually and granted macOS privacy permissions.

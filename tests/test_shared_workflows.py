@@ -463,6 +463,49 @@ class CYLookupTests(unittest.TestCase):
         self.assertEqual(row.card_ladder_comps, "")
         self.assertIn("lookup failed", row.notes)
 
+    def test_cardladder_result_fills_blank_sport_from_profile_title(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="99505674", grader="PSA", card_title="")
+        result = {
+            "excelRow": 2,
+            "certNumber": "99505674",
+            "grader": "PSA",
+            "status": "ok",
+            "value": 73,
+            "ocr": {
+                "profileTitle": "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser",
+                "profileGrader": "PSA",
+                "profileGrade": "9",
+                "comps": [{"title": "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser PSA 9", "date_sold": "Jun 1, 2026", "price": "$73.00"}],
+            },
+        }
+
+        state._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.card_title, "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser PSA 9")
+        self.assertEqual(row.category, "basketball")
+
+    def test_cardladder_result_does_not_overwrite_manual_sport(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="99505674", grader="PSA", card_title="", category="baseball")
+        result = {
+            "excelRow": 2,
+            "certNumber": "99505674",
+            "grader": "PSA",
+            "status": "ok",
+            "value": 73,
+            "ocr": {
+                "profileTitle": "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser",
+                "profileGrader": "PSA",
+                "profileGrade": "9",
+                "comps": [{"title": "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser PSA 9", "date_sold": "Jun 1, 2026", "price": "$73.00"}],
+            },
+        }
+
+        state._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.category, "baseball")
+
     def test_cardladder_result_triggers_cy_lookup_on_mac(self) -> None:
         state = bridge_server.BridgeState()
         row = WorkbookRow(
