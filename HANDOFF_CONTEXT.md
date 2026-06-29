@@ -38,6 +38,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Receive barcode scans now refresh the incoming/working cert index when an existing cert match is stale and missing assignment fields, so Best Company and Est. Payout populate from sheets that were assigned after startup. Startup indexing now uses the same incoming plus working merge behavior and preserves sport/category in the receive match.
 - Automatic Card Ladder comp results now fill a blank `Sport`/`Category` from the returned profile/card title, matching the manual title-edit behavior. Manually entered sport values are preserved and not overwritten.
 - Receive now looks up scanned/manual rows across both `INCOMING SHEETS` and `WORKING SHEETS` and merges duplicate cert matches so nonblank assignment fields win. `write_working_sheet()` now persists `Best Company`, `Estimated Payout`, and `Status`, fixing blank Best Company/Est. Payout values in the Receive tab after assignment values were saved back to a Working sheet.
 - Payouts/Tabs now includes expenses in team payout math. Sold-sheet expenses reduce that sheet's realized profit before the 50% team split, loose person expenses appear as an `Expense Adjustments` payout row, summary balances show Expenses and Net Profit, and balance owed can go negative if expenses exceed profit. Seller payouts remain based on seller terms/purchase obligations.

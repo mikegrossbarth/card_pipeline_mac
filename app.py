@@ -6081,7 +6081,11 @@ class CardPipelineApp(tk.Tk):
 
         index: dict[str, dict[str, object]] = {}
         incoming_index_start = time.perf_counter()
-        for path in sorted(incoming_paths, key=lambda path: path.name.lower()):
+        index_paths = sorted(
+            [*incoming_paths, *working_paths],
+            key=lambda path: (path.parent.name.lower(), path.name.lower()),
+        )
+        for path in index_paths:
             try:
                 rows = read_simple_spreadsheet(path)
             except Exception as error:
@@ -6089,13 +6093,15 @@ class CardPipelineApp(tk.Tk):
                 continue
             for row in rows:
                 cert = scan_to_cert(row.get("cert_number"))
-                if not cert or cert in index:
+                if not cert:
                     continue
-                index[cert] = {
+                candidate = {
                     "sheet": path.name,
                     "path": path,
                     "card_title": row.get("card_title") or "",
                     "grader": row.get("grader") or "",
+                    "sport": row.get("sport") or row.get("category") or "",
+                    "category": row.get("category") or row.get("sport") or "",
                     "purchase_price": row.get("purchase_price"),
                     "card_ladder_value": row.get("card_ladder_value"),
                     "card_ladder_comps_average": row.get("card_ladder_comps_average"),
@@ -6105,8 +6111,15 @@ class CardPipelineApp(tk.Tk):
                     "best_company": row.get("best_company") or "",
                     "estimated_payout": row.get("estimated_payout"),
                 }
+                existing = index.get(cert)
+                if existing:
+                    for key, value in candidate.items():
+                        if (existing.get(key) is None or existing.get(key) == "") and value not in (None, ""):
+                            existing[key] = value
+                    continue
+                index[cert] = candidate
         payload["incoming_index"] = index
-        record_performance_event("startup.incoming_index", incoming_index_start, f"sheets={len(incoming_paths)} certs={len(index)}")
+        record_performance_event("startup.incoming_index", incoming_index_start, f"sheets={len(index_paths)} certs={len(index)}")
 
         summaries_start = time.perf_counter()
         live_summary_paths: list[Path] = []
@@ -8245,6 +8258,8 @@ class CardPipelineApp(tk.Tk):
                     "path": path,
                     "card_title": row.get("card_title") or "",
                     "grader": row.get("grader") or "",
+                    "sport": row.get("sport") or row.get("category") or "",
+                    "category": row.get("category") or row.get("sport") or "",
                     "purchase_price": row.get("purchase_price"),
                     "card_ladder_value": row.get("card_ladder_value"),
                     "card_ladder_comps_average": row.get("card_ladder_comps_average"),
@@ -8470,7 +8485,12 @@ class CardPipelineApp(tk.Tk):
         for offset, row in enumerate(rows):
             cert = scan_to_cert(row.get("cert_number"))
             match = self._incoming_match(cert)
-            if cert and not match and not refreshed_incoming_index:
+            stale_assignment_match = (
+                bool(match)
+                and not str(match.get("best_company") or "").strip()
+                and match.get("estimated_payout") is None
+            )
+            if cert and (not match or stale_assignment_match) and not refreshed_incoming_index:
                 self.refresh_incoming_index()
                 refreshed_incoming_index = True
                 match = self._incoming_match(cert)

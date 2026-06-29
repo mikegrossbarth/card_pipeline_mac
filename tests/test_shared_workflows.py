@@ -2021,6 +2021,48 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INCOMING_SHEETS_DIR = old_incoming
                 app.WORKING_SHEETS_DIR = old_working
 
+    def test_receive_barcode_refreshes_stale_match_without_assignment_values(self) -> None:
+        class Dummy:
+            _append_review_rows = app.CardPipelineApp._append_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+
+            def refresh_incoming_index(self):
+                self.refresh_count += 1
+                self.incoming_cert_index["12345678"] = {
+                    "sheet": "Assigned Lot.xlsx",
+                    "card_title": "Assigned Test Card PSA 10",
+                    "grader": "PSA",
+                    "best_company": "Fanatics",
+                    "estimated_payout": 88.0,
+                }
+
+            def _refresh_table(self, schedule_recommendations=False):
+                self.refreshed = True
+
+        dummy = Dummy()
+        dummy.incoming_cert_index = {
+            "12345678": {
+                "sheet": "Thin Startup Lot.xlsx",
+                "card_title": "Assigned Test Card PSA 10",
+                "grader": "PSA",
+                "best_company": "",
+                "estimated_payout": None,
+            }
+        }
+        dummy.review_rows = []
+        dummy.review_sources = {}
+        dummy.review_sheet_sources = {}
+        dummy.refresh_count = 0
+        dummy.refreshed = False
+
+        dummy._append_review_rows([{"cert_number": "12345678", "source": "Receive Barcode", "notes": "Received"}])
+
+        self.assertEqual(dummy.refresh_count, 1)
+        self.assertTrue(dummy.refreshed)
+        self.assertEqual(dummy.review_rows[0].best_company, "Fanatics")
+        self.assertEqual(dummy.review_rows[0].estimated_payout, 88.0)
+        self.assertEqual(dummy.review_sheet_sources[2], "Assigned Lot.xlsx")
+
     def test_scoped_assignment_results_leave_unreturned_rows_unchanged(self) -> None:
         class FieldVar:
             def __init__(self):
