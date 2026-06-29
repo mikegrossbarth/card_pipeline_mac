@@ -8221,7 +8221,11 @@ class CardPipelineApp(tk.Tk):
     def refresh_incoming_index(self) -> None:
         try:
             INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
-            paths = sorted(INCOMING_SHEETS_DIR.glob("*.xlsx"), key=lambda path: path.name.lower())
+            WORKING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+            paths = sorted(
+                [*INCOMING_SHEETS_DIR.glob("*.xlsx"), *WORKING_SHEETS_DIR.glob("*.xlsx")],
+                key=lambda path: (path.parent.name.lower(), path.name.lower()),
+            )
         except Exception as error:
             self.incoming_cert_index = {}
             self.review_status.set(f"Incoming sheets unavailable: {error}")
@@ -8234,9 +8238,9 @@ class CardPipelineApp(tk.Tk):
                 continue
             for row in rows:
                 cert = scan_to_cert(row.get("cert_number"))
-                if not cert or cert in index:
+                if not cert:
                     continue
-                index[cert] = {
+                candidate = {
                     "sheet": path.name,
                     "path": path,
                     "card_title": row.get("card_title") or "",
@@ -8250,10 +8254,17 @@ class CardPipelineApp(tk.Tk):
                     "best_company": row.get("best_company") or "",
                     "estimated_payout": row.get("estimated_payout"),
                 }
+                existing = index.get(cert)
+                if existing:
+                    for key, value in candidate.items():
+                        if (existing.get(key) is None or existing.get(key) == "") and value not in (None, ""):
+                            existing[key] = value
+                    continue
+                index[cert] = candidate
         self.incoming_cert_index = index
         self._match_all_review_rows()
         self._refresh_table()
-        self.review_status.set(f"Indexed {len(index)} cert(s) from {len(paths)} incoming sheet(s).")
+        self.review_status.set(f"Indexed {len(index)} cert(s) from {len(paths)} incoming/working sheet(s).")
 
     def refresh_received_sheets(self) -> None:
         try:

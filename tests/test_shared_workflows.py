@@ -1920,6 +1920,64 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(dummy._assignment_person_for_row(row), "Lucas")
 
+    def test_receive_index_reads_working_sheet_assignment_values(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            refresh_incoming_index = app.CardPipelineApp.refresh_incoming_index
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _match_all_review_rows = app.CardPipelineApp._match_all_review_rows
+
+            def _refresh_table(self, schedule_recommendations=False):
+                self.refreshed = True
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            incoming_dir = root / "INCOMING SHEETS"
+            working_dir = root / "WORKING SHEETS"
+            incoming_dir.mkdir(parents=True)
+            working_dir.mkdir(parents=True)
+            write_working_sheet(
+                working_dir / "Working Lot.xlsx",
+                [
+                    WorkbookRow(
+                        excel_row=2,
+                        cert_number="12345678",
+                        card_title="Test Card PSA 10",
+                        grader="PSA",
+                        best_company="Fanatics",
+                        estimated_payout=88.0,
+                    )
+                ],
+                {2: "Manual"},
+            )
+
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            app.INCOMING_SHEETS_DIR = incoming_dir
+            app.WORKING_SHEETS_DIR = working_dir
+            dummy = Dummy()
+            dummy.incoming_cert_index = {}
+            dummy.review_rows = [WorkbookRow(excel_row=2, cert_number="12345678", card_title="", grader="")]
+            dummy.review_sheet_sources = {}
+            dummy.review_status = FieldVar()
+            dummy.refreshed = False
+            try:
+                dummy.refresh_incoming_index()
+                self.assertTrue(dummy.refreshed)
+                self.assertEqual(dummy.review_rows[0].best_company, "Fanatics")
+                self.assertEqual(dummy.review_rows[0].estimated_payout, 88.0)
+                self.assertEqual(dummy.review_sheet_sources[2], "Working Lot.xlsx")
+                self.assertIn("incoming/working", dummy.review_status.value)
+            finally:
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+
     def test_scoped_assignment_results_leave_unreturned_rows_unchanged(self) -> None:
         class FieldVar:
             def __init__(self):
