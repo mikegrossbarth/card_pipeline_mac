@@ -620,7 +620,10 @@ class CardPipelineApp(tk.Tk):
         self._ensure_weekly_company_sheets_due()
         self.received_sheet_paths: dict[str, Path] = {}
         self.selected_received_sheet = tk.StringVar()
+        self.incoming_sheet_paths: dict[str, Path] = {}
         self.working_sheet_paths: dict[str, Path] = {}
+        self.comp_sheet_paths: dict[str, Path] = {}
+        self.comp_sheet_stages: dict[str, str] = {}
         self.home_sheet_kind = tk.StringVar(value="Incoming")
         self.home_sheet_paths: dict[str, dict[str, Path]] = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries: dict[str, dict[str, object]] = {}
@@ -6044,6 +6047,7 @@ class CardPipelineApp(tk.Tk):
     def _startup_refresh_worker(self) -> None:
         perf_start = time.perf_counter()
         payload = {
+            "incoming_paths": {},
             "working_paths": {},
             "received_paths": {},
             "incoming_index": {},
@@ -6086,6 +6090,7 @@ class CardPipelineApp(tk.Tk):
         try:
             INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
             incoming_paths = sorted(INCOMING_SHEETS_DIR.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
+            payload["incoming_paths"] = {path.name: path for path in incoming_paths}
             payload["home_paths"]["Incoming"] = {path.name: path for path in incoming_paths}
             payload["incoming_path_count"] = len(incoming_paths)
         except Exception as error:
@@ -6161,13 +6166,11 @@ class CardPipelineApp(tk.Tk):
 
     def _apply_startup_refresh(self, payload: dict[str, object]) -> None:
         perf_start = time.perf_counter()
+        self.incoming_sheet_paths = dict(payload.get("incoming_paths") or {})
         self.working_sheet_paths = dict(payload.get("working_paths") or {})
-        if hasattr(self, "working_sheet_list"):
-            self.working_sheet_list.delete(0, tk.END)
-            for name in self.working_sheet_paths:
-                self.working_sheet_list.insert(tk.END, name)
-        if self.working_sheet_paths and self.selected_working_sheet.get() not in self.working_sheet_paths:
-            self.selected_working_sheet.set(next(iter(self.working_sheet_paths)))
+        self._populate_comp_sheet_list()
+        if self.comp_sheet_paths and self.selected_working_sheet.get() not in self.comp_sheet_paths:
+            self.selected_working_sheet.set(next(iter(self.comp_sheet_paths)))
         self._select_working_sheet_in_list()
 
         self.received_sheet_paths = dict(payload.get("received_paths") or {})
@@ -8965,7 +8968,7 @@ class CardPipelineApp(tk.Tk):
         app_debug_log(f"run_all_comps_clicked rows={len(self.state.rows)}")
         if not self.state.rows:
             app_debug_log("run_all_comps_blocked reason=no_rows")
-            messagebox.showinfo("No comp sheet loaded", "Choose and load a working sheet in the Comp tab first.")
+            messagebox.showinfo("No comp sheet loaded", "Choose and load an incoming or working sheet in the Comp tab first.")
             return
         requery_all = self.comp_scope_label.get() == COMP_SCOPE_ALL
         source_label = self.comp_source_label.get()
@@ -9151,14 +9154,14 @@ class CardPipelineApp(tk.Tk):
 
     def save_comp_to_source_sheet(self) -> None:
         if not self.state.rows:
-            messagebox.showinfo("No rows", "Load a working sheet before saving back to its source.")
+            messagebox.showinfo("No rows", "Load an incoming or working sheet before saving back to its source.")
             return
-        name = self.selected_working_sheet.get().strip() if hasattr(self, "selected_working_sheet") else ""
-        path = self.working_sheet_paths.get(name) if name else None
+        label = self.selected_working_sheet.get().strip() if hasattr(self, "selected_working_sheet") else ""
+        stage, name, path = self._comp_sheet_info(label)
         if not path:
-            messagebox.showinfo("No source sheet", "Choose and load a working sheet before saving back to its source.")
+            messagebox.showinfo("No source sheet", "Choose and load an incoming or working sheet before saving back to its source.")
             return
-        key, marker = self._marker_for_sheet_name(path.name, ("Working",))
+        key, marker = self._marker_for_sheet_name(path.name, (stage,) if stage else ("Working", "Incoming"))
         seller_updates = self._apply_seller_terms_to_rows_for_marker(self.state.rows, marker)
         try:
             with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
@@ -9170,7 +9173,8 @@ class CardPipelineApp(tk.Tk):
         self._refresh_table(schedule_recommendations=False)
         self.refresh_home()
         suffix = f" Seller prices updated on {seller_updates} row(s)." if key and seller_updates else ""
-        self.status_var.set(f"Saved current comp rows back to {path.name}.{suffix}")
+        stage_label = f"{stage.lower()} " if stage else ""
+        self.status_var.set(f"Saved current comp rows back to {stage_label}{path.name}.{suffix}")
 
     def save_working_sheet(self) -> None:
         if not self.intake_rows:
@@ -9245,42 +9249,76 @@ class CardPipelineApp(tk.Tk):
     def refresh_working_sheets(self) -> None:
         try:
             CARD_PIPELINE_DIR.mkdir(parents=True, exist_ok=True)
+            INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
             WORKING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
-            paths = sorted(WORKING_SHEETS_DIR.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
+            incoming_paths = sorted(INCOMING_SHEETS_DIR.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
+            working_paths = sorted(WORKING_SHEETS_DIR.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
         except Exception as error:
+            self.incoming_sheet_paths = {}
             self.working_sheet_paths = {}
+            self.comp_sheet_paths = {}
+            self.comp_sheet_stages = {}
             if hasattr(self, "working_sheet_list"):
                 self.working_sheet_list.delete(0, tk.END)
-            self.status_var.set(f"Working sheets unavailable: {error}")
+            self.status_var.set(f"Comp sheets unavailable: {error}")
             return
-        self.working_sheet_paths = {path.name: path for path in paths}
+        self.incoming_sheet_paths = {path.name: path for path in incoming_paths}
+        self.working_sheet_paths = {path.name: path for path in working_paths}
+        self._populate_comp_sheet_list()
+        if self.comp_sheet_paths and self.selected_working_sheet.get() not in self.comp_sheet_paths:
+            self.selected_working_sheet.set(next(iter(self.comp_sheet_paths)))
+        self._select_working_sheet_in_list()
+        self.status_var.set(f"Found {len(incoming_paths)} incoming and {len(working_paths)} working sheet(s).")
+
+    def _comp_sheet_label(self, stage: str, name: str) -> str:
+        return f"{stage} / {name}"
+
+    def _populate_comp_sheet_list(self) -> None:
+        self.comp_sheet_paths = {}
+        self.comp_sheet_stages = {}
+        for stage, paths in (("Incoming", self.incoming_sheet_paths), ("Working", self.working_sheet_paths)):
+            for name, path in paths.items():
+                label = self._comp_sheet_label(stage, name)
+                self.comp_sheet_paths[label] = path
+                self.comp_sheet_stages[label] = stage
         if hasattr(self, "working_sheet_list"):
             self.working_sheet_list.delete(0, tk.END)
-            for name in self.working_sheet_paths:
-                self.working_sheet_list.insert(tk.END, name)
-        if paths and self.selected_working_sheet.get() not in self.working_sheet_paths:
-            self.selected_working_sheet.set(paths[0].name)
-        self._select_working_sheet_in_list()
-        self.status_var.set(f"Found {len(paths)} working sheet(s).")
+            for label in self.comp_sheet_paths:
+                self.working_sheet_list.insert(tk.END, label)
+
+    def _comp_sheet_info(self, label: str) -> tuple[str, str, Path | None]:
+        label = str(label or "").strip()
+        comp_sheet_paths = getattr(self, "comp_sheet_paths", {})
+        comp_sheet_stages = getattr(self, "comp_sheet_stages", {})
+        working_sheet_paths = getattr(self, "working_sheet_paths", {})
+        incoming_sheet_paths = getattr(self, "incoming_sheet_paths", {})
+        path = comp_sheet_paths.get(label)
+        if path:
+            return comp_sheet_stages.get(label, ""), path.name, path
+        if label in working_sheet_paths:
+            return "Working", label, working_sheet_paths.get(label)
+        if label in incoming_sheet_paths:
+            return "Incoming", label, incoming_sheet_paths.get(label)
+        return "", label, None
 
     def load_selected_working_sheet(self) -> None:
-        name = self._selected_working_sheet_name()
-        path = self.working_sheet_paths.get(name)
+        label = self._selected_working_sheet_name()
+        stage, name, path = self._comp_sheet_info(label)
         if not path:
-            messagebox.showinfo("Choose sheet", "Choose a working sheet first.")
+            messagebox.showinfo("Choose sheet", "Choose an incoming or working sheet first.")
             return
-        self.status_var.set(f"Loading working sheet: {name}...")
-        threading.Thread(target=self._load_working_sheet_worker, args=(name, path), daemon=True).start()
+        self.status_var.set(f"Loading {stage.lower()} sheet: {name}...")
+        threading.Thread(target=self._load_working_sheet_worker, args=(label, stage, name, path), daemon=True).start()
 
-    def _load_working_sheet_worker(self, name: str, path: Path) -> None:
+    def _load_working_sheet_worker(self, label: str, stage: str, name: str, path: Path) -> None:
         try:
             rows = read_simple_spreadsheet(path)
         except Exception as error:
-            self.events.put(("load_working_sheet_error", {"name": name, "error": str(error)}))
+            self.events.put(("load_working_sheet_error", {"name": name, "stage": stage, "error": str(error)}))
             return
-        self.events.put(("load_working_sheet_done", {"name": name, "rows": rows}))
+        self.events.put(("load_working_sheet_done", {"label": label, "stage": stage, "name": name, "rows": rows}))
 
-    def _apply_loaded_working_sheet(self, name: str, rows: list[dict[str, object]]) -> None:
+    def _apply_loaded_working_sheet(self, name: str, rows: list[dict[str, object]], stage: str = "Working", label: str = "") -> None:
         workbook_rows: list[WorkbookRow] = []
         sources: dict[int, str] = {}
         for offset, row in enumerate(rows, start=2):
@@ -9312,9 +9350,9 @@ class CardPipelineApp(tk.Tk):
         self.comp_sheet_sources = {}
         self.comp_output_saved = True
         self._refresh_table(schedule_recommendations=any(row.card_ladder_comps_average is not None for row in workbook_rows))
-        self.selected_working_sheet.set(name)
+        self.selected_working_sheet.set(label or self._comp_sheet_label(stage, name))
         self._select_working_sheet_in_list()
-        self.status_var.set(f"Loaded working sheet: {name}")
+        self.status_var.set(f"Loaded {stage.lower()} sheet: {name}")
 
     def _selected_working_sheet_name(self) -> str:
         if hasattr(self, "working_sheet_list"):
@@ -10452,9 +10490,14 @@ class CardPipelineApp(tk.Tk):
                     elif kind == "startup_refresh":
                         self._apply_startup_refresh(payload)
                     elif kind == "load_working_sheet_done":
-                        self._apply_loaded_working_sheet(str(payload.get("name") or ""), list(payload.get("rows") or []))
+                        self._apply_loaded_working_sheet(
+                            str(payload.get("name") or ""),
+                            list(payload.get("rows") or []),
+                            str(payload.get("stage") or "Working"),
+                            str(payload.get("label") or ""),
+                        )
                     elif kind == "load_working_sheet_error":
-                        self.status_var.set(f"Working sheet load failed: {payload.get('error')}")
+                        self.status_var.set(f"Comp sheet load failed: {payload.get('error')}")
                         messagebox.showerror("Load failed", str(payload.get("error") or "Unknown error"))
                     elif kind == "load_received_sheet_done":
                         self._apply_loaded_received_sheet(str(payload.get("name") or ""), list(payload.get("rows") or []))
