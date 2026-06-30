@@ -8833,7 +8833,7 @@ class CardPipelineApp(tk.Tk):
 
             pillow_heif.register_heif_opener()
         except Exception as error:
-            raise RuntimeError("HEIC inventory photos need pillow-heif or a Shortcut JPEG export.") from error
+            raise RuntimeError("HEIC inventory photos need pillow-heif. Rerun install_dependencies, or change the iPhone Shortcut to export JPEG files.") from error
         from PIL import Image, ImageOps
         import io
 

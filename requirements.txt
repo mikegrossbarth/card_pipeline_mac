@@ -2,4 +2,5 @@ certifi
 google-genai
 openpyxl
 pillow
+pillow-heif
 python-dotenv

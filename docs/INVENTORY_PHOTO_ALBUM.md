@@ -70,5 +70,5 @@ Do not add `Delete Photos`; that can delete from the iPhone photo library. If cl
 
 - LUCAS only links photos to active inventory rows with cert numbers.
 - Raw cards without cert numbers are not auto-linked by this scanner.
-- HEIC files are supported only if the local Python environment can open them with `pillow-heif`. JPEG export from the Shortcut is the safest option.
+- HEIC files are supported through `pillow-heif`, which is installed by `install_dependencies`. If HEIC scans fail on an older install, rerun `install_dependencies` or change the Shortcut to export JPEG files.
 - The scan uses `GOOGLE_API_KEY` and the existing LUCAS photo OCR dependencies.
