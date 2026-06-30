@@ -2269,6 +2269,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _money_value = app.CardPipelineApp._money_value
             _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
             _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
+            _loose_expense_adjustments_by_person = app.CardPipelineApp._loose_expense_adjustments_by_person
             def _seller_terms_seller_names(self):
                 return {"john seller"}
             def _load_profit_ledger(self):
@@ -2816,6 +2817,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _remove_profit_ledger_rows_for_source = app.CardPipelineApp._remove_profit_ledger_rows_for_source
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _remove_inventory_rows_for_source = app.CardPipelineApp._remove_inventory_rows_for_source
             _cleanup_sheet_received_side_effects = app.CardPipelineApp._cleanup_sheet_received_side_effects
             _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
 
@@ -2849,11 +2854,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             old_received = app.RECEIVED_SHEETS_DIR
             old_company = app.COMPANY_SHEETS_DIR
             old_ledger = app.PROFIT_LEDGER_PATH
+            old_inventory_ledger = app.INVENTORY_LEDGER_PATH
             app.INCOMING_SHEETS_DIR = incoming_dir
             app.WORKING_SHEETS_DIR = working_dir
             app.RECEIVED_SHEETS_DIR = received_dir
             app.COMPANY_SHEETS_DIR = company_dir
             app.PROFIT_LEDGER_PATH = root / "profit_ledger.json"
+            app.INVENTORY_LEDGER_PATH = root / "inventory_ledger.json"
             app.PROFIT_LEDGER_PATH.write_text(
                 json.dumps([
                     {
@@ -2908,6 +2915,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.RECEIVED_SHEETS_DIR = old_received
                 app.COMPANY_SHEETS_DIR = old_company
                 app.PROFIT_LEDGER_PATH = old_ledger
+                app.INVENTORY_LEDGER_PATH = old_inventory_ledger
 
     def test_profit_sales_are_deduped_and_delta_is_recorded(self) -> None:
         class ProfitDummy:
