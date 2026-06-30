@@ -1692,6 +1692,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(action_row, text="Sync Received to Inventory", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Update Best Company/Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Recomp Visible Cards", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Photo Folder", command=self.choose_inventory_photo_folder, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Scan Photos", command=lambda: self.scan_inventory_photos(manual=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Import Mobile Queue", command=self.import_mobile_queue_file, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
@@ -8647,6 +8648,30 @@ class CardPipelineApp(tk.Tk):
         configured = str(self.app_settings.get("inventory_photo_folder") or "").strip() if hasattr(self, "app_settings") else ""
         return Path(configured).expanduser() if configured else INVENTORY_PHOTOS_DIR
 
+    def choose_inventory_photo_folder(self) -> None:
+        current = self._inventory_photo_source_folder()
+        try:
+            current.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            current = INVENTORY_PHOTOS_DIR
+        selected = filedialog.askdirectory(
+            title="Choose Inventory Photo Folder",
+            initialdir=str(current if current.exists() else ROOT),
+        )
+        if not selected:
+            return
+        folder = Path(selected).expanduser()
+        settings = load_app_settings()
+        settings["inventory_photo_folder"] = str(folder)
+        save_app_settings(settings)
+        self.app_settings = settings
+        try:
+            count = len(self._inventory_photo_files(folder))
+        except Exception:
+            count = 0
+        self.inventory_status_var.set(f"Inventory photo folder set to {folder}. Found {count} photo file(s).")
+        self.status_var.set(f"Inventory photo folder set to {folder}.")
+
     def _load_inventory_photo_state(self) -> dict[str, object]:
         if not INVENTORY_PHOTO_STATE_PATH.exists():
             return {"version": 1, "photos": {}}
@@ -8800,7 +8825,7 @@ class CardPipelineApp(tk.Tk):
         try:
             images = self._inventory_photo_files(folder)
             total = len(images)
-            self.events.put(("inventory_photo_status", f"Inventory photo scan starting: 0/{total} file(s)."))
+            self.events.put(("inventory_photo_status", f"Inventory photo scan starting in {folder}: 0/{total} file(s)."))
             current_hashes = {str(image.get("sha256") or "") for image in images}
             for sha, record in list(photos.items()):
                 if sha and sha not in current_hashes and isinstance(record, dict) and not record.get("removed_at"):
