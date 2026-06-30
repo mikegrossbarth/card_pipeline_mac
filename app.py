@@ -3149,6 +3149,7 @@ class CardPipelineApp(tk.Tk):
         assigned_person = str(normalized.get("assigned_person") or "Unassigned").strip() or "Unassigned"
         company_name = str(company or "").strip()
         source_sheet = normalized.get("source_sheet") or "Inventory"
+        original_source_sheet = source_sheet
         if not company_name:
             company_name = "General Sold"
             source_sheet = self._general_sold_sheet_name(assigned_person)
@@ -3165,6 +3166,7 @@ class CardPipelineApp(tk.Tk):
                 "company": company_name,
                 "weekly_sheet_name": "Inventory Sale",
                 "source_sheet": source_sheet,
+                "original_source_sheet": original_source_sheet,
                 "source": normalized.get("source") or "Inventory",
                 "item_type": normalized.get("item_type") or "",
                 "item_id": normalized.get("item_id") or "",
@@ -4662,6 +4664,7 @@ class CardPipelineApp(tk.Tk):
         normalized["cert_number"] = str(normalized.get("cert_number") or "").strip()
         normalized["weekly_sheet_name"] = str(normalized.get("weekly_sheet_name") or "").strip()
         normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
+        normalized["original_source_sheet"] = str(normalized.get("original_source_sheet") or "").strip()
         normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
         normalized["ledger_key"] = self._profit_record_key(normalized)
         return normalized
@@ -5797,6 +5800,8 @@ class CardPipelineApp(tk.Tk):
         live_summary_paths: list[Path] = []
         errors: list[str] = []
         archived_count = 0
+        reconciled_count = 0
+        duplicate_warnings: list[str] = []
         conflict_files = self._shared_conflict_files()
         if conflict_files:
             errors.append(f"Shared conflicts: {', '.join(path.name for path in conflict_files[:3])}")
@@ -5806,6 +5811,12 @@ class CardPipelineApp(tk.Tk):
                 archived_count = len(archived)
         except Exception as error:
             errors.append(f"Archive: {error}")
+        try:
+            reconciliation = self._reconcile_accounted_home_sheets()
+            reconciled_count = len(reconciliation.get("moved") or [])
+            duplicate_warnings = list(reconciliation.get("warnings") or [])
+        except Exception as error:
+            errors.append(f"Reconcile: {error}")
         for kind, directory in (("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR), ("Received", RECEIVED_SHEETS_DIR)):
             try:
                 directory.mkdir(parents=True, exist_ok=True)
@@ -5831,9 +5842,14 @@ class CardPipelineApp(tk.Tk):
         self._update_home_sheet_tabs()
         if errors:
             self.status_var.set(f"Home refreshed with {len(errors)} sheet issue(s).")
+        elif duplicate_warnings:
+            self.status_var.set(f"Home refreshed. {len(duplicate_warnings)} incoming/working sheet(s) already overlap inventory or sold cards.")
+            self._warn_accounted_duplicate_sheets(duplicate_warnings)
         elif self._seller_warning_count("Working"):
             count = self._seller_warning_count("Working")
             self.status_var.set(f"Home metrics refreshed. {count} working seller sheet(s) need values.")
+        elif reconciled_count:
+            self.status_var.set(f"Home metrics refreshed. Moved {reconciled_count} fully accounted sheet(s) to RECEIVED SHEETS.")
         elif archived_count:
             self.status_var.set(f"Home metrics refreshed. Archived {archived_count} paid received sheet(s).")
         else:
@@ -5842,7 +5858,7 @@ class CardPipelineApp(tk.Tk):
         record_performance_event(
             "home.refresh",
             perf_start,
-            f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived={archived_count} errors={len(errors)}",
+            f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived={archived_count} reconciled={reconciled_count} duplicate_warnings={len(duplicate_warnings)} errors={len(errors)}",
         )
 
     def _home_summary_cache_key(self, path: Path) -> str:
@@ -5866,6 +5882,115 @@ class CardPipelineApp(tk.Tk):
             for key in list(self.home_summary_cache):
                 if key not in live_keys:
                     self.home_summary_cache.pop(key, None)
+
+    def _accounted_source_key(self, value: object) -> str:
+        return Path(str(value or "")).name.strip().lower()
+
+    def _add_accounted_cert(self, index: dict[str, set[str]], source_sheet: object, cert: object) -> None:
+        source_key = self._accounted_source_key(source_sheet)
+        cert_key = scan_to_cert(cert)
+        if source_key and cert_key:
+            index.setdefault(source_key, set()).add(cert_key)
+
+    def _accounted_sheet_cert_index(self) -> dict[str, set[str]]:
+        index: dict[str, set[str]] = {}
+        for record in [self._normalize_inventory_record(row) for row in self._load_inventory_ledger()]:
+            self._add_accounted_cert(index, record.get("source_sheet"), record.get("cert_number"))
+        for record in [self._normalize_profit_record(row) for row in self._load_profit_ledger()]:
+            self._add_accounted_cert(index, record.get("source_sheet"), record.get("cert_number"))
+            self._add_accounted_cert(index, record.get("original_source_sheet"), record.get("cert_number"))
+        for entry in self._load_activity_log():
+            if str(entry.get("action") or "").strip().lower() != "inventory sold":
+                continue
+            details = entry.get("details") if isinstance(entry.get("details"), dict) else {}
+            inventory_key = str(details.get("inventory_key") or "")
+            parts = inventory_key.split("|")
+            if len(parts) >= 2:
+                self._add_accounted_cert(index, parts[1], parts[0])
+        return index
+
+    def _sheet_cert_set(self, path: Path) -> set[str]:
+        return {
+            scan_to_cert(row.get("cert_number"))
+            for row in read_simple_spreadsheet(path)
+            if scan_to_cert(row.get("cert_number"))
+        }
+
+    def _reconcile_accounted_home_sheets(self) -> dict[str, list[str]]:
+        result: dict[str, list[str]] = {"moved": [], "warnings": []}
+        if not CARD_PIPELINE_DIR.exists():
+            return result
+        accounted = self._accounted_sheet_cert_index()
+        if not accounted:
+            return result
+        for stage, directory in (("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR)):
+            if not directory.exists():
+                continue
+            for path in sorted(directory.glob("*.xlsx"), key=lambda item: item.name.lower()):
+                source_key = self._accounted_source_key(path.name)
+                accounted_certs = accounted.get(source_key, set())
+                if not accounted_certs:
+                    continue
+                try:
+                    sheet_certs = self._sheet_cert_set(path)
+                except Exception as error:
+                    result["warnings"].append(f"{path.name}: could not inspect duplicate/accounted rows ({error})")
+                    continue
+                if not sheet_certs:
+                    continue
+                matched = sheet_certs & accounted_certs
+                if not matched:
+                    continue
+                missing = sheet_certs - accounted_certs
+                if missing:
+                    result["warnings"].append(
+                        f"{path.name}: {len(matched)}/{len(sheet_certs)} cert(s) already exist in inventory/company/sold ledgers; {len(missing)} still unaccounted."
+                    )
+                    continue
+                destination = RECEIVED_SHEETS_DIR / path.name
+                if destination.exists():
+                    result["warnings"].append(f"{path.name}: all rows accounted, but RECEIVED SHEETS already has that file name.")
+                    continue
+                try:
+                    mark_result = mark_received_in_workbooks([path], sheet_certs)
+                    mark_errors = list(mark_result.get("errors") or [])
+                    if mark_errors:
+                        result["warnings"].append(f"{path.name}: all rows accounted, but receive marks could not be written: {mark_errors[0]}")
+                        continue
+                    old_key = self._home_sheet_key(stage, path.name)
+                    marker = dict(self.home_sheet_markers.get(old_key, {}))
+                    marker["all_received"] = True
+                    marker.setdefault("received_at", datetime.now().isoformat(timespec="seconds"))
+                    new_key = self._move_sheet_to_received(old_key)
+                    if not new_key:
+                        result["warnings"].append(f"{path.name}: all rows accounted, but L.U.C.A.S could not move the sheet.")
+                        continue
+                    self.home_sheet_markers[new_key] = marker
+                    self._save_sheet_markers()
+                    self._append_activity(
+                        "Sheet Reconcile",
+                        f"Moved fully accounted sheet {path.name} from {stage} to Received.",
+                        {"sheet": path.name, "from": stage, "to": "Received", "accounted_certs": len(sheet_certs)},
+                    )
+                    result["moved"].append(path.name)
+                except Exception as error:
+                    result["warnings"].append(f"{path.name}: all rows accounted, but reconcile failed: {error}")
+        return result
+
+    def _warn_accounted_duplicate_sheets(self, warnings: list[str]) -> None:
+        if not warnings:
+            return
+        seen = getattr(self, "_accounted_duplicate_warning_seen", set())
+        fresh = [warning for warning in warnings if warning not in seen]
+        if not fresh:
+            return
+        self._accounted_duplicate_warning_seen = set(seen) | set(fresh)
+        messagebox.showwarning(
+            "Incoming Sheet Already Accounted",
+            "L.U.C.A.S found incoming/working sheet rows that already exist in inventory, company sheets, or sold ledgers.\n\n"
+            + "\n".join(fresh[:8])
+            + ("\n\nFix: do not re-add duplicate incoming sheets. Move/resolve the sheet before receiving it again." if len(fresh) <= 8 else "\n\nMore warnings were found. Check Home/System Health."),
+        )
 
     def _shared_conflict_files(self) -> list[Path]:
         if not CARD_PIPELINE_DIR.exists():

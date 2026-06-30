@@ -38,6 +38,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Home refresh now reconciles duplicate/accounted incoming and working sheets against inventory/profit ledgers. Fully accounted sheets are marked received, moved to `RECEIVED SHEETS`, and logged; partially accounted sheets stay put and trigger a loud warning so manually re-added incoming sheets cannot silently duplicate cards already in inventory/company/sold ledgers. Live `KEVIN_HAMLIN_DALTON.xlsx` was reconciled to Received from the Windows/shared pipeline on 2026-06-30.
 - Inventory `Move to Best Company Sheet` now trusts the visible stored Best Company and Est. Payout on active inventory rows instead of requiring a fresh assignment recalculation to still match. This fixes rows like `FANATICS / $13.30` failing with "No selected inventory cards matched an assignable company" after assignment rules/context drift.
 - Weekly company tabs now roll over on Monday at 8:00 PM local time. Sunday midnight no longer starts the next company-sheet week; Monday before 8 PM still writes to the prior `Week of YYYY-MM-DD` tab.
 - Comp now shows a non-editable `Received` marker column for loaded Incoming/Working sheets. The marker reads the workbook `RECEIVED` column and `Save Back to Source Sheet` preserves it, so partial package check-ins remain visible while comp/edit work continues.

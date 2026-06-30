@@ -3283,6 +3283,153 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 dummy._prune_home_summary_cache([])
                 self.assertEqual(dummy.home_summary_cache, {})
 
+    def test_accounted_incoming_sheet_reconciles_to_received_without_duplicate_inventory(self) -> None:
+        class ReconcileDummy:
+            _accounted_source_key = app.CardPipelineApp._accounted_source_key
+            _add_accounted_cert = app.CardPipelineApp._add_accounted_cert
+            _accounted_sheet_cert_index = app.CardPipelineApp._accounted_sheet_cert_index
+            _sheet_cert_set = app.CardPipelineApp._sheet_cert_set
+            _reconcile_accounted_home_sheets = app.CardPipelineApp._reconcile_accounted_home_sheets
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _marker_for_stage = app.CardPipelineApp._marker_for_stage
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+
+            def _load_inventory_ledger(self):
+                return self.inventory
+
+            def _load_profit_ledger(self):
+                return self.profit
+
+            def _load_activity_log(self):
+                return self.activity
+
+            def _save_sheet_markers(self):
+                pass
+
+            def _append_activity(self, action, summary, details=None):
+                self.activity.append({"action": action, "summary": summary, "details": details or {}})
+
+            def _move_sheet_to_received(self, key):
+                stage, name = self._split_home_sheet_key(key)
+                source = {"Incoming": app.INCOMING_SHEETS_DIR, "Working": app.WORKING_SHEETS_DIR}[stage] / name
+                destination = app.RECEIVED_SHEETS_DIR / name
+                app.RECEIVED_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+                app.shutil.move(str(source), str(destination))
+                marker = self._marker_for_stage(dict(self.home_sheet_markers.get(key, {})), "Received")
+                self.home_sheet_markers.pop(key, None)
+                new_key = self._home_sheet_key("Received", name)
+                self.home_sheet_markers[new_key] = marker
+                return new_key
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            app.CARD_PIPELINE_DIR = root
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.RECEIVED_SHEETS_DIR = root / "RECEIVED SHEETS"
+            app.INCOMING_SHEETS_DIR.mkdir(parents=True)
+            app.WORKING_SHEETS_DIR.mkdir(parents=True)
+            app.RECEIVED_SHEETS_DIR.mkdir(parents=True)
+            try:
+                sheet_path = app.INCOMING_SHEETS_DIR / "Lot A.xlsx"
+                write_working_sheet(
+                    sheet_path,
+                    [
+                        WorkbookRow(excel_row=2, cert_number="111", grader="PSA", card_title="Inventory Card", existing_value=10),
+                        WorkbookRow(excel_row=3, cert_number="222", grader="PSA", card_title="Sold Card", existing_value=20),
+                    ],
+                    {2: "manual", 3: "manual"},
+                )
+                dummy = ReconcileDummy()
+                dummy.home_sheet_markers = {"Incoming|Lot A.xlsx": {"assigned_person": "Kevin Hambone"}}
+                dummy.inventory = [{"cert_number": "111", "source_sheet": "Lot A.xlsx", "status": "Active"}]
+                dummy.profit = [{"cert_number": "222", "source_sheet": "Kevin Hambone General Sold", "original_source_sheet": "Lot A.xlsx", "purchase_price": 20, "sale_price": 30}]
+                dummy.activity = []
+
+                result = dummy._reconcile_accounted_home_sheets()
+
+                self.assertEqual(result["moved"], ["Lot A.xlsx"])
+                self.assertEqual(result["warnings"], [])
+                self.assertFalse(sheet_path.exists())
+                self.assertTrue((app.RECEIVED_SHEETS_DIR / "Lot A.xlsx").exists())
+                self.assertTrue(all(row["received"] for row in read_simple_spreadsheet(app.RECEIVED_SHEETS_DIR / "Lot A.xlsx")))
+                self.assertTrue(dummy.home_sheet_markers["Received|Lot A.xlsx"]["all_received"])
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.RECEIVED_SHEETS_DIR = old_received
+
+    def test_partial_accounted_incoming_sheet_warns_without_moving(self) -> None:
+        class ReconcileDummy:
+            _accounted_source_key = app.CardPipelineApp._accounted_source_key
+            _add_accounted_cert = app.CardPipelineApp._add_accounted_cert
+            _accounted_sheet_cert_index = app.CardPipelineApp._accounted_sheet_cert_index
+            _sheet_cert_set = app.CardPipelineApp._sheet_cert_set
+            _reconcile_accounted_home_sheets = app.CardPipelineApp._reconcile_accounted_home_sheets
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+
+            def _load_inventory_ledger(self):
+                return self.inventory
+
+            def _load_profit_ledger(self):
+                return []
+
+            def _load_activity_log(self):
+                return []
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            app.CARD_PIPELINE_DIR = root
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.RECEIVED_SHEETS_DIR = root / "RECEIVED SHEETS"
+            app.INCOMING_SHEETS_DIR.mkdir(parents=True)
+            app.WORKING_SHEETS_DIR.mkdir(parents=True)
+            app.RECEIVED_SHEETS_DIR.mkdir(parents=True)
+            try:
+                sheet_path = app.INCOMING_SHEETS_DIR / "Lot B.xlsx"
+                write_working_sheet(
+                    sheet_path,
+                    [
+                        WorkbookRow(excel_row=2, cert_number="111", grader="PSA", card_title="Duplicate Card", existing_value=10),
+                        WorkbookRow(excel_row=3, cert_number="333", grader="PSA", card_title="New Card", existing_value=20),
+                    ],
+                    {2: "manual", 3: "manual"},
+                )
+                dummy = ReconcileDummy()
+                dummy.inventory = [{"cert_number": "111", "source_sheet": "Lot B.xlsx", "status": "Active"}]
+
+                result = dummy._reconcile_accounted_home_sheets()
+
+                self.assertEqual(result["moved"], [])
+                self.assertEqual(len(result["warnings"]), 1)
+                self.assertIn("1/2 cert(s) already exist", result["warnings"][0])
+                self.assertTrue(sheet_path.exists())
+                self.assertFalse((app.RECEIVED_SHEETS_DIR / "Lot B.xlsx").exists())
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.RECEIVED_SHEETS_DIR = old_received
+
     def test_expense_records_deduct_from_person_profit(self) -> None:
         class ExpenseDummy:
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
@@ -4957,6 +5104,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         )
         self.assertEqual(record["company"], "General Sold")
         self.assertEqual(record["source_sheet"], "Kevin Hambone General Sold")
+        self.assertEqual(record["original_source_sheet"], "Original.xlsx")
         self.assertEqual(record["assigned_person"], "Kevin Hambone")
 
     def test_refund_profit_record_returns_card_to_inventory_and_removes_company_row(self) -> None:
