@@ -11,7 +11,7 @@ This is the LUCAS version of the earlier automatic inventory update flow. It use
 5. LUCAS also repeats that same mirror-and-scan flow every three hours.
 6. LUCAS OCRs cert numbers from new/changed photos and links matching certs to active rows in `inventory_ledger.json`.
 7. Inventory shows a `Photos` count and exports `Photos` plus `Photo Paths`.
-8. When a card leaves active inventory by being sold, deleted, or moved to a company sheet, LUCAS deletes its linked photo from the active photo folder unless another active inventory row still uses that same photo.
+8. When a card leaves active inventory by being sold, deleted, or moved to a company sheet, LUCAS deletes every linked source/shared photo file it can safely resolve unless another active inventory row still uses that same photo.
 
 ## Viewing Photos In LUCAS
 
@@ -24,7 +24,7 @@ To open it:
 
 You can also click `Open Photo Folder` from the same right-click menu to jump to the synced album folder.
 
-While copying and scanning, the Inventory status line updates with progress like `Mirroring inventory photos: 3/42 IMG_1234.jpg` and `Inventory photo scan: 3/42 IMG_1234.jpg`.
+While copying and scanning, the Inventory status line updates with progress like `Mirroring inventory photos: 3/42 IMG_1234.jpg` and `Inventory photo scan: 3/42 IMG_1234.jpg`. Photos already linked to active inventory rows are skipped during later scans.
 
 ## Folder
 
@@ -65,6 +65,8 @@ Safe iPhone Shortcut:
    - Overwrite If File Exists: on if available.
 
 Do not add `Delete Photos`; that can delete from the iPhone photo library. If cleanup is needed later, delete files from the export folder only, not Photos results.
+
+LUCAS delete/sold/move cleanup can remove files from the synced source folder and shared `CARD_PIPELINE/INVENTORY PHOTOS` folder. It cannot directly delete a picture from the private iPhone Photos library unless your Shortcut is built around Files/synced folders instead of keeping the original in Photos.
 
 ## Notes
 

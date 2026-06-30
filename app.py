@@ -3151,19 +3151,27 @@ class CardPipelineApp(tk.Tk):
                 cleanup(removed, kept)
 
     def _safe_inventory_photo_path(self, path_value: object) -> Path | None:
-        resolver = getattr(self, "_resolve_inventory_photo_path", None)
-        if callable(resolver):
-            path = resolver(path_value)
+        safe_candidates = getattr(self, "_inventory_photo_safe_candidates", None)
+        if callable(safe_candidates):
+            candidates = safe_candidates(path_value)
         else:
             path = Path(str(path_value or "")).expanduser()
             if not path.is_absolute():
                 path = self._inventory_photo_source_folder() / path
-        if not path:
-            return None
-        try:
-            resolved = path.resolve()
-        except Exception:
-            return None
+            candidates = [path]
+        for path in candidates:
+            if path.exists():
+                return path
+        return None
+
+    def _inventory_photo_safe_candidates(self, path_value: object) -> list[Path]:
+        candidate_source = getattr(self, "_inventory_photo_path_candidates", None)
+        candidates = candidate_source(path_value) if callable(candidate_source) else []
+        if not candidates:
+            path = Path(str(path_value or "")).expanduser()
+            if not path.is_absolute():
+                path = self._inventory_photo_source_folder() / path
+            candidates = [path]
         roots: list[Path] = []
         root_sources = [self._inventory_photo_source_folder()]
         shared_folder = getattr(self, "_inventory_photo_shared_folder", None)
@@ -3174,9 +3182,21 @@ class CardPipelineApp(tk.Tk):
                 roots.append(root.resolve())
             except Exception:
                 continue
-        if any(resolved == root or root in resolved.parents for root in roots):
-            return resolved
-        return None
+        safe: list[Path] = []
+        seen: set[str] = set()
+        for path in candidates:
+            try:
+                resolved = path.resolve()
+            except Exception:
+                continue
+            if not any(resolved == root or root in resolved.parents for root in roots):
+                continue
+            key = str(resolved).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            safe.append(resolved)
+        return safe
 
     def _delete_inventory_photo_files_for_removed_records(
         self,
@@ -3186,24 +3206,32 @@ class CardPipelineApp(tk.Tk):
         if not removed_records:
             return 0
         remaining = remaining_records if remaining_records is not None else [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-        still_used = {
-            str(path)
-            for record in remaining
-            for path in (record.get("photo_paths") or [])
-        }
+        safe_candidates = getattr(self, "_inventory_photo_safe_candidates", None)
+        def photo_safe_candidates(value: object) -> list[Path]:
+            if callable(safe_candidates):
+                return safe_candidates(value)
+            path = self._safe_inventory_photo_path(value)
+            return [path] if path else []
+
+        still_used: set[str] = set()
+        for record in remaining:
+            for path in (record.get("photo_paths") or []):
+                still_used.add(str(path))
+                for candidate in photo_safe_candidates(path):
+                    still_used.add(str(candidate))
         deleted_paths: list[str] = []
         for record in removed_records:
             for path_value in record.get("photo_paths") or []:
                 if str(path_value) in still_used:
                     continue
-                path = self._safe_inventory_photo_path(path_value)
-                if not path or not path.exists():
-                    continue
-                try:
-                    path.unlink()
-                    deleted_paths.append(str(path))
-                except Exception:
-                    continue
+                for path in photo_safe_candidates(path_value):
+                    if str(path) in still_used or not path.exists():
+                        continue
+                    try:
+                        path.unlink()
+                        deleted_paths.append(str(path))
+                    except Exception:
+                        continue
         if deleted_paths:
             state = self._load_inventory_photo_state()
             photos = state.setdefault("photos", {})
@@ -8915,7 +8943,7 @@ class CardPipelineApp(tk.Tk):
             return relative.as_posix()
         return str(path)
 
-    def _resolve_inventory_photo_path(self, path_value: object) -> Path:
+    def _inventory_photo_path_candidates(self, path_value: object) -> list[Path]:
         text = str(path_value or "").strip()
         path = Path(text).expanduser()
         candidates: list[Path] = []
@@ -8927,14 +8955,47 @@ class CardPipelineApp(tk.Tk):
         else:
             candidates.extend([self._inventory_photo_shared_folder() / path, self._inventory_photo_source_folder() / path, path])
         seen: set[str] = set()
+        unique: list[Path] = []
         for candidate in candidates:
             key = str(candidate)
             if key in seen:
                 continue
             seen.add(key)
+            unique.append(candidate)
+        return unique
+
+    def _resolve_inventory_photo_path(self, path_value: object) -> Path:
+        candidates = self._inventory_photo_path_candidates(path_value)
+        for candidate in candidates:
             if candidate.exists():
                 return candidate
-        return candidates[0] if candidates else path
+        return candidates[0] if candidates else Path(str(path_value or "")).expanduser()
+
+    def _inventory_record_references_photo(self, record: dict[str, object], photo_path: Path) -> bool:
+        expected = self._inventory_photo_storage_value(photo_path)
+        try:
+            expected_resolved = str(photo_path.resolve()).lower()
+        except Exception:
+            expected_resolved = str(photo_path).lower()
+        for value in record.get("photo_paths") or []:
+            if str(value) == expected:
+                return True
+            for candidate in self._inventory_photo_path_candidates(value):
+                try:
+                    if str(candidate.resolve()).lower() == expected_resolved:
+                        return True
+                except Exception:
+                    continue
+        return False
+
+    def _inventory_photo_scan_can_skip(self, existing: dict[str, object], records_by_key: dict[str, dict[str, object]], photo_path: Path) -> bool:
+        if not existing or str(existing.get("status") or "") != "linked":
+            return False
+        for key in existing.get("linked_keys") or []:
+            record = records_by_key.get(str(key))
+            if record and self._inventory_record_references_photo(record, photo_path):
+                return True
+        return False
 
     def scan_inventory_photos(self, manual: bool = False, folder: Path | None = None) -> None:
         if self.inventory_photo_worker and self.inventory_photo_worker.is_alive():
@@ -8969,6 +9030,7 @@ class CardPipelineApp(tk.Tk):
         linked = 0
         scanned = 0
         errors: list[str] = []
+        skipped = 0
         state = self._load_inventory_photo_state()
         photos = state.setdefault("photos", {})
         try:
@@ -8982,16 +9044,24 @@ class CardPipelineApp(tk.Tk):
                     record["removed_at"] = datetime.now().isoformat(timespec="seconds")
             rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
             keys_by_cert = self._active_inventory_keys_by_cert(rows)
+            records_by_key = {str(record.get("inventory_key") or ""): record for record in rows if str(record.get("status") or "").lower() == "active"}
             for index, image in enumerate(images, start=1):
                 self.events.put(("inventory_photo_status", f"Inventory photo scan: {index}/{total} {image.get('relative_path') or image.get('filename') or 'photo'}"))
                 sha = str(image.get("sha256") or "")
                 if not sha:
                     continue
                 existing = photos.get(sha) if isinstance(photos.get(sha), dict) else {}
+                image_path = Path(str(image.get("path") or ""))
+                can_skip = getattr(self, "_inventory_photo_scan_can_skip", None)
+                if callable(can_skip) and can_skip(existing, records_by_key, image_path):
+                    skipped += 1
+                    existing["last_seen"] = datetime.now().isoformat(timespec="seconds")
+                    photos[sha] = existing
+                    continue
                 certs = {scan_to_cert(cert) for cert in (existing.get("certs") or []) if scan_to_cert(cert)}
                 if not certs:
                     try:
-                        image_b64 = self._inventory_photo_base64(Path(str(image.get("path") or "")))
+                        image_b64 = self._inventory_photo_base64(image_path)
                         cards = identify_cards_sync(self.inventory_photo_client, image_b64)
                         certs = self._inventory_photo_certs_from_cards(cards)
                         scanned += 1
@@ -9001,7 +9071,7 @@ class CardPipelineApp(tk.Tk):
                         continue
                 matched_keys = {key for cert in certs for key in keys_by_cert.get(cert, [])}
                 if matched_keys:
-                    linked += self._link_inventory_photo_to_keys(matched_keys, Path(str(image.get("path") or "")))
+                    linked += self._link_inventory_photo_to_keys(matched_keys, image_path)
                 photos[sha] = {
                     **image,
                     "certs": sorted(certs),
@@ -9010,7 +9080,7 @@ class CardPipelineApp(tk.Tk):
                     "last_seen": datetime.now().isoformat(timespec="seconds"),
                 }
             self._save_inventory_photo_state(state)
-            self.events.put(("inventory_photo_status", f"Inventory photo scan complete: {len(images)} file(s), OCR scanned {scanned}, linked {linked}."))
+            self.events.put(("inventory_photo_status", f"Inventory photo scan complete: {len(images)} file(s), skipped {skipped}, OCR scanned {scanned}, linked {linked}."))
             if linked:
                 self.events.put(("inventory_refresh", None))
         except Exception as error:
@@ -9019,7 +9089,7 @@ class CardPipelineApp(tk.Tk):
         finally:
             if errors:
                 record_performance_event("inventory.photos.errors", started, " | ".join(errors[:5]), force=True)
-            record_performance_event("inventory.photos.scan", started, f"scanned={scanned} linked={linked} errors={len(errors)}")
+            record_performance_event("inventory.photos.scan", started, f"skipped={skipped} scanned={scanned} linked={linked} errors={len(errors)}")
 
     def refresh_incoming_index(self) -> None:
         try:
