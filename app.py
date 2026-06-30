@@ -4,6 +4,7 @@ import csv
 import html
 import queue
 import base64
+import hashlib
 import json
 import os
 import re
@@ -118,6 +119,8 @@ SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
 PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
 INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
+INVENTORY_PHOTOS_DIR = CARD_PIPELINE_DIR / "INVENTORY PHOTOS"
+INVENTORY_PHOTO_STATE_PATH = CARD_PIPELINE_DIR / "inventory_photo_state.json"
 ACTIVITY_LOG_PATH = CARD_PIPELINE_DIR / "activity_log.json"
 MOBILE_ACTION_LOG_PATH = CARD_PIPELINE_DIR / "mobile_action_log.json"
 UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
@@ -245,7 +248,7 @@ def is_google_sheet_url(value: object) -> bool:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, ACTIVITY_LOG_PATH, MOBILE_ACTION_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, INVENTORY_PHOTOS_DIR, INVENTORY_PHOTO_STATE_PATH, ACTIVITY_LOG_PATH, MOBILE_ACTION_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -256,6 +259,8 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
     PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
     INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
+    INVENTORY_PHOTOS_DIR = CARD_PIPELINE_DIR / "INVENTORY PHOTOS"
+    INVENTORY_PHOTO_STATE_PATH = CARD_PIPELINE_DIR / "inventory_photo_state.json"
     ACTIVITY_LOG_PATH = CARD_PIPELINE_DIR / "activity_log.json"
     MOBILE_ACTION_LOG_PATH = CARD_PIPELINE_DIR / "mobile_action_log.json"
     UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
@@ -384,6 +389,7 @@ INVENTORY_TABLE_COLUMNS = (
     "payout",
     "source",
     "status",
+    "photos",
     "notes",
 )
 
@@ -461,6 +467,7 @@ INVENTORY_HEADINGS = {
     "payout": "Est. Payout",
     "source": "Source Sheet",
     "status": "Status",
+    "photos": "Photos",
     "notes": "Notes",
 }
 
@@ -482,6 +489,7 @@ INVENTORY_COLUMN_WIDTHS = {
     "payout": 100,
     "source": 170,
     "status": 110,
+    "photos": 80,
     "notes": 240,
 }
 
@@ -657,6 +665,9 @@ class CardPipelineApp(tk.Tk):
         self.inventory_filter_after_id: str | None = None
         self.inventory_sort_column = "date"
         self.inventory_sort_descending = True
+        self.inventory_photo_worker: threading.Thread | None = None
+        self.inventory_photo_client = None
+        self.inventory_photo_scan_after_id: str | None = None
         self.profit_status_var = tk.StringVar(value="No profit ledger loaded.")
         self.profit_metric_var = tk.StringVar(value="")
         self.profit_person_var = tk.StringVar()
@@ -680,6 +691,7 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(self.bridge_status_text)
         self.after(100, self._start_startup_refresh)
         self.after(5 * 60 * 1000, self._weekly_company_sheet_timer)
+        self.after(30 * 1000, self._schedule_inventory_photo_scan)
         record_performance_event("app.init", perf_start, f"pipeline={CARD_PIPELINE_DIR}", force=True)
 
     def _on_close(self) -> None:
@@ -1558,6 +1570,7 @@ class CardPipelineApp(tk.Tk):
                 "payout": "estimated_payout",
                 "source": "source_sheet",
                 "status": "status",
+                "photos": "photo_count",
                 "notes": "notes",
             }
             raw = inventory_display_notes(record) if column == "notes" else record.get(field_map.get(column, column))
@@ -1679,6 +1692,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(action_row, text="Sync Received to Inventory", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Update Best Company/Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Recomp Visible Cards", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Scan Photos", command=lambda: self.scan_inventory_photos(manual=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Import Mobile Queue", command=self.import_mobile_queue_file, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         self.inventory_bulk_toggle = tk.Checkbutton(
@@ -1992,6 +2006,13 @@ class CardPipelineApp(tk.Tk):
         normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
         normalized["source"] = str(normalized.get("source") or "").strip()
         normalized["status"] = str(normalized.get("status") or "Active").strip() or "Active"
+        photo_paths = normalized.get("photo_paths") or normalized.get("photos") or []
+        if isinstance(photo_paths, str):
+            photo_paths = [part.strip() for part in re.split(r"[;\n]", photo_paths) if part.strip()]
+        elif not isinstance(photo_paths, list):
+            photo_paths = []
+        normalized["photo_paths"] = [str(path).strip() for path in photo_paths if str(path or "").strip()]
+        normalized["photo_count"] = len(normalized["photo_paths"])
         normalized["notes"] = str(normalized.get("notes") or "").strip()
         normalized["inventory_key"] = str(normalized.get("inventory_key") or self._inventory_record_key(normalized))
         return normalized
@@ -3120,18 +3141,84 @@ class CardPipelineApp(tk.Tk):
         if not moved_keys:
             return
         ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        removed = [record for record in ledger if str(record.get("inventory_key") or "") in moved_keys]
         kept = [record for record in ledger if str(record.get("inventory_key") or "") not in moved_keys]
         if len(kept) != len(ledger):
             self._save_inventory_ledger(kept)
+            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
+            if callable(cleanup):
+                cleanup(removed, kept)
+
+    def _safe_inventory_photo_path(self, path_value: object) -> Path | None:
+        try:
+            path = Path(str(path_value or "")).expanduser()
+            if not path.is_absolute():
+                path = self._inventory_photo_source_folder() / path
+            resolved = path.resolve()
+            root = self._inventory_photo_source_folder().resolve()
+        except Exception:
+            return None
+        if resolved == root or root in resolved.parents:
+            return resolved
+        return None
+
+    def _delete_inventory_photo_files_for_removed_records(
+        self,
+        removed_records: list[dict[str, object]],
+        remaining_records: list[dict[str, object]] | None = None,
+    ) -> int:
+        if not removed_records:
+            return 0
+        remaining = remaining_records if remaining_records is not None else [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        still_used = {
+            str(path)
+            for record in remaining
+            for path in (record.get("photo_paths") or [])
+        }
+        deleted_paths: list[str] = []
+        for record in removed_records:
+            for path_value in record.get("photo_paths") or []:
+                if str(path_value) in still_used:
+                    continue
+                path = self._safe_inventory_photo_path(path_value)
+                if not path or not path.exists():
+                    continue
+                try:
+                    path.unlink()
+                    deleted_paths.append(str(path))
+                except Exception:
+                    continue
+        if deleted_paths:
+            state = self._load_inventory_photo_state()
+            photos = state.setdefault("photos", {})
+            deleted_set = {str(Path(path).resolve()) for path in deleted_paths}
+            for record in photos.values():
+                if not isinstance(record, dict):
+                    continue
+                record_path = record.get("path")
+                try:
+                    resolved = str(Path(str(record_path or "")).resolve())
+                except Exception:
+                    resolved = str(record_path or "")
+                if resolved in deleted_set:
+                    record["status"] = "deleted_from_album"
+                    record["deleted_at"] = datetime.now().isoformat(timespec="seconds")
+            self._save_inventory_photo_state(state)
+            self._append_activity("Inventory Photo Delete", f"Deleted {len(deleted_paths)} inventory photo file(s).", {"paths": deleted_paths[:20]})
+        return len(deleted_paths)
 
     def _mark_inventory_record_sold(self, inventory_key: str, company: str, sale_price: float) -> int:
         if not inventory_key:
             return 0
         ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        removed = [record for record in ledger if str(record.get("inventory_key") or "") == inventory_key]
         kept = [record for record in ledger if str(record.get("inventory_key") or "") != inventory_key]
         changed = len(ledger) - len(kept)
         if changed:
             self._save_inventory_ledger(kept)
+            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
+            if callable(cleanup):
+                cleanup(removed, kept)
         return changed
 
     def _general_sold_sheet_name(self, person: str) -> str:
@@ -3722,6 +3809,7 @@ class CardPipelineApp(tk.Tk):
             "payout": format_money(record.get("estimated_payout")),
             "source": record.get("source_sheet") or "",
             "status": record.get("status") or "",
+            "photos": str(len(record.get("photo_paths") or [])),
             "notes": inventory_display_notes(record),
         }
         for column, value in values.items():
@@ -4184,6 +4272,7 @@ class CardPipelineApp(tk.Tk):
                     format_money(record.get("estimated_payout")),
                     record.get("source_sheet") or "",
                     record.get("status") or "",
+                    str(len(record.get("photo_paths") or [])),
                     inventory_display_notes(record),
                 ),
             )
@@ -4470,10 +4559,14 @@ class CardPipelineApp(tk.Tk):
             return 0
         with shared_lock(CARD_PIPELINE_DIR, "inventory-delete", self.lucas_identity):
             rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+            removed = [record for record in rows if str(record.get("inventory_key") or "") in keys]
             kept = [record for record in rows if str(record.get("inventory_key") or "") not in keys]
             deleted = len(rows) - len(kept)
             if deleted:
                 self._save_inventory_ledger(kept)
+                cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
+                if callable(cleanup):
+                    cleanup(removed, kept)
         return deleted
 
     def _filtered_inventory_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -4518,7 +4611,7 @@ class CardPipelineApp(tk.Tk):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Inventory"
-        headers = ["Date Added", "Type", "Item ID", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Source Sheet", "Source", "Status", "Notes"]
+        headers = ["Date Added", "Type", "Item ID", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Source Sheet", "Source", "Status", "Photos", "Photo Paths", "Notes"]
         sheet.append(headers)
         for record in rows:
             sheet.append([
@@ -4540,11 +4633,13 @@ class CardPipelineApp(tk.Tk):
                 record.get("source_sheet") or "",
                 record.get("source") or "",
                 record.get("status") or "",
+                len(record.get("photo_paths") or []),
+                "; ".join(str(path) for path in (record.get("photo_paths") or [])),
                 inventory_display_notes(record),
             ])
         sheet.auto_filter.ref = sheet.dimensions
         sheet.freeze_panes = "A2"
-        for index, width in enumerate([14, 12, 22, 18, 14, 22, 12, 60, 16, 16, 16, 16, 14, 20, 16, 28, 24, 14, 36], start=1):
+        for index, width in enumerate([14, 12, 22, 18, 14, 22, 12, 60, 16, 16, 16, 16, 14, 20, 16, 28, 24, 14, 10, 45, 36], start=1):
             sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
         workbook.save(path)
         self.status_var.set(f"Exported inventory: {path}")
@@ -8499,6 +8594,207 @@ class CardPipelineApp(tk.Tk):
         load_dotenv(PHOTO_APP_DIR / ".env", override=False)
         load_dotenv(PHOTO_APP_ROOT / ".env", override=False)
 
+    def _inventory_photo_source_folder(self) -> Path:
+        configured = str(self.app_settings.get("inventory_photo_folder") or "").strip() if hasattr(self, "app_settings") else ""
+        return Path(configured).expanduser() if configured else INVENTORY_PHOTOS_DIR
+
+    def _load_inventory_photo_state(self) -> dict[str, object]:
+        if not INVENTORY_PHOTO_STATE_PATH.exists():
+            return {"version": 1, "photos": {}}
+        try:
+            raw = json.loads(INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {"version": 1, "photos": {}}
+        if not isinstance(raw, dict):
+            return {"version": 1, "photos": {}}
+        raw.setdefault("version", 1)
+        if not isinstance(raw.get("photos"), dict):
+            raw["photos"] = {}
+        return raw
+
+    def _save_inventory_photo_state(self, state: dict[str, object]) -> None:
+        INVENTORY_PHOTO_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        state["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        atomic_write_json(INVENTORY_PHOTO_STATE_PATH, state)
+
+    def _inventory_photo_file_hash(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _inventory_photo_files(self, folder: Path) -> list[dict[str, object]]:
+        allowed = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+        if not folder.exists():
+            return []
+        images: list[dict[str, object]] = []
+        for path in sorted(folder.rglob("*"), key=lambda item: str(item).lower()):
+            if not path.is_file() or path.suffix.lower() not in allowed:
+                continue
+            try:
+                stat = path.stat()
+                images.append(
+                    {
+                        "path": str(path),
+                        "relative_path": path.relative_to(folder).as_posix(),
+                        "filename": path.name,
+                        "size": stat.st_size,
+                        "modified": int(stat.st_mtime),
+                        "sha256": self._inventory_photo_file_hash(path),
+                    }
+                )
+            except Exception:
+                continue
+        return images
+
+    def _inventory_photo_base64(self, path: Path) -> str:
+        if path.suffix.lower() not in {".heic", ".heif"}:
+            return base64.b64encode(path.read_bytes()).decode("utf-8")
+        try:
+            import pillow_heif
+
+            pillow_heif.register_heif_opener()
+        except Exception as error:
+            raise RuntimeError("HEIC inventory photos need pillow-heif or a Shortcut JPEG export.") from error
+        from PIL import Image, ImageOps
+        import io
+
+        with Image.open(path) as opened:
+            converted = ImageOps.exif_transpose(opened)
+            if converted.mode not in {"RGB", "L"}:
+                converted = converted.convert("RGB")
+            buffer = io.BytesIO()
+            converted.save(buffer, format="JPEG", quality=92)
+        return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+    def _inventory_photo_certs_from_cards(self, cards: list[dict]) -> set[str]:
+        certs: set[str] = set()
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            for value in card.values():
+                text = str(value or "")
+                direct = scan_to_cert(text)
+                if direct:
+                    certs.add(direct)
+                for match in re.findall(r"\b\d{5,12}\b", text):
+                    cert = scan_to_cert(match)
+                    if cert:
+                        certs.add(cert)
+        return certs
+
+    def _active_inventory_keys_by_cert(self, rows: list[dict[str, object]]) -> dict[str, list[str]]:
+        by_cert: dict[str, list[str]] = defaultdict(list)
+        for record in rows:
+            if str(record.get("status") or "").lower() != "active":
+                continue
+            cert = scan_to_cert(record.get("cert_number"))
+            key = str(record.get("inventory_key") or "")
+            if cert and key:
+                by_cert[cert].append(key)
+        return by_cert
+
+    def _link_inventory_photo_to_keys(self, keys: set[str], photo_path: Path) -> int:
+        if not keys:
+            return 0
+        path_text = str(photo_path)
+        with shared_lock(CARD_PIPELINE_DIR, "inventory-photo-link", self.lucas_identity):
+            rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+            changed = 0
+            for record in rows:
+                if str(record.get("inventory_key") or "") not in keys:
+                    continue
+                photo_paths = list(record.get("photo_paths") or [])
+                if path_text not in photo_paths:
+                    photo_paths.append(path_text)
+                    record["photo_paths"] = photo_paths
+                    record["photo_count"] = len(photo_paths)
+                    changed += 1
+            if changed:
+                self._save_inventory_ledger(rows)
+        return changed
+
+    def scan_inventory_photos(self, manual: bool = False) -> None:
+        if self.inventory_photo_worker and self.inventory_photo_worker.is_alive():
+            if manual:
+                messagebox.showinfo("Scan running", "Inventory photo scan is already running.")
+            return
+        folder = self._inventory_photo_source_folder()
+        folder.mkdir(parents=True, exist_ok=True)
+        if genai is None or identify_cards_sync is None:
+            self.inventory_status_var.set("Inventory photo scan unavailable: missing photo OCR dependencies.")
+            return
+        self._load_photo_env()
+        api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+        if not api_key:
+            self.inventory_status_var.set("Inventory photo scan unavailable: missing GOOGLE_API_KEY.")
+            if manual:
+                messagebox.showerror("Missing GOOGLE_API_KEY", "Create .env in the L.U.C.A.S project folder or set GOOGLE_API_KEY.")
+            return
+        self.inventory_photo_client = genai.Client(api_key=api_key)
+        self.inventory_status_var.set(f"Scanning inventory photos in {folder}...")
+        self.inventory_photo_worker = threading.Thread(target=self._inventory_photo_scan_worker, args=(folder,), daemon=True)
+        self.inventory_photo_worker.start()
+
+    def _schedule_inventory_photo_scan(self) -> None:
+        self.scan_inventory_photos(manual=False)
+        self.inventory_photo_scan_after_id = self.after(3 * 60 * 60 * 1000, self._schedule_inventory_photo_scan)
+
+    def _inventory_photo_scan_worker(self, folder: Path) -> None:
+        started = time.perf_counter()
+        linked = 0
+        scanned = 0
+        errors: list[str] = []
+        state = self._load_inventory_photo_state()
+        photos = state.setdefault("photos", {})
+        try:
+            images = self._inventory_photo_files(folder)
+            current_hashes = {str(image.get("sha256") or "") for image in images}
+            for sha, record in list(photos.items()):
+                if sha and sha not in current_hashes and isinstance(record, dict) and not record.get("removed_at"):
+                    record["status"] = "missing_from_album"
+                    record["removed_at"] = datetime.now().isoformat(timespec="seconds")
+            rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+            keys_by_cert = self._active_inventory_keys_by_cert(rows)
+            for image in images:
+                sha = str(image.get("sha256") or "")
+                if not sha:
+                    continue
+                existing = photos.get(sha) if isinstance(photos.get(sha), dict) else {}
+                certs = {scan_to_cert(cert) for cert in (existing.get("certs") or []) if scan_to_cert(cert)}
+                if not certs:
+                    try:
+                        image_b64 = self._inventory_photo_base64(Path(str(image.get("path") or "")))
+                        cards = identify_cards_sync(self.inventory_photo_client, image_b64)
+                        certs = self._inventory_photo_certs_from_cards(cards)
+                        scanned += 1
+                    except Exception as error:
+                        errors.append(f"{image.get('relative_path')}: {error}")
+                        photos[sha] = {**image, "certs": [], "linked_keys": [], "status": "ocr_error", "error": str(error), "last_seen": datetime.now().isoformat(timespec="seconds")}
+                        continue
+                matched_keys = {key for cert in certs for key in keys_by_cert.get(cert, [])}
+                if matched_keys:
+                    linked += self._link_inventory_photo_to_keys(matched_keys, Path(str(image.get("path") or "")))
+                photos[sha] = {
+                    **image,
+                    "certs": sorted(certs),
+                    "linked_keys": sorted(matched_keys),
+                    "status": "linked" if matched_keys else "no_matching_inventory",
+                    "last_seen": datetime.now().isoformat(timespec="seconds"),
+                }
+            self._save_inventory_photo_state(state)
+            self.events.put(("inventory_photo_status", f"Inventory photo scan complete: {len(images)} file(s), OCR scanned {scanned}, linked {linked}."))
+            if linked:
+                self.events.put(("inventory_refresh", None))
+        except Exception as error:
+            errors.append(str(error))
+            self.events.put(("inventory_photo_status", f"Inventory photo scan failed: {error}"))
+        finally:
+            if errors:
+                record_performance_event("inventory.photos.errors", started, " | ".join(errors[:5]), force=True)
+            record_performance_event("inventory.photos.scan", started, f"scanned={scanned} linked={linked} errors={len(errors)}")
+
     def refresh_incoming_index(self) -> None:
         try:
             INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
@@ -10647,6 +10943,9 @@ class CardPipelineApp(tk.Tk):
                         self.review_photo_status.set(str(payload))
                         self.review_status.set(str(payload))
                         self.status_var.set(str(payload))
+                    elif kind == "inventory_photo_status":
+                        self.inventory_status_var.set(str(payload))
+                        self.status_var.set(str(payload))
                     elif kind == "startup_refresh":
                         self._apply_startup_refresh(payload)
                     elif kind == "load_working_sheet_done":
@@ -10677,7 +10976,8 @@ class CardPipelineApp(tk.Tk):
                         self._handle_profit_recovery_error(payload)
                     elif kind == "inventory_refresh":
                         self.refresh_inventory_tab(enrich=True)
-                        self.status_var.set(str(payload))
+                        if payload:
+                            self.status_var.set(str(payload))
                     elif kind == "profit_refresh":
                         self.refresh_profit_tab()
                         self.refresh_payouts_tab()
