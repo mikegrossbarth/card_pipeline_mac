@@ -3877,12 +3877,18 @@ class CardPipelineApp(tk.Tk):
                 row.best_company = decision.company
                 row.estimated_payout = round(decision.payout, 2)
             else:
-                recommendation = self.assignment_engine.recommend(row, person=person)
-                if recommendation.payout is None:
-                    unassigned += 1
-                    continue
-                row.best_company = recommendation.company
-                row.estimated_payout = recommendation.payout
+                stored_company = str(record.get("best_company") or "").strip()
+                stored_payout = self._money_value(record.get("estimated_payout"))
+                if stored_company and stored_company.upper() != NO_COMPANY_TAKES_LABEL and stored_payout is not None:
+                    row.best_company = stored_company
+                    row.estimated_payout = stored_payout
+                else:
+                    recommendation = self.assignment_engine.recommend(row, person=person)
+                    if recommendation.payout is None:
+                        unassigned += 1
+                        continue
+                    row.best_company = recommendation.company
+                    row.estimated_payout = recommendation.payout
             if not row.best_company or row.best_company.upper() == NO_COMPANY_TAKES_LABEL:
                 unassigned += 1
                 continue

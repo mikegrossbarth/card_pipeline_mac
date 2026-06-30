@@ -38,6 +38,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Inventory `Move to Best Company Sheet` now trusts the visible stored Best Company and Est. Payout on active inventory rows instead of requiring a fresh assignment recalculation to still match. This fixes rows like `FANATICS / $13.30` failing with "No selected inventory cards matched an assignable company" after assignment rules/context drift.
 - Weekly company tabs now roll over on Monday at 8:00 PM local time. Sunday midnight no longer starts the next company-sheet week; Monday before 8 PM still writes to the prior `Week of YYYY-MM-DD` tab.
 - Comp now shows a non-editable `Received` marker column for loaded Incoming/Working sheets. The marker reads the workbook `RECEIVED` column and `Save Back to Source Sheet` preserves it, so partial package check-ins remain visible while comp/edit work continues.
 - Comp tab now has `Delete Selected` for loaded Incoming/Working sheet rows. It removes the selected row(s), rekeys row/source metadata, marks the comp sheet unsaved, and `Save Back to Source Sheet` persists the deletion to the source workbook.
