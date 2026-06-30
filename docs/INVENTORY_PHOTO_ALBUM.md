@@ -1,13 +1,13 @@
 # LUCAS Inventory Photo Album
 
-This is the LUCAS version of the earlier automatic inventory update flow. It uses only the phone album and synced-folder half. It does not use Instagram, Cloudflare R2, or public posting.
+This is the LUCAS version of the earlier automatic inventory update flow. It uses only phone capture plus synced folders. It does not use Instagram, Cloudflare R2, public posting, or the private iPhone Photos library as the source of truth.
 
 ## Flow
 
-1. Keep active inventory photos in an iPhone Photos album named `LUCAS Inventory`.
-2. A Shortcut exports that album to a synced folder on the computer.
-3. In LUCAS, click `Inventory -> Photo Folder` and choose that exact synced folder.
-4. Click `Inventory -> Scan Photos`. If the selected folder is private/iCloud/phone-synced, LUCAS first copies new or changed images into shared `CARD_PIPELINE/INVENTORY PHOTOS`, then scans that shared folder.
+1. Use a Shortcut that takes inventory photos and saves the files directly into a synced folder such as iCloud Drive, Google Drive, or `Shortcuts/LUCAS Inventory Photos`.
+2. In LUCAS, click `Inventory -> Photo Folder` and choose that exact synced folder.
+3. Click `Inventory -> Scan Photos`. If the selected folder is private/iCloud/phone-synced, LUCAS first copies new or changed images into shared `CARD_PIPELINE/INVENTORY PHOTOS`, then scans that shared folder.
+4. When cards are sold/deleted/moved, LUCAS deletes the linked synced files it can see. With the file-based Shortcut, that deletion can sync back to the phone-side folder.
 5. LUCAS also repeats that same mirror-and-scan flow every three hours.
 6. LUCAS OCRs cert numbers from new/changed photos and links matching certs to active rows in `inventory_ledger.json`.
 7. Inventory shows a `Photos` count and exports `Photos` plus `Photo Paths`.
@@ -34,13 +34,13 @@ By default LUCAS uses:
 CARD_PIPELINE/INVENTORY PHOTOS
 ```
 
-Create a phone-side Shortcut that exports the `LUCAS Inventory` album into that folder through iCloud Drive, Google Drive, or another synced folder path. If you need a different folder, set `inventory_photo_folder` in `lucas_settings.json`.
+Create a phone-side Shortcut that saves inventory photos as files into that folder through iCloud Drive, Google Drive, or another synced folder path. If you need a different folder, set `inventory_photo_folder` in `lucas_settings.json`.
 
 The easier way is to click `Inventory -> Photo Folder` and pick the folder visually. LUCAS saves that choice in `lucas_settings.json` and shows how many photo files it found.
 
 ## Team Sharing
 
-Use the phone/iCloud folder as your private source folder, then click `Inventory -> Scan Photos`. LUCAS copies the current source photos into:
+Use the phone/iCloud/Drive folder as your private source folder, then click `Inventory -> Scan Photos`. LUCAS copies the current source photos into:
 
 ```text
 CARD_PIPELINE/INVENTORY PHOTOS
@@ -52,9 +52,24 @@ New links are saved as portable paths relative to `CARD_PIPELINE/INVENTORY PHOTO
 
 Other users only need to pull the latest LUCAS, point their shared pipeline/working folder at the same team `CARD_PIPELINE`, then use `Inventory -> Scan Photos` or right-click linked rows with `Open Photo`.
 
-## Shortcut Shape
+## Preferred Shortcut Shape
 
-Safe iPhone Shortcut:
+Use this shape when you want LUCAS to be able to delete the photo file later:
+
+1. `Take Photo`
+   - Show Camera Preview: on.
+   - Use Front Camera: off.
+2. `Save File`
+   - File: photo from the previous action.
+   - Destination: the synced export folder.
+   - Ask Where to Save: off.
+   - Overwrite If File Exists: on if available.
+
+This keeps the workflow file-based. The photo file lives in the synced folder, and LUCAS can delete that file when the card leaves inventory.
+
+## Legacy Photos Album Shape
+
+The older shape still works, but it leaves originals in the iPhone Photos library:
 
 1. `Find Photos`
    - Album is `LUCAS Inventory`.
@@ -63,8 +78,6 @@ Safe iPhone Shortcut:
    - Destination: the synced export folder.
    - Ask Where to Save: off.
    - Overwrite If File Exists: on if available.
-
-Do not add `Delete Photos`; that can delete from the iPhone photo library. If cleanup is needed later, delete files from the export folder only, not Photos results.
 
 LUCAS delete/sold/move cleanup can remove files from the synced source folder and shared `CARD_PIPELINE/INVENTORY PHOTOS` folder. It cannot directly delete a picture from the private iPhone Photos library unless your Shortcut is built around Files/synced folders instead of keeping the original in Photos.
 
