@@ -3359,11 +3359,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.value = value
 
         class InventoryDummy:
+            _tree_cell_text = app.CardPipelineApp._tree_cell_text
             _inventory_tree_cell_text = app.CardPipelineApp._inventory_tree_cell_text
+            _tree_row_text = app.CardPipelineApp._tree_row_text
             _inventory_tree_row_text = app.CardPipelineApp._inventory_tree_row_text
             _copy_inventory_text = app.CardPipelineApp._copy_inventory_text
             copy_inventory_cell_value = app.CardPipelineApp.copy_inventory_cell_value
             copy_inventory_row_values = app.CardPipelineApp.copy_inventory_row_values
+            copy_tree_cell_value = app.CardPipelineApp.copy_tree_cell_value
+            copy_tree_row_values = app.CardPipelineApp.copy_tree_row_values
 
             def __init__(self):
                 self.inventory_tree = FakeTree()
@@ -3384,6 +3388,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.copy_inventory_row_values("row-1")
         self.assertEqual(dummy.clipboard, "2026-06-18\tKevin Hambone\tBasketball\t12345678\tPSA\tTest Card")
         self.assertEqual(dummy.status_var.value, "Copied inventory row.")
+
+        dummy.copy_tree_cell_value(dummy.inventory_tree, "row-1", "#5", "sheet cell")
+        self.assertEqual(dummy.clipboard, "PSA")
+        self.assertEqual(dummy.status_var.value, "Copied sheet cell.")
+
+        dummy.copy_tree_row_values(dummy.inventory_tree, "row-1", "sheet row")
+        self.assertEqual(dummy.clipboard, "2026-06-18\tKevin Hambone\tBasketball\t12345678\tPSA\tTest Card")
+        self.assertEqual(dummy.status_var.value, "Copied sheet row.")
 
     def test_inventory_table_shows_source_values_separately(self) -> None:
         class FieldVar:

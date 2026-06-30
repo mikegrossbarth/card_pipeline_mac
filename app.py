@@ -3925,10 +3925,10 @@ class CardPipelineApp(tk.Tk):
         best_company = str(record.get("best_company") or "").strip()
         return bool(best_company) and best_company.upper() != NO_COMPANY_TAKES_LABEL
 
-    def _inventory_tree_cell_text(self, row_id: str, column_id: str) -> str:
+    def _tree_cell_text(self, tree: ttk.Treeview, row_id: str, column_id: str) -> str:
         if not row_id or not column_id:
             return ""
-        values = self.inventory_tree.item(row_id, "values") or ()
+        values = tree.item(row_id, "values") or ()
         try:
             index = int(str(column_id).lstrip("#")) - 1
         except ValueError:
@@ -3937,11 +3937,17 @@ class CardPipelineApp(tk.Tk):
             return ""
         return str(values[index] or "")
 
-    def _inventory_tree_row_text(self, row_id: str) -> str:
+    def _inventory_tree_cell_text(self, row_id: str, column_id: str) -> str:
+        return self._tree_cell_text(self.inventory_tree, row_id, column_id)
+
+    def _tree_row_text(self, tree: ttk.Treeview, row_id: str) -> str:
         if not row_id:
             return ""
-        values = self.inventory_tree.item(row_id, "values") or ()
+        values = tree.item(row_id, "values") or ()
         return "\t".join(str(value or "") for value in values)
+
+    def _inventory_tree_row_text(self, row_id: str) -> str:
+        return self._tree_row_text(self.inventory_tree, row_id)
 
     def _copy_inventory_text(self, text: str, label: str = "inventory value") -> None:
         self.clipboard_clear()
@@ -3954,6 +3960,12 @@ class CardPipelineApp(tk.Tk):
 
     def copy_inventory_row_values(self, row_id: str) -> None:
         self._copy_inventory_text(self._inventory_tree_row_text(row_id), "inventory row")
+
+    def copy_tree_cell_value(self, tree: ttk.Treeview, row_id: str, column_id: str, label: str = "cell") -> None:
+        self._copy_inventory_text(self._tree_cell_text(tree, row_id, column_id), label)
+
+    def copy_tree_row_values(self, tree: ttk.Treeview, row_id: str, label: str = "row") -> None:
+        self._copy_inventory_text(self._tree_row_text(tree, row_id), label)
 
     def _assignment_explanation_for_record(self, record: dict[str, object]) -> str:
         normalized = self._normalize_inventory_record(record)
@@ -7475,11 +7487,29 @@ class CardPipelineApp(tk.Tk):
                 tree.column(column, width=150, minwidth=80, stretch=False, anchor=tk.W)
         for row_values in preview.get("rows") or []:
             tree.insert("", tk.END, values=[self._home_sheet_preview_value(value) for value in row_values])
+        self._bind_context_menu(tree, lambda event, preview_tree=tree: self._show_home_sheet_review_context_menu(event, preview_tree))
 
         actions = ttk.Frame(frame, style="Panel.TFrame")
         actions.pack(fill=tk.X, pady=(12, 0))
         ttk.Button(actions, text="Close", command=popup.destroy, style="Primary.TButton").pack(side=tk.RIGHT)
         popup.bind("<Escape>", lambda _event: popup.destroy())
+
+    def _show_home_sheet_review_context_menu(self, event: tk.Event, tree: ttk.Treeview) -> str:
+        row_id = tree.identify_row(event.y)
+        if not row_id:
+            return "break"
+        column_id = tree.identify_column(event.x)
+        if row_id not in tree.selection():
+            tree.selection_set(row_id)
+            tree.focus(row_id)
+        menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        menu.add_command(label="Copy Cell", command=lambda row=row_id, column=column_id: self.copy_tree_cell_value(tree, row, column, "sheet cell"))
+        menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_tree_row_values(tree, row, "sheet row"))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
 
     def move_selected_home_sheet_to_stage(self, target_stage: str) -> None:
         if not self.home_selected_sheet_key:
