@@ -1832,6 +1832,54 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIsNotNone(current["command"])
         self.assertEqual(current["command"]["type"], "RUN_ALL_COMPS")
 
+    def test_delete_selected_comp_rows_rekeys_sources_for_save_back(self) -> None:
+        class FakeTree:
+            def selection(self) -> tuple[str, ...]:
+                return ("3",)
+
+        class Status:
+            def __init__(self) -> None:
+                self.value = ""
+
+            def set(self, value: str) -> None:
+                self.value = value
+
+        class Dummy:
+            delete_selected_comp_rows = app.CardPipelineApp.delete_selected_comp_rows
+            _delete_selected_rows = app.CardPipelineApp._delete_selected_rows
+
+            def _cancel_cell_edit(self) -> None:
+                self.cancelled_edit = True
+
+            def _refresh_table(self, schedule_recommendations: bool = False) -> None:
+                self.refreshed_with = schedule_recommendations
+
+        dummy = Dummy()
+        dummy.comp_tree = FakeTree()
+        dummy.intake_tree = object()
+        dummy._is_review_row_tree = lambda _tree: False
+        dummy.state = app.BridgeState()
+        dummy.state.set_rows(
+            [
+                WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="First"),
+                WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Delete Me"),
+                WorkbookRow(excel_row=4, cert_number="3", grader="PSA", card_title="Last"),
+            ]
+        )
+        dummy.row_sources = {2: "source-2", 3: "source-3", 4: "source-4"}
+        dummy.comp_sheet_sources = {2: "sheet-2", 3: "sheet-3", 4: "sheet-4"}
+        dummy.status_var = Status()
+        dummy.comp_output_saved = True
+
+        dummy.delete_selected_comp_rows()
+
+        self.assertEqual([row.cert_number for row in dummy.state.rows], ["1", "3"])
+        self.assertEqual([row.excel_row for row in dummy.state.rows], [2, 3])
+        self.assertEqual(dummy.row_sources, {2: "source-2", 3: "source-4"})
+        self.assertEqual(dummy.comp_sheet_sources, {2: "sheet-2", 3: "sheet-4"})
+        self.assertFalse(dummy.comp_output_saved)
+        self.assertIn("Save back to source sheet", dummy.status_var.value)
+
     def test_unassigned_player_is_recorded_for_unmatched_valued_row(self) -> None:
         class Dummy:
             _load_unassigned_players = app.CardPipelineApp._load_unassigned_players

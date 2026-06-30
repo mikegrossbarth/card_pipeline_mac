@@ -1191,6 +1191,7 @@ class CardPipelineApp(tk.Tk):
         comp_options.pack(fill=tk.X, pady=(10, 0))
         ttk.Button(comp_actions, text="Save Output", command=self.save_output, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Save Back to Source Sheet", command=self.save_comp_to_source_sheet, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(comp_actions, text="Delete Selected", command=self.delete_selected_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
@@ -9391,6 +9392,21 @@ class CardPipelineApp(tk.Tk):
         else:
             self.status_var.set("Select create rows to delete.")
 
+    def delete_selected_comp_rows(self) -> None:
+        with self.state.lock:
+            rows = list(self.state.rows)
+        deleted = self._delete_selected_rows(
+            self.comp_tree,
+            rows,
+            self.row_sources,
+            self.comp_sheet_sources,
+        )
+        if deleted:
+            self.comp_output_saved = False
+            self.status_var.set(f"Deleted {deleted} comp row(s). Save back to source sheet to persist.")
+        else:
+            self.status_var.set("Select comp rows to delete.")
+
     def _append_rows(self, rows: list[dict[str, object]]) -> list[int]:
         existing = list(self.intake_rows)
         start = len(existing) + 2
@@ -10171,6 +10187,9 @@ class CardPipelineApp(tk.Tk):
         if tree is self.intake_tree:
             self.delete_selected_intake_rows()
             return "break"
+        if tree is self.comp_tree:
+            self.delete_selected_comp_rows()
+            return "break"
         if self._is_review_row_tree(tree):
             self.delete_selected_review_rows()
             return "break"
@@ -10205,6 +10224,10 @@ class CardPipelineApp(tk.Tk):
             self.intake_rows = remaining
             self.intake_sources = new_sources
             self.intake_sheet_sources = new_sheet_sources
+        elif tree is self.comp_tree:
+            self.state.set_rows(remaining)
+            self.row_sources = new_sources
+            self.comp_sheet_sources = new_sheet_sources
         elif self._is_review_row_tree(tree):
             self.review_rows = remaining
             self.review_sources = new_sources
