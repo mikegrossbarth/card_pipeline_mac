@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time as datetime_time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -408,13 +408,31 @@ def company_workbook_path(directory: Path, company: str) -> Path:
     return company_dir / f"{safe_company}.xlsx"
 
 
-def company_weekly_sheet_name(today: date | None = None) -> str:
-    start = week_start(today or date.today())
+def company_week_start_for_time(moment: datetime | None = None) -> date:
+    moment = moment or datetime.now()
+    current_monday = (moment - timedelta(days=moment.weekday())).date()
+    if moment.weekday() == 0 and moment.time() < datetime_time(20, 0):
+        return current_monday - timedelta(days=7)
+    return current_monday
+
+
+def company_weekly_sheet_name(today: date | datetime | None = None) -> str:
+    if isinstance(today, datetime):
+        start = company_week_start_for_time(today)
+    elif today is None:
+        start = company_week_start_for_time()
+    else:
+        start = week_start(today)
     return f"Week of {start:%Y-%m-%d}"
 
 
-def company_weekly_sheet_path(directory: Path, company: str, today: date | None = None) -> Path:
-    start = week_start(today or date.today())
+def company_weekly_sheet_path(directory: Path, company: str, today: date | datetime | None = None) -> Path:
+    if isinstance(today, datetime):
+        start = company_week_start_for_time(today)
+    elif today is None:
+        start = company_week_start_for_time()
+    else:
+        start = week_start(today)
     safe_company = safe_filename(company) or "Company"
     company_dir = directory / safe_company
     company_dir.mkdir(parents=True, exist_ok=True)

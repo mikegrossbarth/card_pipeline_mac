@@ -61,6 +61,7 @@ from intake_io import (  # noqa: E402
     build_card_title,
     clear_received_in_workbooks,
     clean_part,
+    company_week_start_for_time as intake_company_week_start_for_time,
     default_output_path,
     ensure_company_weekly_sheets,
     format_money,
@@ -290,10 +291,7 @@ initialize_pipeline_root()
 
 
 def company_sheet_week_start_for_time(moment: datetime) -> datetime.date:
-    current_week_start = (moment - timedelta(days=moment.weekday())).date()
-    if moment.weekday() == 6:
-        return (moment + timedelta(days=1)).date()
-    return current_week_start
+    return intake_company_week_start_for_time(moment)
 
 DISPLAY_COLUMNS = (
     "excel_row",

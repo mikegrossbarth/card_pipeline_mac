@@ -30,7 +30,7 @@ import bridge_server
 import google_sheets_import
 import lucas_diagnostics
 from comp_engine.workbook_io import WorkbookRow
-from intake_io import append_company_sheet_rows, ensure_company_weekly_sheets, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
+from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
 
 
@@ -141,18 +141,22 @@ class SharedStateTests(unittest.TestCase):
 
 
 class WorkbookCompanyProfitTests(unittest.TestCase):
-    def test_company_sheet_week_start_rolls_forward_sunday_midnight(self) -> None:
+    def test_company_sheet_week_start_rolls_forward_monday_at_8pm(self) -> None:
         self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 13, 23, 59)).isoformat(), "2026-06-08")
-        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 14, 0, 0)).isoformat(), "2026-06-15")
-        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 14, 23, 59)).isoformat(), "2026-06-15")
-        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 15, 8, 0)).isoformat(), "2026-06-15")
+        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 14, 0, 0)).isoformat(), "2026-06-08")
+        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 14, 23, 59)).isoformat(), "2026-06-08")
+        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 15, 19, 59)).isoformat(), "2026-06-08")
+        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 15, 20, 0)).isoformat(), "2026-06-15")
+        self.assertEqual(app.company_sheet_week_start_for_time(datetime(2026, 6, 16, 8, 0)).isoformat(), "2026-06-15")
+        self.assertEqual(company_weekly_sheet_name(datetime(2026, 6, 15, 19, 59)), "Week of 2026-06-08")
+        self.assertEqual(company_weekly_sheet_name(datetime(2026, 6, 15, 20, 0)), "Week of 2026-06-15")
 
     def test_ensure_company_weekly_sheets_creates_blank_company_tabs(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / "COMPANY SHEETS"
 
-            result = ensure_company_weekly_sheets(root, ["Arena Club", "Fanatics"], app.company_sheet_week_start_for_time(datetime(2026, 6, 14, 0, 0)))
-            repeat = ensure_company_weekly_sheets(root, ["Arena Club", "Fanatics"], app.company_sheet_week_start_for_time(datetime(2026, 6, 14, 0, 0)))
+            result = ensure_company_weekly_sheets(root, ["Arena Club", "Fanatics"], app.company_sheet_week_start_for_time(datetime(2026, 6, 15, 20, 0)))
+            repeat = ensure_company_weekly_sheets(root, ["Arena Club", "Fanatics"], app.company_sheet_week_start_for_time(datetime(2026, 6, 15, 20, 0)))
 
             self.assertEqual(len(result["created"]), 2)
             self.assertEqual(len(repeat["existing"]), 2)
