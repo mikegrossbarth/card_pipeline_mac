@@ -1070,6 +1070,12 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertFalse(any(match["key"] == "tatsumi fujinami" and match["sport"] == "wwe" for match in matches))
         self.assertEqual(assignment_engine.infer_sport(title, "Shintaro Fujinami"), "baseball")
 
+    def test_curated_player_sport_hint_wins_over_generated_name_collision(self) -> None:
+        parsed = assignment_engine.parse_card_for_matching("1996 Topps Chrome Michael Jordan PSA 10")
+
+        self.assertEqual(parsed["playerName"], "Michael Jordan")
+        self.assertEqual(parsed["sport"], "basketball")
+
     def test_bowman_chrome_prospect_title_infers_baseball_without_known_player(self) -> None:
         parsed = assignment_engine.parse_card_for_matching(
             "2017 Bowman Chrome Prospect Autographs Gold Shimmer Refractors #CPACF Clint Frazier BGS 9.5"

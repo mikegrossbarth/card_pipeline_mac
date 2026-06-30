@@ -145,6 +145,7 @@ PLAYER_SPORT_HINTS = {
     "lisa leslie": "wnba",
     "sheryl swoopes": "wnba",
 }
+CURATED_PLAYER_SPORT_HINTS = dict(PLAYER_SPORT_HINTS)
 PLAYER_DISPLAY_NAMES: dict[str, str] = {}
 PLAYER_TEAM_HINTS: dict[str, list[str]] = {}
 PARTIAL_PLAYER_HINTS: dict[str, dict[str, str]] = {}
@@ -361,6 +362,7 @@ def load_extension_player_sport_data() -> None:
             continue
         if not sport:
             continue
+        sport = CURATED_PLAYER_SPORT_HINTS.get(key, sport)
         PLAYER_SPORT_HINTS[key] = sport
         PLAYER_DISPLAY_NAMES[key] = display_name
         if teams:
