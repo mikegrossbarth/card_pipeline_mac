@@ -6,6 +6,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+from assignment_engine import CONFIG_PATH as ASSIGNMENT_CONFIG_PATH
 from typing import Any
 
 from google_sheets_import import TOKEN_PATH, load_local_env_files, load_token, oauth_client_config, token_matches_client
@@ -109,7 +111,7 @@ def setup_doctor_results(pipeline_root: Path, bridge_snapshot: dict[str, Any] | 
         check_row("Shared pipeline folders", all(path.exists() for path in required_dirs), ", ".join(path.name for path in required_dirs if not path.exists()) or str(pipeline_root)),
         check_row("Chrome extension reachable", bool(extension_version), f"Seen version: {extension_version or 'not seen'}"),
         check_row("Card Ladder helper version", bool(extension_version and expected_extension and extension_version == expected_extension), f"Expected {expected_extension or 'unknown'}, seen {extension_version or 'not seen'}"),
-        check_row("Company Rules config", (ROOT / "assignment_companies.json").exists(), str(ROOT / "assignment_companies.json")),
+        check_row("Company Rules config", ASSIGNMENT_CONFIG_PATH.exists(), str(ASSIGNMENT_CONFIG_PATH)),
     ]
     return rows
 

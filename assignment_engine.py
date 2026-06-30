@@ -19,7 +19,7 @@ from google_sheets_import import GoogleSheetsAuthError, export_google_sheet_to_x
 
 
 ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = ROOT / "assignment_companies.json"
+CONFIG_PATH = Path(os.environ.get("LUCAS_ASSIGNMENT_CONFIG_PATH") or ROOT / "assignment_companies.json").expanduser()
 PLAYER_SPORT_DATA_PATH = ROOT / "assignment_player_sport_data.js"
 CATEGORY_ALIASES = {
     "football": ["football", "nfl"],

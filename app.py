@@ -107,7 +107,7 @@ except Exception:
     genai_types = None
     identify_cards_sync = None
     TemporaryModelUnavailable = ModelQuotaExceeded = ModelResponseParseError = Exception
-SETTINGS_PATH = ROOT / "lucas_settings.json"
+SETTINGS_PATH = Path(os.environ.get("LUCAS_SETTINGS_PATH") or ROOT / "lucas_settings.json").expanduser()
 DEFAULT_CARD_PIPELINE_DIR = ROOT / "CARD_PIPELINE"
 CARD_PIPELINE_DIR = Path(os.environ.get("LUCAS_PIPELINE_DIR") or DEFAULT_CARD_PIPELINE_DIR)
 WORKING_SHEETS_DIR = Path(os.environ.get("LUCAS_WORKING_SHEETS_DIR") or CARD_PIPELINE_DIR / "WORKING SHEETS")
