@@ -4152,6 +4152,10 @@ class CardPipelineApp(tk.Tk):
             menu.add_separator()
             menu.add_command(label="Edit Row", command=self.edit_selected_inventory_row)
             menu.add_command(label="Explain Assignment", command=self.explain_selected_inventory_assignment)
+        if len(records) == 1 and self._inventory_photo_paths_for_record(records[0]):
+            menu.add_separator()
+            menu.add_command(label="Open Photo", command=self.open_selected_inventory_photo)
+            menu.add_command(label="Open Photo Folder", command=self.open_selected_inventory_photo_folder)
         if len(active_records) == 1 and len(records) == 1:
             menu.add_command(label="Mark Sold", command=self.mark_selected_inventory_sold)
         if records and all(self._inventory_record_can_move_to_company_sheet(record) for record in records):
@@ -4169,6 +4173,51 @@ class CardPipelineApp(tk.Tk):
         finally:
             menu.grab_release()
         return "break"
+
+    def _inventory_photo_paths_for_record(self, record: dict[str, object] | None) -> list[Path]:
+        if not record:
+            return []
+        paths: list[Path] = []
+        for value in record.get("photo_paths") or []:
+            path = Path(str(value or "")).expanduser()
+            if path.exists():
+                paths.append(path)
+        return paths
+
+    def _open_local_path(self, path: Path) -> bool:
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except Exception as error:
+            self.status_var.set(f"Could not open {path}: {error}")
+            return False
+
+    def open_selected_inventory_photo(self) -> None:
+        if not hasattr(self, "inventory_tree"):
+            return
+        records = [self.inventory_tree_records.get(iid) for iid in self.inventory_tree.selection()]
+        record = next((item for item in records if item), None)
+        paths = self._inventory_photo_paths_for_record(record)
+        if not paths:
+            messagebox.showinfo("No photo", "This inventory row does not have an existing linked photo.")
+            return
+        self._open_local_path(paths[0])
+
+    def open_selected_inventory_photo_folder(self) -> None:
+        if not hasattr(self, "inventory_tree"):
+            return
+        records = [self.inventory_tree_records.get(iid) for iid in self.inventory_tree.selection()]
+        record = next((item for item in records if item), None)
+        paths = self._inventory_photo_paths_for_record(record)
+        if not paths:
+            messagebox.showinfo("No photo", "This inventory row does not have an existing linked photo.")
+            return
+        self._open_local_path(paths[0].parent)
 
     def refresh_inventory_tab(self, reconcile: bool = False, enrich: bool = False, filtered_only: bool = False) -> None:
         perf_start = time.perf_counter()
@@ -8750,6 +8799,8 @@ class CardPipelineApp(tk.Tk):
         photos = state.setdefault("photos", {})
         try:
             images = self._inventory_photo_files(folder)
+            total = len(images)
+            self.events.put(("inventory_photo_status", f"Inventory photo scan starting: 0/{total} file(s)."))
             current_hashes = {str(image.get("sha256") or "") for image in images}
             for sha, record in list(photos.items()):
                 if sha and sha not in current_hashes and isinstance(record, dict) and not record.get("removed_at"):
@@ -8757,7 +8808,8 @@ class CardPipelineApp(tk.Tk):
                     record["removed_at"] = datetime.now().isoformat(timespec="seconds")
             rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
             keys_by_cert = self._active_inventory_keys_by_cert(rows)
-            for image in images:
+            for index, image in enumerate(images, start=1):
+                self.events.put(("inventory_photo_status", f"Inventory photo scan: {index}/{total} {image.get('relative_path') or image.get('filename') or 'photo'}"))
                 sha = str(image.get("sha256") or "")
                 if not sha:
                     continue

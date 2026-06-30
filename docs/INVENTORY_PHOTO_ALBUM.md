@@ -11,6 +11,19 @@ This is the LUCAS version of the earlier automatic inventory update flow. It use
 5. Inventory shows a `Photos` count and exports `Photos` plus `Photo Paths`.
 6. When a card leaves active inventory by being sold, deleted, or moved to a company sheet, LUCAS deletes its linked photo from the active photo folder unless another active inventory row still uses that same photo.
 
+## Viewing Photos In LUCAS
+
+After a scan links a photo, the matching Inventory row shows a number in the `Photos` column.
+
+To open it:
+
+1. Right-click the Inventory row.
+2. Click `Open Photo`.
+
+You can also click `Open Photo Folder` from the same right-click menu to jump to the synced album folder.
+
+While scanning, the Inventory status line updates with progress like `Inventory photo scan: 3/42 IMG_1234.jpg`.
+
 ## Folder
 
 By default LUCAS uses:
