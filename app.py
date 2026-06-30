@@ -1693,6 +1693,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(action_row, text="Update Best Company/Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Recomp Visible Cards", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Photo Folder", command=self.choose_inventory_photo_folder, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Mirror Photos", command=self.mirror_inventory_photos_to_shared, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Scan Photos", command=lambda: self.scan_inventory_photos(manual=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Import Mobile Queue", command=self.import_mobile_queue_file, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
@@ -8648,6 +8649,9 @@ class CardPipelineApp(tk.Tk):
         configured = str(self.app_settings.get("inventory_photo_folder") or "").strip() if hasattr(self, "app_settings") else ""
         return Path(configured).expanduser() if configured else INVENTORY_PHOTOS_DIR
 
+    def _inventory_photo_shared_folder(self) -> Path:
+        return INVENTORY_PHOTOS_DIR
+
     def choose_inventory_photo_folder(self) -> None:
         current = self._inventory_photo_source_folder()
         try:
@@ -8671,6 +8675,53 @@ class CardPipelineApp(tk.Tk):
             count = 0
         self.inventory_status_var.set(f"Inventory photo folder set to {folder}. Found {count} photo file(s).")
         self.status_var.set(f"Inventory photo folder set to {folder}.")
+
+    def mirror_inventory_photos_to_shared(self) -> None:
+        if self.inventory_photo_worker and self.inventory_photo_worker.is_alive():
+            messagebox.showinfo("Scan running", "Inventory photo scan is already running.")
+            return
+        source = self._inventory_photo_source_folder()
+        shared = self._inventory_photo_shared_folder()
+        if not source.exists():
+            messagebox.showerror("Photo folder missing", f"Inventory photo folder does not exist:\n{source}")
+            return
+        try:
+            source_resolved = source.resolve()
+            shared_resolved = shared.resolve() if shared.exists() else shared
+        except Exception:
+            source_resolved = source
+            shared_resolved = shared
+        if source_resolved == shared_resolved:
+            self.inventory_status_var.set(f"Photo folder is already shared: {shared}. Scanning shared photos...")
+            self.scan_inventory_photos(manual=True, folder=shared)
+            return
+        try:
+            source_images = self._inventory_photo_files(source)
+            shared.mkdir(parents=True, exist_ok=True)
+            copied = 0
+            skipped = 0
+            for image in source_images:
+                relative = Path(str(image.get("relative_path") or image.get("filename") or Path(str(image.get("path") or "")).name))
+                if relative.is_absolute() or ".." in relative.parts:
+                    relative = Path(Path(str(image.get("path") or "")).name)
+                destination = shared / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                source_path = Path(str(image.get("path") or ""))
+                if destination.exists():
+                    try:
+                        if destination.stat().st_size == source_path.stat().st_size:
+                            skipped += 1
+                            continue
+                    except Exception:
+                        pass
+                shutil.copy2(source_path, destination)
+                copied += 1
+            self.inventory_status_var.set(f"Mirrored {copied} photo(s) to shared folder; skipped {skipped}. Scanning {shared}...")
+            self.status_var.set(f"Mirrored inventory photos to {shared}.")
+            self.scan_inventory_photos(manual=True, folder=shared)
+        except Exception as error:
+            messagebox.showerror("Mirror failed", f"Could not mirror inventory photos:\n{error}")
+            self.inventory_status_var.set(f"Inventory photo mirror failed: {error}")
 
     def _load_inventory_photo_state(self) -> dict[str, object]:
         if not INVENTORY_PHOTO_STATE_PATH.exists():
@@ -8789,12 +8840,12 @@ class CardPipelineApp(tk.Tk):
                 self._save_inventory_ledger(rows)
         return changed
 
-    def scan_inventory_photos(self, manual: bool = False) -> None:
+    def scan_inventory_photos(self, manual: bool = False, folder: Path | None = None) -> None:
         if self.inventory_photo_worker and self.inventory_photo_worker.is_alive():
             if manual:
                 messagebox.showinfo("Scan running", "Inventory photo scan is already running.")
             return
-        folder = self._inventory_photo_source_folder()
+        folder = folder or self._inventory_photo_source_folder()
         folder.mkdir(parents=True, exist_ok=True)
         if genai is None or identify_cards_sync is None:
             self.inventory_status_var.set("Inventory photo scan unavailable: missing photo OCR dependencies.")

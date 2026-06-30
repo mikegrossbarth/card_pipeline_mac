@@ -7,10 +7,11 @@ This is the LUCAS version of the earlier automatic inventory update flow. It use
 1. Keep active inventory photos in an iPhone Photos album named `LUCAS Inventory`.
 2. A Shortcut exports that album to a synced folder on the computer.
 3. In LUCAS, click `Inventory -> Photo Folder` and choose that exact synced folder.
-4. LUCAS scans the synced folder every three hours and when you click `Inventory -> Scan Photos`.
-5. LUCAS OCRs cert numbers from new/changed photos and links matching certs to active rows in `inventory_ledger.json`.
-6. Inventory shows a `Photos` count and exports `Photos` plus `Photo Paths`.
-7. When a card leaves active inventory by being sold, deleted, or moved to a company sheet, LUCAS deletes its linked photo from the active photo folder unless another active inventory row still uses that same photo.
+4. For team sharing, click `Inventory -> Mirror Photos`. LUCAS copies the phone export into shared `CARD_PIPELINE/INVENTORY PHOTOS`, then scans that shared folder.
+5. LUCAS also scans the selected folder every three hours and when you click `Inventory -> Scan Photos`.
+6. LUCAS OCRs cert numbers from new/changed photos and links matching certs to active rows in `inventory_ledger.json`.
+7. Inventory shows a `Photos` count and exports `Photos` plus `Photo Paths`.
+8. When a card leaves active inventory by being sold, deleted, or moved to a company sheet, LUCAS deletes its linked photo from the active photo folder unless another active inventory row still uses that same photo.
 
 ## Viewing Photos In LUCAS
 
@@ -36,6 +37,18 @@ CARD_PIPELINE/INVENTORY PHOTOS
 Create a phone-side Shortcut that exports the `LUCAS Inventory` album into that folder through iCloud Drive, Google Drive, or another synced folder path. If you need a different folder, set `inventory_photo_folder` in `lucas_settings.json`.
 
 The easier way is to click `Inventory -> Photo Folder` and pick the folder visually. LUCAS saves that choice in `lucas_settings.json` and shows how many photo files it found.
+
+## Team Sharing
+
+Use the phone/iCloud folder as your private source folder, then click `Inventory -> Mirror Photos`. LUCAS copies the current source photos into:
+
+```text
+CARD_PIPELINE/INVENTORY PHOTOS
+```
+
+That folder lives under the shared pipeline, so Google Drive can sync it to everyone else. The mirror action scans the shared folder after copying, which means linked inventory rows point at shared photo paths instead of a private iCloud folder.
+
+Other users only need to pull the latest LUCAS, point their shared pipeline/working folder at the same team `CARD_PIPELINE`, then use `Inventory -> Scan Photos` or right-click linked rows with `Open Photo`.
 
 ## Shortcut Shape
 
