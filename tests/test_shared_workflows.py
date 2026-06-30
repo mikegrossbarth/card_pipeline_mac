@@ -2245,6 +2245,27 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.SHEET_MARKERS_PATH = old_markers
 
+    def test_home_sheet_preview_data_reads_workbook_contents(self) -> None:
+        class PreviewDummy:
+            _home_sheet_preview_data = app.CardPipelineApp._home_sheet_preview_data
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Lot A.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Certification Number", "Grader", "Card Description"])
+            sheet.append(["123", "PSA", "Test Card"])
+            workbook.save(path)
+
+            preview = PreviewDummy()._home_sheet_preview_data(path)
+
+        self.assertEqual(preview["sheet_title"], "Cards")
+        self.assertEqual(preview["columns"], ["row", "A", "B", "C"])
+        self.assertEqual(preview["rows"][0], (1, "Certification Number", "Grader", "Card Description"))
+        self.assertEqual(preview["rows"][1], (2, "123", "PSA", "Test Card"))
+        self.assertFalse(preview["truncated"])
+
     def test_create_seller_assignment_pays_only_after_receive(self) -> None:
         class SellerSheetDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key

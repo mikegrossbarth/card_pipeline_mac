@@ -24,6 +24,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parent
 APP_DEBUG_LOG = ROOT / "work" / "lucas-debug.log"
@@ -7364,6 +7365,8 @@ class CardPipelineApp(tk.Tk):
         self._load_home_selected_marker()
         menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
         kind, _name = self._split_home_sheet_key(self.home_selected_sheet_key)
+        menu.add_command(label="Review Sheet", command=self.review_selected_home_sheet)
+        menu.add_separator()
         move_menu = tk.Menu(menu, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
         for target_stage in ("Incoming", "Working", "Received"):
             move_menu.add_command(
@@ -7379,6 +7382,104 @@ class CardPipelineApp(tk.Tk):
         finally:
             menu.grab_release()
         return "break"
+
+    def review_selected_home_sheet(self) -> None:
+        if not self.home_selected_sheet_key:
+            messagebox.showinfo("Choose sheet", "Choose a sheet on Home before reviewing.")
+            return
+        kind, name = self._split_home_sheet_key(self.home_selected_sheet_key)
+        if kind not in {"Incoming", "Working", "Received"} or not name:
+            messagebox.showinfo("Cannot review", "Only Incoming, Working, and Received sheets can be reviewed from Home.")
+            return
+        path = self._sheet_path_for_stage(kind, name)
+        if not self._sheet_path_is_visible_home_sheet(kind, path):
+            messagebox.showerror("Review blocked", f"Review is only allowed inside {kind} sheets.")
+            return
+        if not path.exists():
+            messagebox.showerror("Review failed", f"Sheet not found: {path}")
+            return
+        try:
+            preview = self._home_sheet_preview_data(path)
+        except Exception as error:
+            messagebox.showerror("Review failed", str(error))
+            return
+        self._open_home_sheet_review_popup(kind, name, preview)
+
+    def _home_sheet_preview_data(self, path: Path, max_rows: int = 500) -> dict[str, object]:
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        try:
+            sheet = workbook.active
+            max_column = max(int(sheet.max_column or 0), 1)
+            columns = ["row", *[get_column_letter(index) for index in range(1, max_column + 1)]]
+            headings = {"row": "#", **{column: column for column in columns[1:]}}
+            rows: list[tuple[object, ...]] = []
+            for row_index, row_values in enumerate(
+                sheet.iter_rows(min_row=1, max_row=min(int(sheet.max_row or 0), max_rows), max_col=max_column, values_only=True),
+                start=1,
+            ):
+                rows.append((row_index, *row_values))
+            truncated = bool((sheet.max_row or 0) > max_rows)
+            return {
+                "sheet_title": sheet.title,
+                "columns": columns,
+                "headings": headings,
+                "rows": rows,
+                "truncated": truncated,
+                "max_rows": max_rows,
+            }
+        finally:
+            workbook.close()
+
+    def _home_sheet_preview_value(self, value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m-%d %H:%M")
+        return str(value)
+
+    def _open_home_sheet_review_popup(self, kind: str, name: str, preview: dict[str, object]) -> None:
+        popup = tk.Toplevel(self)
+        popup.title(f"Review Sheet - {name}")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.geometry("1180x650")
+        popup.minsize(820, 420)
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(16, 14))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text=name, style="Panel.TLabel", font=("Segoe UI Semibold", 12)).pack(anchor="w")
+        subtitle = f"{kind} | {preview.get('sheet_title') or 'Sheet'}"
+        if preview.get("truncated"):
+            subtitle += f" | Showing first {preview.get('max_rows')} rows"
+        ttk.Label(frame, text=subtitle, style="Muted.TLabel").pack(anchor="w", pady=(2, 12))
+
+        table_frame = ttk.Frame(frame, style="Panel.TFrame")
+        table_frame.pack(fill=tk.BOTH, expand=True)
+        columns = tuple(str(column) for column in preview.get("columns") or ("row",))
+        headings = preview.get("headings") if isinstance(preview.get("headings"), dict) else {}
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        y_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
+        x_scroll = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=tree.xview)
+        tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        table_frame.rowconfigure(0, weight=1)
+        table_frame.columnconfigure(0, weight=1)
+
+        for column in columns:
+            tree.heading(column, text=str(headings.get(column, column)), anchor=tk.W)
+            if column == "row":
+                tree.column(column, width=58, minwidth=48, stretch=False, anchor=tk.E)
+            else:
+                tree.column(column, width=150, minwidth=80, stretch=False, anchor=tk.W)
+        for row_values in preview.get("rows") or []:
+            tree.insert("", tk.END, values=[self._home_sheet_preview_value(value) for value in row_values])
+
+        actions = ttk.Frame(frame, style="Panel.TFrame")
+        actions.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(actions, text="Close", command=popup.destroy, style="Primary.TButton").pack(side=tk.RIGHT)
+        popup.bind("<Escape>", lambda _event: popup.destroy())
 
     def move_selected_home_sheet_to_stage(self, target_stage: str) -> None:
         if not self.home_selected_sheet_key:
