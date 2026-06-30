@@ -342,6 +342,7 @@ COMP_COLUMNS = (
     "cy_confidence",
     "best_company",
     "estimated_payout",
+    "received",
     "status",
     "sheet_source",
 )
@@ -419,6 +420,7 @@ HEADINGS = {
     "cy_confidence": "CY Confidence",
     "best_company": "Best Company",
     "estimated_payout": "Est. Payout",
+    "received": "Received",
     "status": "Status",
     "company_pile": "Company Pile",
 }
@@ -438,6 +440,7 @@ COLUMN_WIDTHS = {
     "cy_confidence": 110,
     "best_company": 130,
     "estimated_payout": 100,
+    "received": 90,
     "status": 160,
     "company_pile": 105,
 }
@@ -6343,12 +6346,13 @@ class CardPipelineApp(tk.Tk):
                     card_ladder_comps_average=record.get("card_ladder_comps_average"),
                     cy_value=record.get("cy_value"),
                     cy_confidence=record.get("cy_confidence"),
-                    card_ladder_comps=str(record.get("card_ladder_comps") or ""),
-                    best_company=str(record.get("best_company") or ""),
-                    estimated_payout=record.get("estimated_payout"),
-                    status=str(record.get("status") or ("Ready" if cert and grader else "Needs setup")),
-                    notes=str(record.get("notes") or source_name or ""),
-                )
+            card_ladder_comps=str(record.get("card_ladder_comps") or ""),
+            best_company=str(record.get("best_company") or ""),
+            estimated_payout=record.get("estimated_payout"),
+            received=bool(record.get("received")),
+            status=str(record.get("status") or ("Ready" if cert and grader else "Needs setup")),
+            notes=str(record.get("notes") or source_name or ""),
+        )
             )
         return rows
 
@@ -8657,6 +8661,7 @@ class CardPipelineApp(tk.Tk):
                 card_ladder_comps=comp_details,
                 best_company=best_company,
                 estimated_payout=estimated_payout,
+                received=bool(row.get("received")),
                 status=status,
                 notes=str(row.get("notes") or ""),
             )
@@ -9341,6 +9346,7 @@ class CardPipelineApp(tk.Tk):
                     card_ladder_comps=str(row.get("card_ladder_comps") or ""),
                     best_company=str(row.get("best_company") or ""),
                     estimated_payout=row.get("estimated_payout"),
+                    received=bool(row.get("received")),
                     status=str(row.get("status") or ("Ready" if cert and grader else "Needs setup")),
                     notes=str(row.get("notes") or ""),
                 )
@@ -10176,6 +10182,8 @@ class CardPipelineApp(tk.Tk):
             return row.best_company
         if column == "estimated_payout":
             return format_money(row.estimated_payout)
+        if column == "received":
+            return "X" if getattr(row, "received", False) else ""
         if column == "status":
             return row.status
         if column == "company_pile":

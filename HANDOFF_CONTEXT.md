@@ -38,6 +38,7 @@ Deferred future work, not for the current build: true live-anywhere mobile acces
 
 ## Latest Completed Work
 
+- Comp now shows a non-editable `Received` marker column for loaded Incoming/Working sheets. The marker reads the workbook `RECEIVED` column and `Save Back to Source Sheet` preserves it, so partial package check-ins remain visible while comp/edit work continues.
 - Comp tab now has `Delete Selected` for loaded Incoming/Working sheet rows. It removes the selected row(s), rekeys row/source metadata, marks the comp sheet unsaved, and `Save Back to Source Sheet` persists the deletion to the source workbook.
 - Receive rows now guarantee visible Best Company and Est. Payout when enough value data exists. If a matched incoming/working sheet row lacks saved assignment fields, Receive immediately recalculates through the assignment engine so barcode-scanned rows are not left blank.
 - Receive barcode scans now refresh the incoming/working cert index when an existing cert match is stale and missing assignment fields, so Best Company and Est. Payout populate from sheets that were assigned after startup. Startup indexing now uses the same incoming plus working merge behavior and preserves sport/category in the receive match.

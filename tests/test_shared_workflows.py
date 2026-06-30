@@ -351,6 +351,32 @@ class WorkbookCompanyProfitTests(unittest.TestCase):
 
             self.assertEqual(loaded[0]["sport"], "baseball")
 
+    def test_working_sheet_round_trips_received_marker(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "received-marker.xlsx"
+            rows = [
+                WorkbookRow(
+                    excel_row=2,
+                    cert_number="11111111",
+                    grader="PSA",
+                    card_title="Received Card PSA 10",
+                    received=True,
+                ),
+                WorkbookRow(
+                    excel_row=3,
+                    cert_number="22222222",
+                    grader="PSA",
+                    card_title="Not Received Card PSA 9",
+                    received=False,
+                ),
+            ]
+
+            write_working_sheet(path, rows)
+            loaded = read_simple_spreadsheet(path)
+
+            self.assertTrue(loaded[0]["received"])
+            self.assertFalse(loaded[1]["received"])
+
     def test_receive_company_append_dedupes_and_profit_backfills(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

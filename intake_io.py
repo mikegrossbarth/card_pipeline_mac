@@ -206,6 +206,7 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
             status = clean_part(_cell_by_header(sheet, row_index, headers, STATUS_HEADERS, None))
             notes = clean_part(_cell_by_header(sheet, row_index, headers, NOTES_HEADERS, None))
             source = clean_part(_cell_by_header(sheet, row_index, headers, SOURCE_HEADERS, source_fallback))
+            received = _is_received_value(_cell_by_header(sheet, row_index, headers, (_normalize_header(RECEIVED_HEADER),), None))
             if not cert and not card and purchase_price is None:
                 continue
             grader = grader or infer_grader(card)
@@ -225,6 +226,7 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
                     "estimated_payout": estimated_payout,
                     "source": source or f"{path.name}:{row_index}",
                     "date_added": date_added,
+                    "received": received,
                     "status": status,
                     "notes": notes or _setup_notes(cert, card, grader),
                 }
@@ -874,7 +876,7 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
             getattr(row, "estimated_payout", None),
             getattr(row, "status", ""),
             (source_lookup or {}).get(row.excel_row, ""),
-            "",
+            "X" if getattr(row, "received", False) else "",
         ])
     header_fill = PatternFill("solid", fgColor="111827")
     header_font = Font(color="FFFFFF", bold=True)

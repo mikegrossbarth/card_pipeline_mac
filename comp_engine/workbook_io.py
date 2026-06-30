@@ -22,5 +22,6 @@ class WorkbookRow:
     best_company: str = ""
     estimated_payout: float | None = None
     company_pile: bool = False
+    received: bool = False
     status: str = "Ready"
     notes: str = ""
