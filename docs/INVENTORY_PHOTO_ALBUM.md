@@ -24,7 +24,7 @@ To open it:
 
 You can also click `Open Photo Folder` from the same right-click menu to jump to the synced album folder.
 
-While scanning, the Inventory status line updates with progress like `Inventory photo scan: 3/42 IMG_1234.jpg`.
+While copying and scanning, the Inventory status line updates with progress like `Mirroring inventory photos: 3/42 IMG_1234.jpg` and `Inventory photo scan: 3/42 IMG_1234.jpg`.
 
 ## Folder
 

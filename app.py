@@ -8679,6 +8679,13 @@ class CardPipelineApp(tk.Tk):
         source = self._inventory_photo_source_folder()
         shared = self._inventory_photo_shared_folder()
         if not source.exists():
+            try:
+                source_is_shared = source.resolve(strict=False) == shared.resolve(strict=False)
+            except Exception:
+                source_is_shared = source == shared
+            if source_is_shared:
+                shared.mkdir(parents=True, exist_ok=True)
+                return shared
             if manual:
                 messagebox.showerror("Photo folder missing", f"Inventory photo folder does not exist:\n{source}")
             self.inventory_status_var.set(f"Inventory photo folder does not exist: {source}")
@@ -8692,17 +8699,26 @@ class CardPipelineApp(tk.Tk):
         if source_resolved == shared_resolved:
             return shared
         try:
-            source_images = self._inventory_photo_files(source)
+            source_images = self._inventory_photo_paths(source)
+            total = len(source_images)
             shared.mkdir(parents=True, exist_ok=True)
             copied = 0
             skipped = 0
-            for image in source_images:
-                relative = Path(str(image.get("relative_path") or image.get("filename") or Path(str(image.get("path") or "")).name))
+            if not total:
+                self.inventory_status_var.set(f"No inventory photos found in {source}. Scanning {shared}...")
+                self.update_idletasks()
+            for index, source_path in enumerate(source_images, start=1):
+                try:
+                    relative = source_path.relative_to(source)
+                except Exception:
+                    relative = Path(source_path.name)
                 if relative.is_absolute() or ".." in relative.parts:
-                    relative = Path(Path(str(image.get("path") or "")).name)
+                    relative = Path(source_path.name)
                 destination = shared / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                source_path = Path(str(image.get("path") or ""))
+                self.inventory_status_var.set(f"Mirroring inventory photos: {index}/{total} {source_path.name}")
+                self.status_var.set(f"Mirroring inventory photos: {index}/{total}")
+                self.update_idletasks()
                 if destination.exists():
                     try:
                         if destination.stat().st_size == source_path.stat().st_size:
@@ -8714,6 +8730,7 @@ class CardPipelineApp(tk.Tk):
                 copied += 1
             self.inventory_status_var.set(f"Mirrored {copied} photo(s) to shared folder; skipped {skipped}. Scanning {shared}...")
             self.status_var.set(f"Mirrored inventory photos to {shared}.")
+            self.update_idletasks()
             return shared
         except Exception as error:
             if manual:
@@ -8755,14 +8772,28 @@ class CardPipelineApp(tk.Tk):
                 digest.update(chunk)
         return digest.hexdigest()
 
-    def _inventory_photo_files(self, folder: Path) -> list[dict[str, object]]:
+    def _inventory_photo_paths(self, folder: Path) -> list[Path]:
         allowed = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
         if not folder.exists():
             return []
+        return [
+            path
+            for path in sorted(folder.rglob("*"), key=lambda item: str(item).lower())
+            if path.is_file() and path.suffix.lower() in allowed
+        ]
+
+    def _inventory_photo_files(self, folder: Path) -> list[dict[str, object]]:
         images: list[dict[str, object]] = []
-        for path in sorted(folder.rglob("*"), key=lambda item: str(item).lower()):
-            if not path.is_file() or path.suffix.lower() not in allowed:
-                continue
+        if hasattr(self, "_inventory_photo_paths"):
+            paths = self._inventory_photo_paths(folder)
+        else:
+            allowed = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+            paths = [
+                path
+                for path in sorted(folder.rglob("*"), key=lambda item: str(item).lower())
+                if path.is_file() and path.suffix.lower() in allowed
+            ] if folder.exists() else []
+        for path in paths:
             try:
                 stat = path.stat()
                 images.append(
