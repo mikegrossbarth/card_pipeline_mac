@@ -48,6 +48,8 @@ CARD_PIPELINE/INVENTORY PHOTOS
 
 That folder lives under the shared pipeline, so Google Drive can sync it to everyone else. Scan Photos scans the shared folder after copying, which means linked inventory rows point at shared photo paths instead of a private iCloud folder.
 
+New links are saved as portable paths relative to `CARD_PIPELINE/INVENTORY PHOTOS` whenever possible. LUCAS still reads older absolute links and remaps them into the current shared folder if the path contains an `INVENTORY PHOTOS` folder segment.
+
 Other users only need to pull the latest LUCAS, point their shared pipeline/working folder at the same team `CARD_PIPELINE`, then use `Inventory -> Scan Photos` or right-click linked rows with `Open Photo`.
 
 ## Shortcut Shape

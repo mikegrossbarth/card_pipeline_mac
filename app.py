@@ -3151,15 +3151,30 @@ class CardPipelineApp(tk.Tk):
                 cleanup(removed, kept)
 
     def _safe_inventory_photo_path(self, path_value: object) -> Path | None:
-        try:
+        resolver = getattr(self, "_resolve_inventory_photo_path", None)
+        if callable(resolver):
+            path = resolver(path_value)
+        else:
             path = Path(str(path_value or "")).expanduser()
             if not path.is_absolute():
                 path = self._inventory_photo_source_folder() / path
+        if not path:
+            return None
+        try:
             resolved = path.resolve()
-            root = self._inventory_photo_source_folder().resolve()
         except Exception:
             return None
-        if resolved == root or root in resolved.parents:
+        roots: list[Path] = []
+        root_sources = [self._inventory_photo_source_folder()]
+        shared_folder = getattr(self, "_inventory_photo_shared_folder", None)
+        if callable(shared_folder):
+            root_sources.insert(0, shared_folder())
+        for root in root_sources:
+            try:
+                roots.append(root.resolve())
+            except Exception:
+                continue
+        if any(resolved == root or root in resolved.parents for root in roots):
             return resolved
         return None
 
@@ -4180,7 +4195,7 @@ class CardPipelineApp(tk.Tk):
             return []
         paths: list[Path] = []
         for value in record.get("photo_paths") or []:
-            path = Path(str(value or "")).expanduser()
+            path = self._resolve_inventory_photo_path(value)
             if path.exists():
                 paths.append(path)
         return paths
@@ -8860,7 +8875,8 @@ class CardPipelineApp(tk.Tk):
     def _link_inventory_photo_to_keys(self, keys: set[str], photo_path: Path) -> int:
         if not keys:
             return 0
-        path_text = str(photo_path)
+        storage_value = getattr(self, "_inventory_photo_storage_value", None)
+        path_text = storage_value(photo_path) if callable(storage_value) else str(photo_path)
         with shared_lock(CARD_PIPELINE_DIR, "inventory-photo-link", self.lucas_identity):
             rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
             changed = 0
@@ -8876,6 +8892,49 @@ class CardPipelineApp(tk.Tk):
             if changed:
                 self._save_inventory_ledger(rows)
         return changed
+
+    def _inventory_photo_relative_path(self, path: Path) -> Path | None:
+        try:
+            resolved = path.resolve()
+        except Exception:
+            resolved = path
+        for root in (self._inventory_photo_shared_folder(), self._inventory_photo_source_folder()):
+            try:
+                return resolved.relative_to(root.resolve())
+            except Exception:
+                continue
+        parts = list(path.parts)
+        for index, part in enumerate(parts):
+            if part.lower() == "inventory photos" and index + 1 < len(parts):
+                return Path(*parts[index + 1 :])
+        return None
+
+    def _inventory_photo_storage_value(self, path: Path) -> str:
+        relative = self._inventory_photo_relative_path(path)
+        if relative and not relative.is_absolute() and ".." not in relative.parts:
+            return relative.as_posix()
+        return str(path)
+
+    def _resolve_inventory_photo_path(self, path_value: object) -> Path:
+        text = str(path_value or "").strip()
+        path = Path(text).expanduser()
+        candidates: list[Path] = []
+        if path.is_absolute():
+            candidates.append(path)
+            relative = self._inventory_photo_relative_path(path)
+            if relative and not relative.is_absolute() and ".." not in relative.parts:
+                candidates.extend([self._inventory_photo_shared_folder() / relative, self._inventory_photo_source_folder() / relative])
+        else:
+            candidates.extend([self._inventory_photo_shared_folder() / path, self._inventory_photo_source_folder() / path, path])
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            if candidate.exists():
+                return candidate
+        return candidates[0] if candidates else path
 
     def scan_inventory_photos(self, manual: bool = False, folder: Path | None = None) -> None:
         if self.inventory_photo_worker and self.inventory_photo_worker.is_alive():
