@@ -1636,16 +1636,17 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(summary_panel, text="Active Balances", style="Panel.TLabel").pack(anchor=tk.W)
         self.payout_summary_tree = self._build_home_tree(
             summary_panel,
-            columns=("person", "sheets", "cards", "expenses", "net_profit", "balance"),
+            columns=("person", "sheets", "cards", "expenses", "total_net_profit", "unpaid_net_profit", "balance"),
             headings={
                 "person": "Person",
                 "sheets": "Sheets",
                 "cards": "Cards",
                 "expenses": "Expenses",
-                "net_profit": "Net Profit",
+                "total_net_profit": "Total Net Profit",
+                "unpaid_net_profit": "Unpaid Net Profit",
                 "balance": "Balance Owed",
             },
-            widths={"person": 190, "sheets": 70, "cards": 70, "expenses": 105, "net_profit": 115, "balance": 130},
+            widths={"person": 180, "sheets": 65, "cards": 65, "expenses": 100, "total_net_profit": 120, "unpaid_net_profit": 125, "balance": 120},
             height=18,
         )
         self.payout_summary_tree.tag_configure("total_divider", background="#1f1f1f", foreground="#ffffff", font=("Segoe UI Semibold", 10))
@@ -6764,12 +6765,29 @@ class CardPipelineApp(tk.Tk):
             person = item["person"] or "Unassigned"
             if filter_person and filter_person not in person.lower():
                 continue
+            balance = balances.setdefault(
+                person,
+                {
+                    "sheets": 0,
+                    "cards": 0,
+                    "expenses": 0.0,
+                    "total_net_profit": 0.0,
+                    "unpaid_sheets": 0,
+                    "unpaid_cards": 0,
+                    "unpaid_expenses": 0.0,
+                    "unpaid_net_profit": 0.0,
+                    "balance": 0.0,
+                },
+            )
+            balance["sheets"] = int(balance["sheets"]) + 1
+            balance["cards"] = int(balance["cards"]) + int(item["row_count"])
+            balance["expenses"] = float(balance["expenses"]) + float(item.get("expense_total") or 0.0)
+            balance["total_net_profit"] = float(balance["total_net_profit"]) + float(item.get("net_profit_total") or 0.0)
             if not item["paid"] and item.get("payable", True):
-                balance = balances.setdefault(person, {"sheets": 0, "cards": 0, "expenses": 0.0, "net_profit": 0.0, "balance": 0.0})
-                balance["sheets"] = int(balance["sheets"]) + 1
-                balance["cards"] = int(balance["cards"]) + int(item["row_count"])
-                balance["expenses"] = float(balance["expenses"]) + float(item.get("expense_total") or 0.0)
-                balance["net_profit"] = float(balance["net_profit"]) + float(item.get("net_profit_total") or 0.0)
+                balance["unpaid_sheets"] = int(balance["unpaid_sheets"]) + 1
+                balance["unpaid_cards"] = int(balance["unpaid_cards"]) + int(item["row_count"])
+                balance["unpaid_expenses"] = float(balance["unpaid_expenses"]) + float(item.get("expense_total") or 0.0)
+                balance["unpaid_net_profit"] = float(balance["unpaid_net_profit"]) + float(item.get("net_profit_total") or 0.0)
                 balance["balance"] = float(balance["balance"]) + float(item["payout_balance"])
             iid = f"payout:{detail_count}"
             self.payout_detail_keys[iid] = str(item["key"])
@@ -6801,7 +6819,8 @@ class CardPipelineApp(tk.Tk):
                     int(values["sheets"]),
                     int(values["cards"]),
                     format_money(float(values["expenses"])),
-                    format_money(float(values["net_profit"])),
+                    format_money(float(values["total_net_profit"])),
+                    format_money(float(values["unpaid_net_profit"])),
                     format_money(float(values["balance"])),
                 ),
             )
@@ -6810,19 +6829,20 @@ class CardPipelineApp(tk.Tk):
         total_sheets = sum(int(values["sheets"]) for values in balances.values())
         total_cards = sum(int(values["cards"]) for values in balances.values())
         total_expenses = sum(float(values["expenses"]) for values in balances.values())
-        total_net_profit = sum(float(values["net_profit"]) for values in balances.values())
+        total_net_profit = sum(float(values["total_net_profit"]) for values in balances.values())
+        total_unpaid_net_profit = sum(float(values["unpaid_net_profit"]) for values in balances.values())
         if balances:
             self.payout_summary_tree.insert(
                 "",
                 tk.END,
                 tags=("total_divider",),
-                values=("------", "------", "------", "------", "------", "------"),
+                values=("------", "------", "------", "------", "------", "------", "------"),
             )
             self.payout_summary_tree.insert(
                 "",
                 tk.END,
                 tags=("total_row",),
-                values=("TOTAL", total_sheets, total_cards, format_money(total_expenses), format_money(total_net_profit), format_money(total_balance)),
+                values=("TOTAL", total_sheets, total_cards, format_money(total_expenses), format_money(total_net_profit), format_money(total_unpaid_net_profit), format_money(total_balance)),
             )
         filter_label = self.payout_person_var.get().strip()
         suffix = f" | Filter: {filter_label}" if filter_label else ""
@@ -6830,7 +6850,7 @@ class CardPipelineApp(tk.Tk):
         record_performance_event(
             "payouts.refresh",
             perf_start,
-            f"details={detail_count} people={len(balances)} net={total_net_profit:.2f} expenses={total_expenses:.2f} balance={total_balance:.2f}",
+            f"details={detail_count} people={len(balances)} total_net={total_net_profit:.2f} unpaid_net={total_unpaid_net_profit:.2f} expenses={total_expenses:.2f} balance={total_balance:.2f}",
         )
 
     def _payout_sheet_items(self) -> list[dict[str, object]]:
