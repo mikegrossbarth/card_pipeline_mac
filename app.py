@@ -8121,14 +8121,9 @@ class CardPipelineApp(tk.Tk):
         try:
             with shared_lock(CARD_PIPELINE_DIR, "receive-company-sheets", self.lucas_identity):
                 selected_kind, _selected_name = self._split_home_sheet_key(key)
-                if selected_kind == "Received" and not marker["all_received"]:
-                    moved_key = self._move_received_sheet_to_incoming(key)
-                    if moved_key:
-                        self._delete_sheet_marker(key)
-                        key = moved_key
-                        self.home_selected_sheet_key = key
-                        self.home_sheet_kind.set("Incoming")
-                        moved = True
+                if selected_kind == "Received":
+                    marker["all_received"] = True
+                    marker.setdefault("received_at", existing_marker.get("received_at") or datetime.now().isoformat(timespec="seconds"))
                 elif marker["all_received"]:
                     moved_key = self._move_sheet_to_received(key)
                     if moved_key:
