@@ -8,7 +8,7 @@ cardladder-autocomp/node_modules/
 work/
 outputs/
 *.log
-LUCAS.app/
+*.app/
 .env
 lucas_settings.json
 lucas_settings.*.json

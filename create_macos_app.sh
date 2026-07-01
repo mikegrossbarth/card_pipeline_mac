@@ -3,15 +3,25 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-APP_NAME="LUCAS"
+APP_NAME="${LUCAS_APP_NAME:-LUCAS}"
+APP_DISPLAY_NAME="${LUCAS_APP_DISPLAY_NAME:-L.U.C.A.S}"
 APP_DIR="${APP_NAME}.app"
 MACOS_DIR="${APP_DIR}/Contents/MacOS"
 RESOURCES_DIR="${APP_DIR}/Contents/Resources"
 PROJECT_ROOT="$(pwd)"
-BUNDLE_SUFFIX="$(printf "%s" "$PROJECT_ROOT" | shasum | awk '{print substr($1, 1, 10)}')"
+BUNDLE_SUFFIX="$(printf "%s:%s" "$PROJECT_ROOT" "$APP_NAME" | shasum | awk '{print substr($1, 1, 10)}')"
 BUNDLE_ID="com.cardpipeline.lucas.${BUNDLE_SUFFIX}"
 PROJECT_ROOT_C="${PROJECT_ROOT//\\/\\\\}"
 PROJECT_ROOT_C="${PROJECT_ROOT_C//\"/\\\"}"
+LUCAS_SETTINGS_PATH_C="${LUCAS_SETTINGS_PATH:-}"
+LUCAS_SETTINGS_PATH_C="${LUCAS_SETTINGS_PATH_C//\\/\\\\}"
+LUCAS_SETTINGS_PATH_C="${LUCAS_SETTINGS_PATH_C//\"/\\\"}"
+LUCAS_ASSIGNMENT_CONFIG_PATH_C="${LUCAS_ASSIGNMENT_CONFIG_PATH:-}"
+LUCAS_ASSIGNMENT_CONFIG_PATH_C="${LUCAS_ASSIGNMENT_CONFIG_PATH_C//\\/\\\\}"
+LUCAS_ASSIGNMENT_CONFIG_PATH_C="${LUCAS_ASSIGNMENT_CONFIG_PATH_C//\"/\\\"}"
+LUCAS_PIPELINE_DIR_C="${LUCAS_PIPELINE_DIR:-}"
+LUCAS_PIPELINE_DIR_C="${LUCAS_PIPELINE_DIR_C//\\/\\\\}"
+LUCAS_PIPELINE_DIR_C="${LUCAS_PIPELINE_DIR_C//\"/\\\"}"
 
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
@@ -25,9 +35,9 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key>
   <string>${BUNDLE_ID}</string>
   <key>CFBundleName</key>
-  <string>L.U.C.A.S</string>
+  <string>${APP_DISPLAY_NAME}</string>
   <key>CFBundleDisplayName</key>
-  <string>L.U.C.A.S</string>
+  <string>${APP_DISPLAY_NAME}</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleVersion</key>
@@ -48,6 +58,9 @@ cat > "${RESOURCES_DIR}/launcher.c" <<C_LAUNCHER
 #include <unistd.h>
 
 #define APP_ROOT "${PROJECT_ROOT_C}"
+#define PROFILE_SETTINGS_PATH "${LUCAS_SETTINGS_PATH_C}"
+#define PROFILE_ASSIGNMENT_CONFIG_PATH "${LUCAS_ASSIGNMENT_CONFIG_PATH_C}"
+#define PROFILE_PIPELINE_DIR "${LUCAS_PIPELINE_DIR_C}"
 
 static void write_log_line(int fd, const char *message) {
   if (fd < 0) return;
@@ -81,6 +94,19 @@ int main(void) {
     return 1;
   }
 
+  if (PROFILE_SETTINGS_PATH[0] != '\\0') {
+    setenv("LUCAS_SETTINGS_PATH", PROFILE_SETTINGS_PATH, 1);
+    dprintf(fd, "Settings path: %s\\n", PROFILE_SETTINGS_PATH);
+  }
+  if (PROFILE_ASSIGNMENT_CONFIG_PATH[0] != '\\0') {
+    setenv("LUCAS_ASSIGNMENT_CONFIG_PATH", PROFILE_ASSIGNMENT_CONFIG_PATH, 1);
+    dprintf(fd, "Assignment config path: %s\\n", PROFILE_ASSIGNMENT_CONFIG_PATH);
+  }
+  if (PROFILE_PIPELINE_DIR[0] != '\\0') {
+    setenv("LUCAS_PIPELINE_DIR", PROFILE_PIPELINE_DIR, 1);
+    dprintf(fd, "Pipeline dir: %s\\n", PROFILE_PIPELINE_DIR);
+  }
+
   if (access(".venv/bin/python", X_OK) == 0) {
     execl(".venv/bin/python", ".venv/bin/python", "app.py", (char *)NULL);
     dprintf(fd, "Could not launch .venv/bin/python: %s\\n", strerror(errno));
@@ -101,12 +127,27 @@ else
 set -euo pipefail
 
 APP_ROOT="${PROJECT_ROOT}"
+PROFILE_SETTINGS_PATH="${LUCAS_SETTINGS_PATH:-}"
+PROFILE_ASSIGNMENT_CONFIG_PATH="${LUCAS_ASSIGNMENT_CONFIG_PATH:-}"
+PROFILE_PIPELINE_DIR="${LUCAS_PIPELINE_DIR:-}"
 LOG_FILE="\${HOME}/Desktop/LUCAS-launch.log"
 
 {
   echo "[\$(date)] Starting L.U.C.A.S"
   echo "App root: \${APP_ROOT}"
   cd "\${APP_ROOT}"
+  if [[ -n "\${PROFILE_SETTINGS_PATH}" ]]; then
+    export LUCAS_SETTINGS_PATH="\${PROFILE_SETTINGS_PATH}"
+    echo "Settings path: \${PROFILE_SETTINGS_PATH}"
+  fi
+  if [[ -n "\${PROFILE_ASSIGNMENT_CONFIG_PATH}" ]]; then
+    export LUCAS_ASSIGNMENT_CONFIG_PATH="\${PROFILE_ASSIGNMENT_CONFIG_PATH}"
+    echo "Assignment config path: \${PROFILE_ASSIGNMENT_CONFIG_PATH}"
+  fi
+  if [[ -n "\${PROFILE_PIPELINE_DIR}" ]]; then
+    export LUCAS_PIPELINE_DIR="\${PROFILE_PIPELINE_DIR}"
+    echo "Pipeline dir: \${PROFILE_PIPELINE_DIR}"
+  fi
 
   if [[ -x ".venv/bin/python" ]]; then
     exec ".venv/bin/python" app.py
