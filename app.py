@@ -5981,7 +5981,7 @@ class CardPipelineApp(tk.Tk):
             colors.get("activebackground"),
         )
 
-    def refresh_home(self) -> None:
+    def refresh_home(self, reconcile_accounted: bool = True) -> None:
         perf_start = time.perf_counter()
         self.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries = {}
@@ -5999,12 +5999,13 @@ class CardPipelineApp(tk.Tk):
                 archived_count = len(archived)
         except Exception as error:
             errors.append(f"Archive: {error}")
-        try:
-            reconciliation = self._reconcile_accounted_home_sheets()
-            reconciled_count = len(reconciliation.get("moved") or [])
-            duplicate_warnings = list(reconciliation.get("warnings") or [])
-        except Exception as error:
-            errors.append(f"Reconcile: {error}")
+        if reconcile_accounted:
+            try:
+                reconciliation = self._reconcile_accounted_home_sheets()
+                reconciled_count = len(reconciliation.get("moved") or [])
+                duplicate_warnings = list(reconciliation.get("warnings") or [])
+            except Exception as error:
+                errors.append(f"Reconcile: {error}")
         for kind, directory in (("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR), ("Received", RECEIVED_SHEETS_DIR)):
             try:
                 directory.mkdir(parents=True, exist_ok=True)
@@ -6046,7 +6047,7 @@ class CardPipelineApp(tk.Tk):
         record_performance_event(
             "home.refresh",
             perf_start,
-            f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived={archived_count} reconciled={reconciled_count} duplicate_warnings={len(duplicate_warnings)} errors={len(errors)}",
+            f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived={archived_count} reconciled={reconciled_count} duplicate_warnings={len(duplicate_warnings)} reconcile_accounted={reconcile_accounted} errors={len(errors)}",
         )
 
     def _home_summary_cache_key(self, path: Path) -> str:
@@ -7871,8 +7872,7 @@ class CardPipelineApp(tk.Tk):
         except Exception as error:
             messagebox.showerror("Move failed", str(error))
             return
-        self.refresh_pipeline()
-        self.refresh_home()
+        self._refresh_after_home_stage_move(name, source_stage, target_stage)
         cleanup_note = ""
         if cleanup:
             cleanup_note = (
@@ -7883,6 +7883,37 @@ class CardPipelineApp(tk.Tk):
             )
         self.status_var.set(f"Moved {name} from {source_stage} to {target_stage}.{cleanup_note}")
         self._append_activity("Sheet Move", f"Moved {name} from {source_stage} to {target_stage}.", {"sheet": name, "from": source_stage, "to": target_stage, "cleanup": cleanup})
+
+    def _refresh_after_home_stage_move(self, sheet_name: str, source_stage: str, target_stage: str) -> None:
+        perf_start = time.perf_counter()
+        self.refresh_working_sheets()
+        self.refresh_received_sheets()
+        if target_stage in {"Incoming", "Working"}:
+            self.refresh_incoming_index()
+        elif source_stage in {"Incoming", "Working"}:
+            self._drop_sheet_from_incoming_index(sheet_name)
+        self.refresh_home(reconcile_accounted=False)
+        self._refresh_table()
+        record_performance_event(
+            "home.stage_move_refresh",
+            perf_start,
+            f"sheet={sheet_name} from={source_stage} to={target_stage}",
+        )
+
+    def _drop_sheet_from_incoming_index(self, sheet_name: str) -> None:
+        target = Path(str(sheet_name or "")).name
+        index = getattr(self, "incoming_cert_index", None)
+        if not target or not isinstance(index, dict):
+            return
+        kept: dict[str, dict[str, object]] = {}
+        for cert, row in index.items():
+            row_sheet = Path(str((row or {}).get("sheet") or "")).name
+            if row_sheet != target:
+                kept[cert] = row
+        self.incoming_cert_index = kept
+        self._match_all_review_rows()
+        if hasattr(self, "review_status"):
+            self.review_status.set(f"Indexed {len(kept)} cert(s) after moving {target}.")
 
     def delete_selected_home_sheet(self) -> None:
         if not self.home_selected_sheet_key:
