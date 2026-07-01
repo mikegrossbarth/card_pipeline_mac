@@ -240,6 +240,20 @@ def clean_text(value) -> str:
 def clean_profile_title(value) -> str:
     text = clean_text(value)
     text = re.sub(r"^profile\s*:\s*", "", text, flags=re.I)
+    tail_patterns = [
+        r"\s+\bclose\s+\$?\d[\d,]*(?:\.\d{1,2})?.*$",
+        r"\s+\bclose\s+search[_\s-]*off\b.*$",
+        r"\s+\bclose\b\s*$",
+        r"\s+\bclose\b\s+(?=\b(?:PSA|BGS|SGC|CGC|BECKETT|BVG)\b|\d+(?:\.\d+)?\b).*$",
+        r"\s+[xÃ—]\s*$",
+        r"\s+\bthere\s+are\s+no\s+results\b.*$",
+        r"\s+\btry\s+searching\b.*$",
+        r"\s+\bhelp[_\s-]*outline\b.*$",
+        r"\s+\b(?:date\s+sold|type|price)\b.*$",
+        r"\s+\$\d[\d,]*(?:\.\d{1,2})?\s+\b(?:help[_\s-]*outline|ebay|fanatics|pwcc|goldin|alt|myslabs|heritage|pristine|auction)\b.*$",
+    ]
+    for pattern in tail_patterns:
+        text = re.sub(pattern, "", text, flags=re.I)
     text = re.sub(r"\s*\(pop\s*[^)]*\)\s*$", "", text, flags=re.I)
     return clean_text(text)
 
