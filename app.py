@@ -2765,6 +2765,26 @@ class CardPipelineApp(tk.Tk):
             self._save_inventory_ledger(list(merged.values()))
         return changed
 
+    def _retarget_profit_rows_for_source(self, source_sheet_name: str, assigned_person: str) -> int:
+        source_name = Path(str(source_sheet_name or "")).name.strip().lower()
+        if not source_name:
+            return 0
+        new_person = str(assigned_person or "").strip() or "Unassigned"
+        changed = 0
+        updated: list[dict[str, object]] = []
+        for record in [self._normalize_profit_record(item) for item in self._load_profit_ledger()]:
+            source = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+            original_source = Path(str(record.get("original_source_sheet") or "")).name.strip().lower()
+            if source == source_name or original_source == source_name:
+                if str(record.get("assigned_person") or "").strip() != new_person:
+                    changed += 1
+                record["assigned_person"] = new_person
+                record = self._normalize_profit_record(record)
+            updated.append(record)
+        if changed:
+            self._save_profit_ledger(updated)
+        return changed
+
     def _received_certs_in_workbook(self, path: Path) -> set[str]:
         certs: set[str] = set()
         if not path.exists():
@@ -8145,8 +8165,10 @@ class CardPipelineApp(tk.Tk):
                 self.home_sheet_markers[key] = marker
                 _current_kind, current_name = self._split_home_sheet_key(key)
                 inventory_rows_reassigned = 0
+                profit_rows_reassigned = 0
                 if old_assigned_person != str(marker.get("assigned_person") or "").strip():
                     inventory_rows_reassigned = self._retarget_inventory_rows_for_source(current_name, str(marker.get("assigned_person") or ""))
+                    profit_rows_reassigned = self._retarget_profit_rows_for_source(current_name, str(marker.get("assigned_person") or ""))
                 if _current_kind == "Received" and marker["all_received"] and str(marker.get("assigned_person") or "").strip():
                     inventory_rows_added, inventory_candidate_rows = self._sync_received_sheet_inventory_to_ledger(
                         _current_kind,
@@ -8165,7 +8187,12 @@ class CardPipelineApp(tk.Tk):
             self.refresh_inventory_tab(enrich=True)
         if popup is not None:
             popup.destroy()
-        inventory_note = f" Reassigned {inventory_rows_reassigned} inventory row(s)." if inventory_rows_reassigned else ""
+        reassigned_notes = []
+        if inventory_rows_reassigned:
+            reassigned_notes.append(f"{inventory_rows_reassigned} inventory row(s)")
+        if profit_rows_reassigned:
+            reassigned_notes.append(f"{profit_rows_reassigned} profit row(s)")
+        inventory_note = f" Reassigned {', '.join(reassigned_notes)}." if reassigned_notes else ""
         if inventory_rows_added:
             inventory_note += f" Added {inventory_rows_added} inventory row(s)."
         elif inventory_candidate_rows:
