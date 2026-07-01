@@ -1822,7 +1822,7 @@ def parse_payout_table_line(line: str) -> PayoutTier | None:
     text = str(line or "").strip()
     if not text or re.search(r"\bcategory\b|\bvalue range\b|\bpayout\b", text, re.I):
         return None
-    range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|â€“|â€”)\s*\$?\s*([\d,.]+k?)", text_without_year, re.I)
+    range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|to|through|thru|â€“|â€”)\s*\$?\s*([\d,.]+k?)", text, re.I)
     if not range_match:
         range_match = re.search(r"\$?\s*([\d,.]+k?)\s*(?:-|\u2013|\u2014|to|through|thru)\s*\$?\s*([\d,.]+k?)", text, re.I)
     if not range_match:

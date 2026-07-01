@@ -1054,6 +1054,16 @@ class DiagnosticsTests(unittest.TestCase):
 
 
 class AssignmentEngineTests(unittest.TestCase):
+    def test_payout_table_line_parses_range_without_year_context(self) -> None:
+        tier = assignment_engine.parse_payout_table_line("Football $10 - $25 135%")
+
+        self.assertIsNotNone(tier)
+        assert tier is not None
+        self.assertEqual(tier.matcher.lower(), "football")
+        self.assertEqual(tier.min_price, 10)
+        self.assertEqual(tier.max_price, 25)
+        self.assertAlmostEqual(tier.rate, 1.35)
+
     def test_kemba_walker_title_infers_basketball_without_short_name_false_matches(self) -> None:
         title = "2019 Panini Contenders Optic Uniformity 21 Kemba Walker PSA 10"
         matches = assignment_engine.find_known_player_sports(title)
