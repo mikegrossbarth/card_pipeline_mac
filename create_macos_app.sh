@@ -54,6 +54,7 @@ cat > "${RESOURCES_DIR}/launcher.c" <<C_LAUNCHER
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -68,13 +69,11 @@ static void write_log_line(int fd, const char *message) {
 }
 
 int main(void) {
-  const char *home = getenv("HOME");
   char log_path[4096];
-  if (home && *home) {
-    snprintf(log_path, sizeof(log_path), "%s/Desktop/LUCAS-launch.log", home);
-  } else {
-    snprintf(log_path, sizeof(log_path), "/tmp/LUCAS-launch.log");
-  }
+  char work_dir[4096];
+  snprintf(work_dir, sizeof(work_dir), "%s/work", APP_ROOT);
+  mkdir(work_dir, 0755);
+  snprintf(log_path, sizeof(log_path), "%s/LUCAS-launch.log", work_dir);
 
   int fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
   if (fd >= 0) {
@@ -130,7 +129,8 @@ APP_ROOT="${PROJECT_ROOT}"
 PROFILE_SETTINGS_PATH="${LUCAS_SETTINGS_PATH:-}"
 PROFILE_ASSIGNMENT_CONFIG_PATH="${LUCAS_ASSIGNMENT_CONFIG_PATH:-}"
 PROFILE_PIPELINE_DIR="${LUCAS_PIPELINE_DIR:-}"
-LOG_FILE="\${HOME}/Desktop/LUCAS-launch.log"
+LOG_FILE="\${APP_ROOT}/work/LUCAS-launch.log"
+mkdir -p "\${APP_ROOT}/work"
 
 {
   echo "[\$(date)] Starting L.U.C.A.S"
