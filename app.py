@@ -7838,6 +7838,8 @@ class CardPipelineApp(tk.Tk):
         return "break"
 
     def move_selected_home_sheet_to_stage(self, target_stage: str) -> None:
+        move_started = time.perf_counter()
+        move_phases: list[str] = []
         if not self.home_selected_sheet_key:
             messagebox.showinfo("Choose sheet", "Choose a sheet on Home before moving.")
             return
@@ -7864,15 +7866,24 @@ class CardPipelineApp(tk.Tk):
         if not confirmed:
             return
         try:
+            lock_started = time.perf_counter()
             with shared_lock(CARD_PIPELINE_DIR, "sheet-stage-move", self.lucas_identity):
+                move_phases.append(f"lock_wait={time.perf_counter() - lock_started:.3f}s")
+                phase_started = time.perf_counter()
                 moved_key, cleanup = self._move_home_sheet_to_stage(self.home_selected_sheet_key, target_stage)
+                move_phases.append(f"move={time.perf_counter() - phase_started:.3f}s")
                 self.home_selected_sheet_key = moved_key
                 self.home_sheet_kind.set(target_stage)
+                phase_started = time.perf_counter()
                 self._save_sheet_markers()
+                move_phases.append(f"save_markers={time.perf_counter() - phase_started:.3f}s")
         except Exception as error:
+            record_performance_event("home.stage_move.failed", move_started, f"sheet={name} from={source_stage} to={target_stage} error={error}", force=True)
             messagebox.showerror("Move failed", str(error))
             return
+        phase_started = time.perf_counter()
         self._refresh_after_home_stage_move(name, source_stage, target_stage)
+        move_phases.append(f"refresh={time.perf_counter() - phase_started:.3f}s")
         cleanup_note = ""
         if cleanup:
             cleanup_note = (
@@ -7882,18 +7893,36 @@ class CardPipelineApp(tk.Tk):
                 f"and removed {cleanup.get('inventory_rows_removed', 0)} inventory row(s)."
             )
         self.status_var.set(f"Moved {name} from {source_stage} to {target_stage}.{cleanup_note}")
+        phase_started = time.perf_counter()
         self._append_activity("Sheet Move", f"Moved {name} from {source_stage} to {target_stage}.", {"sheet": name, "from": source_stage, "to": target_stage, "cleanup": cleanup})
+        move_phases.append(f"activity={time.perf_counter() - phase_started:.3f}s")
+        record_performance_event(
+            "home.stage_move.total",
+            move_started,
+            f"sheet={name} from={source_stage} to={target_stage} {' '.join(move_phases)}",
+            force=True,
+        )
 
     def _refresh_after_home_stage_move(self, sheet_name: str, source_stage: str, target_stage: str) -> None:
         perf_start = time.perf_counter()
+        phase_started = time.perf_counter()
         self.refresh_working_sheets()
+        record_performance_event("home.stage_move.refresh_working_sheets", phase_started, f"sheet={sheet_name} from={source_stage} to={target_stage}")
+        phase_started = time.perf_counter()
         self.refresh_received_sheets()
+        record_performance_event("home.stage_move.refresh_received_sheets", phase_started, f"sheet={sheet_name} from={source_stage} to={target_stage}")
+        phase_started = time.perf_counter()
         if target_stage in {"Incoming", "Working"}:
             self.refresh_incoming_index()
         elif source_stage in {"Incoming", "Working"}:
             self._drop_sheet_from_incoming_index(sheet_name)
+        record_performance_event("home.stage_move.refresh_index", phase_started, f"sheet={sheet_name} from={source_stage} to={target_stage}")
+        phase_started = time.perf_counter()
         self._refresh_home_after_stage_move(sheet_name, source_stage, target_stage)
+        record_performance_event("home.stage_move.refresh_home_memory", phase_started, f"sheet={sheet_name} from={source_stage} to={target_stage}")
+        phase_started = time.perf_counter()
         self._refresh_table()
+        record_performance_event("home.stage_move.refresh_table", phase_started, f"sheet={sheet_name} from={source_stage} to={target_stage}")
         record_performance_event(
             "home.stage_move_refresh",
             perf_start,
@@ -8181,34 +8210,48 @@ class CardPipelineApp(tk.Tk):
         return True
 
     def _move_home_sheet_to_stage(self, key: str, target_stage: str) -> tuple[str, dict[str, int]]:
+        perf_start = time.perf_counter()
         source_stage, name = self._split_home_sheet_key(key)
         if source_stage not in {"Incoming", "Working", "Received"} or target_stage not in {"Incoming", "Working", "Received"} or not name:
             return "", {}
         if source_stage == target_stage:
             return key, {}
         source = self._sheet_path_for_stage(source_stage, name)
+        phase_started = time.perf_counter()
         if not source.exists():
             raise FileNotFoundError(f"{source_stage} sheet not found: {source}")
+        record_performance_event("home.stage_move.source_exists", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
         target_dir = {
             "Incoming": INCOMING_SHEETS_DIR,
             "Working": WORKING_SHEETS_DIR,
             "Received": RECEIVED_SHEETS_DIR,
         }[target_stage]
+        phase_started = time.perf_counter()
         target_dir.mkdir(parents=True, exist_ok=True)
+        record_performance_event("home.stage_move.target_mkdir", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
         destination = target_dir / source.name
+        phase_started = time.perf_counter()
         if destination.exists():
             raise FileExistsError(f"{target_stage} sheet already exists: {destination.name}")
+        record_performance_event("home.stage_move.destination_exists", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
 
         cleanup: dict[str, int] = {}
         moving_out_of_received = source_stage == "Received" and target_stage != "Received"
         if moving_out_of_received:
+            phase_started = time.perf_counter()
             cleanup = self._cleanup_sheet_received_side_effects(source.name, source)
+            record_performance_event("home.stage_move.cleanup", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
+        phase_started = time.perf_counter()
         shutil.move(str(source), str(destination))
+        record_performance_event("home.stage_move.shutil_move", phase_started, f"sheet={name} from={source_stage} to={target_stage}", force=True)
 
+        phase_started = time.perf_counter()
         old_marker = dict(self.home_sheet_markers.get(key, {}))
         self._delete_sheet_marker(key)
         new_key = self._home_sheet_key(target_stage, destination.name)
         self.home_sheet_markers[new_key] = self._marker_for_stage(old_marker, target_stage)
+        record_performance_event("home.stage_move.marker_update", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
+        record_performance_event("home.stage_move.move_function", perf_start, f"sheet={name} from={source_stage} to={target_stage}", force=True)
         return new_key, cleanup
 
     def _marker_for_stage(self, marker: dict[str, object], stage: str) -> dict[str, object]:
