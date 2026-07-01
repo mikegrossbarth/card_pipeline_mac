@@ -7892,13 +7892,42 @@ class CardPipelineApp(tk.Tk):
             self.refresh_incoming_index()
         elif source_stage in {"Incoming", "Working"}:
             self._drop_sheet_from_incoming_index(sheet_name)
-        self.refresh_home(reconcile_accounted=False)
+        self._refresh_home_after_stage_move(sheet_name, source_stage, target_stage)
         self._refresh_table()
         record_performance_event(
             "home.stage_move_refresh",
             perf_start,
             f"sheet={sheet_name} from={source_stage} to={target_stage}",
         )
+
+    def _refresh_home_after_stage_move(self, sheet_name: str, source_stage: str, target_stage: str) -> None:
+        source_key = self._home_sheet_key(source_stage, sheet_name)
+        target_key = self._home_sheet_key(target_stage, sheet_name)
+        target_path = self._sheet_path_for_stage(target_stage, sheet_name)
+
+        self.home_sheet_paths.setdefault(source_stage, {}).pop(sheet_name, None)
+        target_paths = self.home_sheet_paths.setdefault(target_stage, {})
+        if target_path.exists():
+            target_paths.pop(sheet_name, None)
+            self.home_sheet_paths[target_stage] = {sheet_name: target_path, **target_paths}
+
+        summary = self.home_sheet_summaries.pop(source_key, None)
+        if summary is None and target_path.exists():
+            try:
+                summary = self._summarize_home_workbook_cached(target_path)
+            except Exception:
+                summary = None
+        if summary is not None:
+            self.home_sheet_summaries[target_key] = self._enrich_home_seller_payout_summary(
+                target_path,
+                self.home_sheet_markers.get(target_key, {}),
+                dict(summary),
+            )
+
+        self._refresh_home_sheet_list()
+        self._refresh_home_metrics()
+        self.refresh_payouts_tab()
+        self._update_home_sheet_tabs()
 
     def _drop_sheet_from_incoming_index(self, sheet_name: str) -> None:
         target = Path(str(sheet_name or "")).name
