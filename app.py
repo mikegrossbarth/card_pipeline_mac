@@ -10216,6 +10216,32 @@ class CardPipelineApp(tk.Tk):
         self._refresh_table()
         self.review_status.set("Receive/assignment rows cleared.")
 
+    def _clear_received_rows_for_certs(self, marked_certs: set[str]) -> int:
+        if not marked_certs:
+            return 0
+        remaining: list[WorkbookRow] = []
+        new_sources: dict[int, str] = {}
+        new_sheet_sources: dict[int, str] = {}
+        cleared = 0
+        for row in self.review_rows:
+            old_excel_row = row.excel_row
+            if scan_to_cert(row.cert_number) in marked_certs:
+                cleared += 1
+                continue
+            row.excel_row = len(remaining) + 2
+            remaining.append(row)
+            if old_excel_row in self.review_sources:
+                new_sources[row.excel_row] = self.review_sources[old_excel_row]
+            if old_excel_row in self.review_sheet_sources:
+                new_sheet_sources[row.excel_row] = self.review_sheet_sources[old_excel_row]
+        if cleared:
+            self.review_rows = remaining
+            self.review_sources = new_sources
+            self.review_sheet_sources = new_sheet_sources
+            self._cancel_cell_edit()
+            self._refresh_table(schedule_recommendations=False)
+        return cleared
+
     def delete_selected_review_rows(self) -> None:
         tree = self.review_tree
         if hasattr(self, "receive_tree") and self.receive_tree.selection():
@@ -10250,18 +10276,19 @@ class CardPipelineApp(tk.Tk):
         if not paths:
             messagebox.showinfo("No sheets found", "No incoming or working sheets were found to update.")
             return
+        marked_certs: set[str] = set()
         try:
             with shared_lock(CARD_PIPELINE_DIR, "receive-company-sheets", self.lucas_identity):
                 result = mark_received_in_workbooks(paths, certs)
                 errors.extend(result.get("errors") or [])
                 rows_marked = int(result.get("rows_marked") or 0)
                 files_updated = int(result.get("files_updated") or 0)
-                certs_marked = len(result.get("certs_marked") or set())
+                marked_certs = set(result.get("certs_marked") or set())
+                certs_marked = len(marked_certs)
                 company_rows_added = 0
                 company_rows_missing_company = 0
                 inventory_rows_added = 0
                 if rows_marked:
-                    marked_certs = result.get("certs_marked", set())
                     company_rows = [
                         row
                         for row in self.review_rows
@@ -10307,9 +10334,10 @@ class CardPipelineApp(tk.Tk):
         self.refresh_incoming_index()
         self.refresh_working_sheets()
         self.refresh_received_sheets()
+        cleared_receive_rows = self._clear_received_rows_for_certs(marked_certs)
         if rows_marked:
             self.review_status.set(f"Marked {rows_marked} row(s) received across {files_updated} sheet file(s).")
-            self.status_var.set(f"Marked {certs_marked}/{len(certs)} received cert(s) in sheets.")
+            self.status_var.set(f"Marked {certs_marked}/{len(certs)} received cert(s) in sheets; cleared {cleared_receive_rows} receive row(s).")
         else:
             self.review_status.set("No matching cert rows were found in incoming or working sheets.")
             self.status_var.set("No sheet rows marked received.")
@@ -10335,6 +10363,8 @@ class CardPipelineApp(tk.Tk):
             summary_lines.append(f"Inventory rows added: {inventory_rows_added}")
         if company_rows_missing_company:
             summary_lines.append(f"Company pile rows missing Best Company: {company_rows_missing_company}")
+        if cleared_receive_rows:
+            summary_lines.append(f"Cleared receive rows: {cleared_receive_rows}")
         self._append_activity(
             "Receive",
             f"Marked {rows_marked} row(s) received across {files_updated} sheet file(s).",
@@ -10345,6 +10375,7 @@ class CardPipelineApp(tk.Tk):
                 "total_certs": len(certs),
                 "company_rows_added": company_rows_added,
                 "inventory_rows_added": inventory_rows_added,
+                "receive_rows_cleared": cleared_receive_rows,
                 "moved_received": len(moved_received),
                 "warnings": errors[:8],
             },
