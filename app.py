@@ -4776,6 +4776,7 @@ class CardPipelineApp(tk.Tk):
         iid, record = active_selected[0]
         paths = filedialog.askopenfilenames(
             title="Attach Inventory Photo",
+            initialdir=str(self._inventory_photo_picker_initial_dir()),
             filetypes=[
                 ("Image files", "*.jpg *.jpeg *.png *.webp *.heic *.heif"),
                 ("All files", "*.*"),
@@ -9502,6 +9503,16 @@ class CardPipelineApp(tk.Tk):
 
     def _inventory_photo_shared_folder(self) -> Path:
         return INVENTORY_PHOTOS_DIR
+
+    def _inventory_photo_picker_initial_dir(self) -> Path:
+        for folder in (self._inventory_photo_source_folder(), self._inventory_photo_shared_folder(), ROOT):
+            try:
+                folder.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            if folder.exists():
+                return folder
+        return ROOT
 
     def choose_inventory_photo_folder(self) -> None:
         current = self._inventory_photo_source_folder()
