@@ -9726,6 +9726,8 @@ class CardPipelineApp(tk.Tk):
         matched = {key for cert in certs for key in keys_by_cert.get(cert, [])}
         if matched:
             return matched
+        if certs:
+            return set()
         for card in cards:
             if not isinstance(card, dict):
                 continue
