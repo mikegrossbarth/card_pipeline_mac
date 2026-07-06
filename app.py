@@ -406,7 +406,7 @@ COMP_COLUMNS = (
 
 RECEIVE_COLUMNS = (
     "excel_row",
-    "source",
+    "person",
     "sheet_source",
     "cert_number",
     "grader",
@@ -421,6 +421,7 @@ RECEIVE_COLUMNS = (
     "estimated_payout",
     "status",
     "company_pile",
+    "source",
 )
 
 REVIEW_COLUMNS = DISPLAY_COLUMNS
@@ -466,6 +467,7 @@ EDITABLE_COLUMNS = {
 HEADINGS = {
     "excel_row": "Row",
     "source": "Source",
+    "person": "Person",
     "sheet_source": "Sheet Source",
     "cert_number": "Cert #",
     "grader": "Company",
@@ -486,6 +488,7 @@ HEADINGS = {
 COLUMN_WIDTHS = {
     "excel_row": 52,
     "source": 130,
+    "person": 145,
     "sheet_source": 150,
     "cert_number": 110,
     "grader": 86,
@@ -11531,6 +11534,34 @@ class CardPipelineApp(tk.Tk):
         record_performance_event("assignment.apply_comp_rows", perf_start, f"rows={len(row_ids)} updated={updated}")
         return updated
 
+    def _assignment_person_for_row(self, row: WorkbookRow) -> str:
+        selected_working_sheet = getattr(self, "selected_working_sheet", None)
+        source_sheet = (
+            getattr(self, "comp_sheet_sources", {}).get(row.excel_row)
+            or getattr(self, "review_sheet_sources", {}).get(row.excel_row)
+            or getattr(self, "intake_sheet_sources", {}).get(row.excel_row)
+            or getattr(self, "row_sources", {}).get(row.excel_row)
+            or getattr(self, "review_sources", {}).get(row.excel_row)
+            or getattr(self, "intake_sources", {}).get(row.excel_row)
+            or (selected_working_sheet.get() if selected_working_sheet is not None else "")
+            or ""
+        )
+        source_name = Path(str(source_sheet or "")).name
+        if not source_name or source_name == "NO SHEET FOUND":
+            return ""
+        for stage in ("Working", "Incoming", "Received"):
+            marker = self.home_sheet_markers.get(self._home_sheet_key(stage, source_name), {})
+            person = str(marker.get("assigned_person") or "").strip()
+            if person:
+                return person
+        for key, marker in self.home_sheet_markers.items():
+            _stage, name = self._split_home_sheet_key(key)
+            if Path(name).name == source_name:
+                person = str(marker.get("assigned_person") or "").strip()
+                if person:
+                    return person
+        return ""
+
     def _update_assignment_recommendation_progress(self, payload: dict[str, object]) -> None:
         if int(payload.get("job_id") or 0) != self.assignment_recommendation_job:
             return
@@ -11665,6 +11696,8 @@ class CardPipelineApp(tk.Tk):
             return row.excel_row
         if column == "source":
             return sources.get(row.excel_row, "")
+        if column == "person":
+            return self._assignment_person_for_row(row)
         if column == "sheet_source":
             return (sheet_sources or {}).get(row.excel_row, "")
         if column == "cert_number":
