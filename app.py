@@ -782,6 +782,7 @@ class CardPipelineApp(tk.Tk):
         self.inventory_max_var = tk.StringVar()
         self.inventory_date_min_var = tk.StringVar()
         self.inventory_date_max_var = tk.StringVar()
+        self.inventory_missing_photos_var = tk.BooleanVar(value=False)
         self.inventory_bulk_edit_var = tk.BooleanVar(value=False)
         self.inventory_rows: list[dict[str, object]] = []
         self.filtered_inventory_rows: list[dict[str, object]] = []
@@ -1925,7 +1926,7 @@ class CardPipelineApp(tk.Tk):
         self.inventory_bulk_toggle.pack(side=tk.LEFT, padx=(14, 0))
         self._style_inventory_bulk_toggle()
         ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=10, sticky="w", pady=(8, 0))
-        for var in (self.inventory_sport_var, self.inventory_grader_var, self.inventory_year_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var, self.inventory_date_min_var, self.inventory_date_max_var):
+        for var in (self.inventory_sport_var, self.inventory_grader_var, self.inventory_year_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var, self.inventory_date_min_var, self.inventory_date_max_var, self.inventory_missing_photos_var):
             var.trace_add("write", lambda *_args: self._schedule_inventory_filter_refresh())
 
         self.inventory_tree = self._build_home_tree(
@@ -1958,8 +1959,8 @@ class CardPipelineApp(tk.Tk):
         popup.title("Inventory Filters")
         popup.configure(bg=self.colors["bg"])
         popup.transient(self)
-        popup.geometry("520x345")
-        popup.minsize(500, 325)
+        popup.geometry("520x385")
+        popup.minsize(500, 365)
         frame = ttk.Frame(popup, style="App.TFrame", padding=18)
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text="Inventory Filters", style="AppTitle.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 12))
@@ -1985,8 +1986,15 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(frame, text="to", style="AppMuted.TLabel").grid(row=5, column=2, sticky="w", padx=(8, 8), pady=(0, 10))
         ttk.Entry(frame, textvariable=self.inventory_date_max_var, width=12).grid(row=5, column=3, sticky="w", pady=(0, 10))
 
+        ttk.Checkbutton(
+            frame,
+            text="Missing Photos Only",
+            variable=self.inventory_missing_photos_var,
+            style="Panel.TCheckbutton",
+        ).grid(row=6, column=0, columnspan=4, sticky="w", pady=(0, 10))
+
         actions = ttk.Frame(frame, style="App.TFrame")
-        actions.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(16, 0))
+        actions.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(16, 0))
         actions.columnconfigure(1, weight=1)
         ttk.Button(actions, text="Clear Filters", command=self.clear_inventory_filters, style="Soft.TButton").grid(row=0, column=0, sticky="w")
         ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton").grid(row=0, column=2, sticky="e", padx=(0, 8))
@@ -1996,6 +2004,7 @@ class CardPipelineApp(tk.Tk):
     def clear_inventory_filters(self) -> None:
         for var in (self.inventory_sport_var, self.inventory_grader_var, self.inventory_year_var, self.inventory_min_var, self.inventory_max_var, self.inventory_date_min_var, self.inventory_date_max_var):
             var.set("")
+        self.inventory_missing_photos_var.set(False)
         self.refresh_inventory_tab()
 
     def _show_inventory_settings_menu(self, anchor: tk.Widget) -> None:
@@ -5200,6 +5209,7 @@ class CardPipelineApp(tk.Tk):
         max_value = self._money_value(self.inventory_max_var.get()) if hasattr(self, "inventory_max_var") else None
         min_date = self._profit_record_date(self.inventory_date_min_var.get()) if hasattr(self, "inventory_date_min_var") else None
         max_date = self._profit_record_date(self.inventory_date_max_var.get()) if hasattr(self, "inventory_date_max_var") else None
+        missing_photos_only = bool(self.inventory_missing_photos_var.get()) if hasattr(self, "inventory_missing_photos_var") else False
         filtered: list[dict[str, object]] = []
         for record in rows:
             if str(record.get("status") or "").lower() != "active":
@@ -5227,6 +5237,8 @@ class CardPipelineApp(tk.Tk):
                     continue
                 if max_date is not None and (record_date is None or record_date > max_date):
                     continue
+            if missing_photos_only and self._inventory_photo_paths_for_record(record):
+                continue
             filtered.append(record)
         return filtered
 
