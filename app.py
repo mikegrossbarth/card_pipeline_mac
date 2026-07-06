@@ -10246,6 +10246,15 @@ class CardPipelineApp(tk.Tk):
                 return True
         return False
 
+    def _inventory_photo_capture_group_key(self, image: dict[str, object]) -> str:
+        stem = Path(str(image.get("relative_path") or image.get("filename") or "")).stem.strip()
+        if not stem:
+            return ""
+        match = re.match(r"(?i)^(.+?(?:card|group|item)[-_\s]*\d+)(?:[-_\s]+(?:photo|img|shot|p)?[-_\s]*\d+)?$", stem)
+        if not match:
+            return ""
+        return self._compact_match_text(match.group(1))
+
     def _inventory_photo_scan_group_nearby_unmatched(
         self,
         images: list[dict[str, object]],
@@ -10264,9 +10273,12 @@ class CardPipelineApp(tk.Tk):
             entry = photos.get(sha)
             if not isinstance(entry, dict) or str(entry.get("status") or "") != "linked":
                 continue
+            if entry.get("auto_grouped_from"):
+                continue
             anchor_keys = {str(key) for key in (entry.get("linked_keys") or []) if str(key).strip()}
             if not anchor_keys:
                 continue
+            anchor_group_key = self._inventory_photo_capture_group_key(image)
             latest_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
             records_by_key = {str(record.get("inventory_key") or ""): record for record in latest_rows if str(record.get("status") or "").lower() == "active"}
             remaining = MAX_INVENTORY_PHOTOS_PER_CARD
@@ -10292,8 +10304,9 @@ class CardPipelineApp(tk.Tk):
                 candidate_certs = {scan_to_cert(cert) for cert in (candidate_entry.get("certs") or []) if scan_to_cert(cert)}
                 if candidate_certs:
                     continue
+                same_group = bool(anchor_group_key and self._inventory_photo_capture_group_key(candidate) == anchor_group_key)
                 distance = abs(int(candidate.get("modified") or 0) - anchor_modified)
-                if distance > INVENTORY_PHOTO_GROUP_WINDOW_SECONDS:
+                if not same_group and distance > INVENTORY_PHOTO_GROUP_WINDOW_SECONDS:
                     continue
                 candidates.append((distance, abs(candidate_index - index), candidate))
             candidates.sort(key=lambda item: (item[0], item[1]))
