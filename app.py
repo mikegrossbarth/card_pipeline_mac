@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import difflib
 import html
 import queue
 import base64
@@ -9686,15 +9687,22 @@ class CardPipelineApp(tk.Tk):
         for card in cards:
             if not isinstance(card, dict):
                 continue
-            for value in card.values():
+            cert_values = [
+                card.get("cert_number"),
+                card.get("cert"),
+                card.get("certification_number"),
+                card.get("item_id"),
+            ]
+            for value in cert_values:
                 text = str(value or "")
                 direct = scan_to_cert(text)
                 if direct:
                     certs.add(direct)
-                for match in re.findall(r"\b\d{5,12}\b", text):
-                    cert = scan_to_cert(match)
-                    if cert:
-                        certs.add(cert)
+            label_text = str(card.get("label_text") or "")
+            for match in re.findall(r"\b\d{5,12}\b", label_text):
+                cert = scan_to_cert(match)
+                if cert:
+                    certs.add(cert)
         return certs
 
     def _active_inventory_keys_by_cert(self, rows: list[dict[str, object]]) -> dict[str, list[str]]:
@@ -9707,6 +9715,84 @@ class CardPipelineApp(tk.Tk):
             if cert and key:
                 by_cert[cert].append(key)
         return by_cert
+
+    def _inventory_photo_match_keys(
+        self,
+        certs: set[str],
+        cards: list[dict],
+        keys_by_cert: dict[str, list[str]],
+        records_by_key: dict[str, dict[str, object]],
+    ) -> set[str]:
+        matched = {key for cert in certs for key in keys_by_cert.get(cert, [])}
+        if matched:
+            return matched
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            key = self._inventory_photo_best_title_match(card, records_by_key)
+            if key:
+                matched.add(key)
+        return matched
+
+    def _inventory_photo_best_title_match(self, card: dict, records_by_key: dict[str, dict[str, object]]) -> str:
+        card_text = self._inventory_photo_card_match_text(card)
+        if not card_text:
+            return ""
+        card_compact = self._compact_match_text(card_text)
+        player_compact = self._compact_match_text(card.get("player") or card.get("subject") or "")
+        year = str(card.get("year") or "").strip()
+        set_compact = self._compact_match_text(card.get("set") or "")
+        number_compact = self._compact_match_text(card.get("card_number") or "")
+        parallel_compact = self._compact_match_text(card.get("parallel") or card.get("subset") or "")
+        grade = str(card.get("grade") or "").strip()
+        grader = self._compact_match_text(card.get("grading_company") or card.get("grader") or "")
+        scored: list[tuple[float, str]] = []
+        for key, record in records_by_key.items():
+            title = str(record.get("card_title") or record.get("title") or "").strip()
+            if not title:
+                continue
+            title_compact = self._compact_match_text(title)
+            score = difflib.SequenceMatcher(None, card_compact, title_compact).ratio()
+            evidence = 0.0
+            if player_compact and player_compact in title_compact:
+                evidence += 4.0
+            if year and re.search(rf"\b{re.escape(year)}\b", title):
+                evidence += 2.0
+            if set_compact and set_compact in title_compact:
+                evidence += 2.0
+            if number_compact and number_compact in title_compact:
+                evidence += 1.0
+            if parallel_compact and parallel_compact in title_compact:
+                evidence += 1.0
+            if grade and re.search(rf"\b{re.escape(grade)}\b", title):
+                evidence += 0.75
+            if grader and grader in title_compact:
+                evidence += 0.75
+            scored.append((evidence + score, key))
+        if not scored:
+            return ""
+        scored.sort(reverse=True)
+        best_score, best_key = scored[0]
+        second_score = scored[1][0] if len(scored) > 1 else 0.0
+        return best_key if best_score >= 5.5 and best_score >= second_score + 0.75 else ""
+
+    def _inventory_photo_card_match_text(self, card: dict) -> str:
+        values = [
+            card.get("player"),
+            card.get("subject"),
+            card.get("year"),
+            card.get("set"),
+            card.get("card_number"),
+            card.get("parallel"),
+            card.get("subset"),
+            card.get("grade"),
+            card.get("grading_company"),
+            card.get("label_text"),
+        ]
+        return " ".join(str(value or "") for value in values if str(value or "").strip())
+
+    def _compact_match_text(self, value: object) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
 
     def _link_inventory_photo_to_keys(self, keys: set[str], photo_path: Path) -> int:
         if not keys:
@@ -9870,8 +9956,9 @@ class CardPipelineApp(tk.Tk):
                     photos[sha] = existing
                     self._save_inventory_photo_state(state)
                     continue
+                cards = [card for card in existing.get("cards") or [] if isinstance(card, dict)] if isinstance(existing, dict) else []
                 certs = {scan_to_cert(cert) for cert in (existing.get("certs") or []) if scan_to_cert(cert)}
-                if not certs:
+                if not certs or not cards:
                     try:
                         image_b64 = self._inventory_photo_base64(image_path)
                         cards = identify_cards_sync(self.inventory_photo_client, image_b64)
@@ -9879,15 +9966,16 @@ class CardPipelineApp(tk.Tk):
                         scanned += 1
                     except Exception as error:
                         errors.append(f"{image.get('relative_path')}: {error}")
-                        photos[sha] = {**image, "certs": [], "linked_keys": [], "status": "ocr_error", "error": str(error), "last_seen": datetime.now().isoformat(timespec="seconds")}
+                        photos[sha] = {**image, "cards": [], "certs": [], "linked_keys": [], "status": "ocr_error", "error": str(error), "last_seen": datetime.now().isoformat(timespec="seconds")}
                         self._save_inventory_photo_state(state)
                         app_debug_log(f"Inventory photo scan OCR error: {image_label}: {error}")
                         continue
-                matched_keys = {key for cert in certs for key in keys_by_cert.get(cert, [])}
+                matched_keys = self._inventory_photo_match_keys(certs, cards, keys_by_cert, records_by_key)
                 if matched_keys:
                     linked += self._link_inventory_photo_to_keys(matched_keys, image_path)
                 photos[sha] = {
                     **image,
+                    "cards": cards,
                     "certs": sorted(certs),
                     "linked_keys": sorted(matched_keys),
                     "status": "linked" if matched_keys else "no_matching_inventory",
