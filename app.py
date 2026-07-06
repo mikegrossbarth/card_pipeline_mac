@@ -10496,20 +10496,17 @@ class CardPipelineApp(tk.Tk):
                     photos[sha] = existing
                     self._save_inventory_photo_state(state)
                     continue
-                cards = [card for card in existing.get("cards") or [] if isinstance(card, dict)] if isinstance(existing, dict) else []
-                certs = {scan_to_cert(cert) for cert in (existing.get("certs") or []) if scan_to_cert(cert)}
-                if not certs or not cards:
-                    try:
-                        image_b64 = self._inventory_photo_base64(image_path)
-                        cards = identify_cards_sync(self.inventory_photo_client, image_b64)
-                        certs = self._inventory_photo_certs_from_cards(cards)
-                        scanned += 1
-                    except Exception as error:
-                        errors.append(f"{image.get('relative_path')}: {error}")
-                        photos[sha] = {**image, "cards": [], "certs": [], "linked_keys": [], "status": "ocr_error", "error": str(error), "last_seen": datetime.now().isoformat(timespec="seconds")}
-                        self._save_inventory_photo_state(state)
-                        app_debug_log(f"Inventory photo scan OCR error: {image_label}: {error}")
-                        continue
+                try:
+                    image_b64 = self._inventory_photo_base64(image_path)
+                    cards = identify_cards_sync(self.inventory_photo_client, image_b64)
+                    certs = self._inventory_photo_certs_from_cards(cards)
+                    scanned += 1
+                except Exception as error:
+                    errors.append(f"{image.get('relative_path')}: {error}")
+                    photos[sha] = {**image, "cards": [], "certs": [], "linked_keys": [], "status": "ocr_error", "error": str(error), "last_seen": datetime.now().isoformat(timespec="seconds")}
+                    self._save_inventory_photo_state(state)
+                    app_debug_log(f"Inventory photo scan OCR error: {image_label}: {error}")
+                    continue
                 matched_keys = self._inventory_photo_match_keys(certs, cards, keys_by_cert, records_by_key)
                 if matched_keys:
                     linked += self._link_inventory_photo_to_keys(matched_keys, image_path)
