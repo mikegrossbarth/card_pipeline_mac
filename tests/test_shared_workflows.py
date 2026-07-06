@@ -5393,6 +5393,35 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
+    def test_inventory_photo_scan_groups_shortcuts_bracketed_filename_prefix(self) -> None:
+        class PhotoDummy:
+            _compact_match_text = app.CardPipelineApp._compact_match_text
+            _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
+
+        dummy = PhotoDummy()
+        front = {"filename": "[20260706-1226]-Card[1]-[1].jpg"}
+        back = {"filename": "[20260706-1226]-Card[1]-[2].jpg"}
+        next_card = {"filename": "[20260706-1226]-Card[2]-[1].jpg"}
+        titled_front = {"filename": "[20260706-1226]-Card[1]-[1]-Kobe Purple Wave.jpg"}
+        titled_back = {"filename": "[20260706-1226]-Card[1]-[2]-Kobe Purple Wave.jpg"}
+
+        self.assertEqual(
+            dummy._inventory_photo_capture_group_key(front),
+            dummy._inventory_photo_capture_group_key(back),
+        )
+        self.assertEqual(
+            dummy._inventory_photo_capture_group_key(titled_front),
+            dummy._inventory_photo_capture_group_key(titled_back),
+        )
+        self.assertEqual(
+            dummy._inventory_photo_capture_group_key(front),
+            dummy._inventory_photo_capture_group_key(titled_front),
+        )
+        self.assertNotEqual(
+            dummy._inventory_photo_capture_group_key(front),
+            dummy._inventory_photo_capture_group_key(next_card),
+        )
+
     def test_inventory_photo_scan_saves_progress_after_each_photo(self) -> None:
         class PhotoDummy:
             _money_value = app.CardPipelineApp._money_value

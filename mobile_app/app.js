@@ -6,6 +6,8 @@ const state = {
   sellRecord: null,
   people: [],
 };
+const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
+const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
 if (!state.clientId) {
   state.clientId = `mobile-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   localStorage.setItem("lucasMobileClientId", state.clientId);
@@ -619,7 +621,7 @@ function bind() {
   $("installHelp").addEventListener("click", () => alert("On iPhone: Share -> Add to Home Screen."));
   if (state.pin) searchInventory();
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/mobile/sw.js").catch(() => {});
+    navigator.serviceWorker.register(`${APP_BASE}/sw.js`, { scope: `${APP_BASE}/` }).catch(() => {});
   }
 }
 

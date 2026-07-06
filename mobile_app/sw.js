@@ -1,11 +1,14 @@
-const CACHE_NAME = "lucas-mobile-shell-v1";
+const swPath = new URL(self.location.href).pathname;
+const profileMatch = swPath.match(/^\/mobile\/(team|personal)\//);
+const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
+const CACHE_NAME = `lucas-mobile-shell-v2-${profileMatch ? profileMatch[1] : "default"}`;
 const APP_SHELL = [
-  "/mobile",
-  "/mobile/",
-  "/mobile/index.html",
-  "/mobile/styles.css",
-  "/mobile/app.js",
-  "/mobile/manifest.webmanifest",
+  APP_BASE,
+  `${APP_BASE}/`,
+  `${APP_BASE}/index.html`,
+  `${APP_BASE}/styles.css`,
+  `${APP_BASE}/app.js`,
+  `${APP_BASE}/manifest.webmanifest`,
 ];
 
 self.addEventListener("install", (event) => {
@@ -25,7 +28,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
-  if (request.method !== "GET" || !url.pathname.startsWith("/mobile")) {
+  if (request.method !== "GET" || !url.pathname.startsWith(APP_BASE)) {
     return;
   }
   if (url.pathname.startsWith("/mobile/api/")) {

@@ -28,6 +28,10 @@ EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 DEBUG_LOG = DEBUG_DIR / "bridge.log"
 MOBILE_APP_DIR = Path(__file__).resolve().parent.parent / "mobile_app"
+MOBILE_PROFILE_LABELS = {
+    "team": "LUCAS Team",
+    "personal": "LUCAS Personal",
+}
 BRIDGE_LOCAL_ONLY_PATH_PREFIXES = (
     "/command",
     "/status",
@@ -1132,6 +1136,21 @@ class BridgeServer:
                 if not self._request_allowed(parsed.path):
                     self._send_json({"ok": False, "error": "local bridge access only"}, status=403)
                     return
+                mobile_profile = self._mobile_profile(parsed.path)
+                if mobile_profile:
+                    profile_prefix = f"/mobile/{mobile_profile}"
+                    if parsed.path in {profile_prefix, f"{profile_prefix}/"}:
+                        self._send_mobile_index(mobile_profile)
+                        return
+                    relative = parsed.path.removeprefix(f"{profile_prefix}/") or "index.html"
+                    if relative == "index.html":
+                        self._send_mobile_index(mobile_profile)
+                        return
+                    if relative == "manifest.webmanifest":
+                        self._send_mobile_manifest(mobile_profile)
+                        return
+                    self._send_static(MOBILE_APP_DIR / relative)
+                    return
                 if parsed.path in {"/mobile", "/mobile/"}:
                     self._send_static(MOBILE_APP_DIR / "index.html")
                     return
@@ -1245,6 +1264,48 @@ class BridgeServer:
                     return self._client_is_loopback()
                 return True
 
+            def _mobile_profile(self, path: str) -> str:
+                match = re.match(r"^/mobile/(team|personal)(?:/|$)", path)
+                return match.group(1) if match else ""
+
+            def _send_mobile_index(self, profile: str) -> None:
+                label = MOBILE_PROFILE_LABELS.get(profile, "LUCAS")
+                base = f"/mobile/{profile}"
+                try:
+                    html = (MOBILE_APP_DIR / "index.html").read_text(encoding="utf-8")
+                except OSError:
+                    self._send_json({"ok": False, "error": "not found"}, status=404)
+                    return
+                html = html.replace('content="LUCAS"', f'content="{label}"')
+                html = html.replace("<title>LUCAS Mobile</title>", f"<title>{label} Mobile</title>")
+                html = html.replace('href="/mobile/manifest.webmanifest"', f'href="{base}/manifest.webmanifest"')
+                html = html.replace('href="/mobile/styles.css"', f'href="{base}/styles.css"')
+                html = html.replace('src="/mobile/app.js"', f'src="{base}/app.js"')
+                self._send_bytes(html.encode("utf-8"), "text/html; charset=utf-8")
+
+            def _send_mobile_manifest(self, profile: str) -> None:
+                label = MOBILE_PROFILE_LABELS.get(profile, "LUCAS")
+                payload = {
+                    "name": f"{label} Inventory",
+                    "short_name": label,
+                    "start_url": f"/mobile/{profile}",
+                    "scope": f"/mobile/{profile}/",
+                    "display": "standalone",
+                    "background_color": "#101820",
+                    "theme_color": "#101820",
+                    "description": f"{label} inventory companion.",
+                    "icons": [],
+                }
+                self._send_json(payload)
+
+            def _send_bytes(self, body: bytes, content_type: str) -> None:
+                self.send_response(200)
+                self.send_header("content-type", content_type)
+                self.send_header("cache-control", "no-cache")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             def _send_static(self, path: Path) -> None:
                 try:
                     root = MOBILE_APP_DIR.resolve()
@@ -1257,12 +1318,7 @@ class BridgeServer:
                     self._send_json({"ok": False, "error": "not found"}, status=404)
                     return
                 content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
-                self.send_response(200)
-                self.send_header("content-type", content_type)
-                self.send_header("cache-control", "no-cache")
-                self.send_header("content-length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_bytes(body, content_type)
 
             def log_message(self, format, *args):
                 return

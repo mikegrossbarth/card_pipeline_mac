@@ -847,7 +847,6 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(self.bridge_status_text)
         self.after(100, self._start_startup_refresh)
         self.after(5 * 60 * 1000, self._weekly_company_sheet_timer)
-        self.after(30 * 1000, self._schedule_inventory_photo_scan)
         record_performance_event("app.init", perf_start, f"pipeline={CARD_PIPELINE_DIR}", force=True)
 
     def _on_close(self) -> None:
@@ -2398,7 +2397,8 @@ class CardPipelineApp(tk.Tk):
 
     def _mobile_app_url(self) -> str:
         host = mobile_app_host(getattr(self, "app_settings", {}))
-        return f"http://{host}:{self.bridge.port}/mobile"
+        profile = "personal" if self._is_personal_lucas() else "team"
+        return f"http://{host}:{self.bridge.port}/mobile/{profile}"
 
     def open_mobile_connection_helper(self) -> None:
         url = self._mobile_app_url()
@@ -3325,6 +3325,7 @@ class CardPipelineApp(tk.Tk):
         return normalized
 
     def _raw_inventory_card_dialog(self) -> dict[str, object] | None:
+        personal_inventory = self._is_personal_lucas()
         person_var = tk.StringVar(value=self.inventory_person_var.get().strip() if hasattr(self, "inventory_person_var") else "")
         cert_var = tk.StringVar()
         grader_var = tk.StringVar()
@@ -3371,7 +3372,8 @@ class CardPipelineApp(tk.Tk):
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 10), pady=(0, 8))
             ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=1, columnspan=3, sticky="ew", pady=(0, 8))
 
-        status_var = tk.StringVar(value="Person, card description, and purchase are required. Cert and grader are optional.")
+        required_text = "Card description and purchase are required. Person defaults to your profile." if personal_inventory else "Person, card description, and purchase are required. Cert and grader are optional."
+        status_var = tk.StringVar(value=required_text)
         status_row = 1 + len(fields)
         ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=status_row, column=0, columnspan=4, sticky="w", pady=(4, 14))
 
@@ -3388,6 +3390,8 @@ class CardPipelineApp(tk.Tk):
             person = person_var.get().strip()
             title = title_var.get().strip()
             purchase = self._money_value(purchase_var.get())
+            if not person and personal_inventory:
+                person = str(self.lucas_identity.get("display_name") or "").strip() or "Personal"
             if not person:
                 status_var.set("Enter a person.")
                 return
@@ -3467,6 +3471,10 @@ class CardPipelineApp(tk.Tk):
         card_id = record.get("cert_number") or record.get("item_id") or "manual card"
         self.status_var.set(f"Added inventory card {card_id}.")
         self._append_activity("Inventory Add", f"Added inventory card {card_id}.", {"item_id": record.get("item_id"), "cert_number": record.get("cert_number"), "person": record.get("assigned_person"), "card": record.get("card_title")})
+
+    def _is_personal_lucas(self) -> bool:
+        root_text = str(CARD_PIPELINE_DIR).lower()
+        return "lucas_personal" in root_text or "personal lucas" in root_text
 
     def _mark_inventory_records_moved_to_company(self, moved_keys: set[str]) -> None:
         if not moved_keys:
@@ -4693,10 +4701,22 @@ class CardPipelineApp(tk.Tk):
         if not record:
             return []
         paths: list[Path] = []
+        seen: set[str] = set()
         for value in record.get("photo_paths") or []:
             path = self._resolve_inventory_photo_path(value)
-            if path.exists():
-                paths.append(path)
+            if not path.exists():
+                continue
+            try:
+                key = self._inventory_photo_file_hash(path)
+            except Exception:
+                try:
+                    key = str(path.resolve())
+                except Exception:
+                    key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            paths.append(path)
         return paths
 
     def _open_local_path(self, path: Path) -> bool:
@@ -4971,6 +4991,41 @@ class CardPipelineApp(tk.Tk):
         self.wait_window(popup)
         return selected_paths
 
+    def _inventory_photo_group_key_for_path(self, path: Path) -> str:
+        return self._inventory_photo_capture_group_key({"filename": path.name, "relative_path": path.name})
+
+    def _expand_inventory_photo_group_selection(self, selected_paths: list[Path], max_count: int) -> list[Path]:
+        if not selected_paths or max_count <= 0:
+            return []
+        selected_keys = {self._inventory_photo_group_key_for_path(path) for path in selected_paths}
+        selected_keys.discard("")
+        expanded: list[Path] = []
+        seen: set[str] = set()
+
+        def add_path(path: Path) -> None:
+            if len(expanded) >= max_count:
+                return
+            key = str(path)
+            try:
+                key = str(path.resolve())
+            except Exception:
+                pass
+            if key in seen:
+                return
+            seen.add(key)
+            expanded.append(path)
+
+        for path in selected_paths:
+            add_path(Path(path))
+        if not selected_keys or len(expanded) >= max_count:
+            return expanded
+        for path in self._inventory_unattached_photo_paths():
+            if len(expanded) >= max_count:
+                break
+            if self._inventory_photo_group_key_for_path(path) in selected_keys:
+                add_path(path)
+        return expanded
+
     def attach_photo_to_selected_inventory_row(self) -> None:
         if not hasattr(self, "inventory_tree"):
             return
@@ -4989,6 +5044,8 @@ class CardPipelineApp(tk.Tk):
         paths = self._choose_unattached_inventory_photos(max_count=remaining_slots)
         if not paths:
             return
+        selected_count = len(paths)
+        paths = self._expand_inventory_photo_group_selection(paths, max_count=remaining_slots)
         copied_paths: list[Path] = []
         errors: list[str] = []
         for raw_path in paths:
@@ -5020,7 +5077,8 @@ class CardPipelineApp(tk.Tk):
             normalized = self._normalize_inventory_record(updated_record)
             self.inventory_tree_records[iid] = normalized
             self._refresh_inventory_tree_row(iid, normalized)
-            self.inventory_status_var.set(f"Attached {added} photo(s) to inventory row.")
+            grouped_text = f" including {len(paths) - selected_count} grouped photo(s)" if len(paths) > selected_count else ""
+            self.inventory_status_var.set(f"Attached {added} photo(s) to inventory row{grouped_text}.")
             self.status_var.set(f"Attached {added} inventory photo(s).")
             self._append_activity(
                 "Inventory Photo Attach",
@@ -9878,7 +9936,13 @@ class CardPipelineApp(tk.Tk):
         self.inventory_status_var.set(f"Inventory photo folder set to {folder}. Found {count} photo file(s).")
         self.status_var.set(f"Inventory photo folder set to {folder}.")
 
-    def _prepare_inventory_photo_scan_folder(self, manual: bool = False) -> Path | None:
+    def _inventory_photo_status(self, message: str, background: bool = False) -> None:
+        if background:
+            self.events.put(("inventory_photo_status", message))
+            return
+        self.inventory_status_var.set(message)
+
+    def _prepare_inventory_photo_scan_folder(self, manual: bool = False, background: bool = False) -> Path | None:
         source = self._inventory_photo_source_folder()
         shared = self._inventory_photo_shared_folder()
         if not source.exists():
@@ -9891,7 +9955,7 @@ class CardPipelineApp(tk.Tk):
                 return shared
             if manual:
                 messagebox.showerror("Photo folder missing", f"Inventory photo folder does not exist:\n{source}")
-            self.inventory_status_var.set(f"Inventory photo folder does not exist: {source}")
+            self._inventory_photo_status(f"Inventory photo folder does not exist: {source}", background=background)
             return None
         try:
             source_resolved = source.resolve()
@@ -9908,8 +9972,9 @@ class CardPipelineApp(tk.Tk):
             copied = 0
             skipped = 0
             if not total:
-                self.inventory_status_var.set(f"No inventory photos found in {source}. Scanning {shared}...")
-                self.update_idletasks()
+                self._inventory_photo_status(f"No inventory photos found in {source}. Scanning {shared}...", background=background)
+                if not background:
+                    self.update_idletasks()
             for index, source_path in enumerate(source_images, start=1):
                 try:
                     relative = source_path.relative_to(source)
@@ -9919,9 +9984,12 @@ class CardPipelineApp(tk.Tk):
                     relative = Path(source_path.name)
                 destination = shared / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                self.inventory_status_var.set(f"Mirroring inventory photos: {index}/{total} {source_path.name}")
-                self.status_var.set(f"Mirroring inventory photos: {index}/{total}")
-                self.update_idletasks()
+                self._inventory_photo_status(f"Mirroring inventory photos: {index}/{total} {source_path.name}", background=background)
+                if background:
+                    self.events.put(("status", f"Mirroring inventory photos: {index}/{total}"))
+                else:
+                    self.status_var.set(f"Mirroring inventory photos: {index}/{total}")
+                    self.update_idletasks()
                 if destination.exists():
                     try:
                         if destination.stat().st_size == source_path.stat().st_size:
@@ -9931,14 +9999,17 @@ class CardPipelineApp(tk.Tk):
                         pass
                 shutil.copy2(source_path, destination)
                 copied += 1
-            self.inventory_status_var.set(f"Mirrored {copied} photo(s) to shared folder; skipped {skipped}. Scanning {shared}...")
-            self.status_var.set(f"Mirrored inventory photos to {shared}.")
-            self.update_idletasks()
+            self._inventory_photo_status(f"Mirrored {copied} photo(s) to shared folder; skipped {skipped}. Scanning {shared}...", background=background)
+            if background:
+                self.events.put(("status", f"Mirrored inventory photos to {shared}."))
+            else:
+                self.status_var.set(f"Mirrored inventory photos to {shared}.")
+                self.update_idletasks()
             return shared
         except Exception as error:
             if manual:
                 messagebox.showerror("Mirror failed", f"Could not mirror inventory photos:\n{error}")
-            self.inventory_status_var.set(f"Inventory photo mirror failed: {error}")
+            self._inventory_photo_status(f"Inventory photo mirror failed: {error}", background=background)
             return None
 
     def mirror_inventory_photos_to_shared(self) -> None:
@@ -10250,7 +10321,7 @@ class CardPipelineApp(tk.Tk):
         stem = Path(str(image.get("relative_path") or image.get("filename") or "")).stem.strip()
         if not stem:
             return ""
-        match = re.match(r"(?i)^(.+?(?:card|group|item)[-_\s]*\d+)(?:[-_\s]+(?:photo|img|shot|p)?[-_\s]*\d+)?$", stem)
+        match = re.match(r"(?i)^(.+?(?:card|group|item)[-_\s\[]*\d+\]?)(?:[-_\s\[]+(?:photo|img|shot|p)?[-_\s\[]*\d+\]?)*(?:[-_\s]+.*)?$", stem)
         if not match:
             return ""
         return self._compact_match_text(match.group(1))
@@ -10337,6 +10408,11 @@ class CardPipelineApp(tk.Tk):
             if manual:
                 messagebox.showinfo("Scan running", "Inventory photo scan is already running.")
             return
+        if not manual and folder is None:
+            self.inventory_status_var.set("Inventory photo background scan queued.")
+            self.inventory_photo_worker = threading.Thread(target=self._inventory_photo_background_scan_worker, daemon=True)
+            self.inventory_photo_worker.start()
+            return
         folder = Path(folder).expanduser() if folder else self._prepare_inventory_photo_scan_folder(manual=manual)
         if not folder:
             return
@@ -10353,14 +10429,31 @@ class CardPipelineApp(tk.Tk):
             return
         self.inventory_photo_client = make_photo_ocr_client(api_key)
         self.inventory_status_var.set(f"Scanning inventory photos in {folder}...")
-        self.inventory_photo_worker = threading.Thread(target=self._inventory_photo_scan_worker, args=(folder,), daemon=True)
+        self.inventory_photo_worker = threading.Thread(target=self._inventory_photo_scan_worker, args=(folder, False), daemon=True)
         self.inventory_photo_worker.start()
 
-    def _schedule_inventory_photo_scan(self) -> None:
-        self.scan_inventory_photos(manual=False)
-        self.inventory_photo_scan_after_id = self.after(3 * 60 * 60 * 1000, self._schedule_inventory_photo_scan)
+    def _inventory_photo_background_scan_worker(self) -> None:
+        folder = self._prepare_inventory_photo_scan_folder(manual=False, background=True)
+        if not folder:
+            return
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except Exception as error:
+            self.events.put(("inventory_photo_status", f"Inventory photo scan unavailable: {error}"))
+            return
+        if genai is None or identify_cards_sync is None:
+            self.events.put(("inventory_photo_status", "Inventory photo scan unavailable: missing photo OCR dependencies."))
+            return
+        self._load_photo_env()
+        api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+        if not api_key:
+            self.events.put(("inventory_photo_status", "Inventory photo scan unavailable: missing GOOGLE_API_KEY."))
+            return
+        self.inventory_photo_client = make_photo_ocr_client(api_key)
+        self.events.put(("inventory_photo_status", f"Inventory photo background scan started in {folder}."))
+        self._inventory_photo_scan_worker(folder, True)
 
-    def _inventory_photo_scan_worker(self, folder: Path) -> None:
+    def _inventory_photo_scan_worker(self, folder: Path, background: bool = False) -> None:
         started = time.perf_counter()
         linked = 0
         scanned = 0
@@ -10372,7 +10465,8 @@ class CardPipelineApp(tk.Tk):
         try:
             images = self._inventory_photo_files(folder)
             total = len(images)
-            self.events.put(("inventory_photo_status", f"Inventory photo scan starting in {folder}: 0/{total} file(s)."))
+            if not background:
+                self.events.put(("inventory_photo_status", f"Inventory photo scan starting in {folder}: 0/{total} file(s)."))
             current_hashes = {str(image.get("sha256") or "") for image in images}
             for sha, record in list(photos.items()):
                 if sha and sha not in current_hashes and isinstance(record, dict) and not record.get("removed_at"):
@@ -10381,10 +10475,14 @@ class CardPipelineApp(tk.Tk):
             rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
             keys_by_cert = self._active_inventory_keys_by_cert(rows)
             records_by_key = {str(record.get("inventory_key") or ""): record for record in rows if str(record.get("status") or "").lower() == "active"}
+            last_background_status = 0.0
             for index, image in enumerate(images, start=1):
                 image_label = str(image.get("relative_path") or image.get("filename") or "photo")
                 status_message = f"Inventory photo scan: {index}/{total} {image_label}"
-                self.events.put(("inventory_photo_status", status_message))
+                now = time.monotonic()
+                if not background or index == total or now - last_background_status >= 15:
+                    self.events.put(("inventory_photo_status", status_message if not background else f"Inventory photo background scan: {index}/{total}"))
+                    last_background_status = now
                 app_debug_log(status_message)
                 sha = str(image.get("sha256") or "")
                 if not sha:
@@ -12663,6 +12761,8 @@ class CardPipelineApp(tk.Tk):
                     kind, payload = event
                     if kind == "photo_rows":
                         self._append_rows(payload)
+                    elif kind == "status":
+                        self.status_var.set(str(payload))
                     elif kind == "photo_status":
                         self.photo_status.set(str(payload))
                         self.status_var.set(str(payload))
