@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import mimetypes
 import os
 import re
@@ -27,6 +28,15 @@ EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 DEBUG_LOG = DEBUG_DIR / "bridge.log"
 MOBILE_APP_DIR = Path(__file__).resolve().parent.parent / "mobile_app"
+BRIDGE_LOCAL_ONLY_PATH_PREFIXES = (
+    "/command",
+    "/status",
+    "/ack",
+    "/result/cardladder",
+    "/ocr/cardladder",
+    "/finish/cardladder",
+    "/source/google-keep",
+)
 COMP_STRATEGY_AVERAGE = "average_last_5"
 COMP_STRATEGY_HIGH = "highest_last_5"
 COMP_STRATEGY_LOW = "lowest_last_5"
@@ -40,6 +50,31 @@ COMP_STRATEGY_LABELS = {
 _CY_ADAPTER: CYMacOSAdapter | None = None
 _CY_ADAPTER_LOCK = threading.Lock()
 _CY_LOOKUP_LOCK = threading.Lock()
+
+
+def is_loopback_address(value: str) -> bool:
+    host = str(value or "").strip().lower()
+    if host in {"localhost", "ip6-localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def request_origin_allowed(origin: str, host_header: str) -> bool:
+    origin = str(origin or "").strip()
+    if not origin:
+        return True
+    parsed = urlparse(origin)
+    if parsed.scheme == "chrome-extension":
+        return True
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    request_host = str(host_header or "").strip().lower()
+    if parsed.netloc.lower() == request_host:
+        return True
+    return is_loopback_address(parsed.hostname or "")
 
 
 def fill_missing_category_from_title(row: WorkbookRow) -> None:
@@ -1072,10 +1107,11 @@ def parse_formatted_comps(text: str) -> list[dict]:
 
 
 class BridgeServer:
-    def __init__(self, state: BridgeState, host: str = "0.0.0.0", port: int = 8765) -> None:
+    def __init__(self, state: BridgeState, host: str = "0.0.0.0", port: int = 8765, allow_port_fallback: bool | None = None) -> None:
         self.state = state
         self.host = host
         self.port = port
+        self.allow_port_fallback = bool(allow_port_fallback) if allow_port_fallback is not None else os.environ.get("LUCAS_ALLOW_BRIDGE_PORT_FALLBACK", "").strip().lower() in {"1", "true", "yes"}
         self.httpd: ThreadingHTTPServer | None = None
         self.thread: threading.Thread | None = None
         self.started = False
@@ -1086,10 +1122,16 @@ class BridgeServer:
 
         class Handler(BaseHTTPRequestHandler):
             def do_OPTIONS(self):
+                if not self._origin_allowed():
+                    self._send_json({"ok": False, "error": "origin not allowed"}, status=403)
+                    return
                 self._send_json({})
 
             def do_GET(self):
                 parsed = urlparse(self.path)
+                if not self._request_allowed(parsed.path):
+                    self._send_json({"ok": False, "error": "local bridge access only"}, status=403)
+                    return
                 if parsed.path in {"/mobile", "/mobile/"}:
                     self._send_static(MOBILE_APP_DIR / "index.html")
                     return
@@ -1119,50 +1161,54 @@ class BridgeServer:
                 self._send_json({"ok": True, "service": "comp-orchestrator"})
 
             def do_POST(self):
+                parsed = urlparse(self.path)
+                if not self._request_allowed(parsed.path):
+                    self._send_json({"ok": False, "error": "local bridge access only"}, status=403)
+                    return
                 payload = self._read_json()
-                if self.path.startswith("/mobile/api/inventory/search"):
+                if parsed.path.startswith("/mobile/api/inventory/search"):
                     self._send_json(state.search_mobile_inventory(payload))
                     return
-                if self.path.startswith("/mobile/api/inventory/add"):
+                if parsed.path.startswith("/mobile/api/inventory/add"):
                     self._send_json(state.add_mobile_inventory(payload))
                     return
-                if self.path.startswith("/mobile/api/inventory/sold"):
+                if parsed.path.startswith("/mobile/api/inventory/sold"):
                     self._send_json(state.mark_mobile_inventory_sold(payload))
                     return
-                if self.path.startswith("/mobile/api/card/identify"):
+                if parsed.path.startswith("/mobile/api/card/identify"):
                     self._send_json(state.identify_mobile_card(payload))
                     return
-                if self.path.startswith("/mobile/api/profit/summary"):
+                if parsed.path.startswith("/mobile/api/profit/summary"):
                     self._send_json(state.get_mobile_profit_summary(payload))
                     return
-                if self.path.startswith("/mobile/api/expenses/add"):
+                if parsed.path.startswith("/mobile/api/expenses/add"):
                     self._send_json(state.add_mobile_expense(payload))
                     return
-                if self.path.startswith("/mobile/api/payouts"):
+                if parsed.path.startswith("/mobile/api/payouts"):
                     self._send_json(state.get_mobile_payouts(payload))
                     return
-                if self.path.startswith("/mobile/api/sync/queue"):
+                if parsed.path.startswith("/mobile/api/sync/queue"):
                     self._send_json(state.sync_mobile_queue(payload))
                     return
-                if self.path.startswith("/ack"):
+                if parsed.path.startswith("/ack"):
                     state.acknowledge_command(int(payload.get("id") or 0))
                     self._send_json({"ok": True})
                     return
-                if self.path.startswith("/result/cardladder"):
+                if parsed.path.startswith("/result/cardladder"):
                     state.post_cardladder_result(payload)
                     self._send_json({"ok": True})
                     return
-                if self.path.startswith("/ocr/cardladder"):
+                if parsed.path.startswith("/ocr/cardladder"):
                     try:
                         self._send_json(extract_cl_value_from_data_url(str(payload.get("image") or "")))
                     except Exception as error:
                         self._send_json({"ok": False, "value": None, "error": str(error)})
                     return
-                if self.path.startswith("/finish/cardladder"):
+                if parsed.path.startswith("/finish/cardladder"):
                     state.finish_cardladder(payload)
                     self._send_json({"ok": True})
                     return
-                if self.path.startswith("/source/google-keep"):
+                if parsed.path.startswith("/source/google-keep"):
                     self._send_json(state.post_google_keep_note(payload))
                     return
                 self._send_json({"ok": False, "error": "unknown endpoint"}, status=404)
@@ -1176,12 +1222,28 @@ class BridgeServer:
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(status)
                 self.send_header("content-type", "application/json")
-                self.send_header("access-control-allow-origin", "*")
+                origin = self.headers.get("origin", "")
+                if origin and self._origin_allowed():
+                    self.send_header("access-control-allow-origin", origin)
+                    self.send_header("vary", "Origin")
                 self.send_header("access-control-allow-methods", "GET,POST,OPTIONS")
                 self.send_header("access-control-allow-headers", "content-type")
                 self.send_header("content-length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+
+            def _origin_allowed(self) -> bool:
+                return request_origin_allowed(self.headers.get("origin", ""), self.headers.get("host", ""))
+
+            def _client_is_loopback(self) -> bool:
+                return is_loopback_address(str(self.client_address[0] if self.client_address else ""))
+
+            def _request_allowed(self, path: str) -> bool:
+                if not self._origin_allowed():
+                    return False
+                if any(path.startswith(prefix) for prefix in BRIDGE_LOCAL_ONLY_PATH_PREFIXES):
+                    return self._client_is_loopback()
+                return True
 
             def _send_static(self, path: Path) -> None:
                 try:
@@ -1209,7 +1271,8 @@ class BridgeServer:
             allow_reuse_address = True
 
         last_error = ""
-        for candidate_port in range(self.port, self.port + 8):
+        port_count = 8 if self.allow_port_fallback else 1
+        for candidate_port in range(self.port, self.port + port_count):
             if self._port_has_listener(candidate_port):
                 last_error = f"{self.host}:{candidate_port} already has a listener"
                 continue

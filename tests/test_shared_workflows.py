@@ -1891,6 +1891,43 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIsNotNone(current["command"])
         self.assertEqual(current["command"]["type"], "RUN_ALL_COMPS")
 
+    def test_mobile_pin_is_reused_from_settings(self) -> None:
+        settings = {"mobile_pin": "346200"}
+
+        self.assertEqual(app.ensure_mobile_pin(settings), "346200")
+        self.assertEqual(settings["mobile_pin"], "346200")
+
+    def test_mobile_host_prefers_configured_stable_host(self) -> None:
+        with patch.dict(app.os.environ, {"LUCAS_MOBILE_HOST": "Lucas-Mac.local"}):
+            self.assertEqual(app.mobile_app_host({"mobile_host": "192.168.1.246"}), "Lucas-Mac.local")
+
+    def test_mobile_host_uses_macos_local_hostname_before_lan_ip(self) -> None:
+        result = types.SimpleNamespace(stdout="Michaels-MacBook\n")
+        with patch.object(app.subprocess, "run", return_value=result):
+            self.assertEqual(app.mobile_app_host({}), "Michaels-MacBook.local")
+
+    def test_bridge_keeps_default_mobile_port_stable(self) -> None:
+        bridge = app.BridgeServer(app.BridgeState())
+
+        self.assertEqual(bridge.port, 8765)
+        self.assertFalse(bridge.allow_port_fallback)
+
+    def test_bridge_rejects_untrusted_browser_origin(self) -> None:
+        self.assertFalse(bridge_server.request_origin_allowed("https://example.com", "127.0.0.1:8765"))
+        self.assertFalse(bridge_server.request_origin_allowed("file://local", "127.0.0.1:8765"))
+
+    def test_bridge_allows_same_origin_and_extension_origins(self) -> None:
+        self.assertTrue(bridge_server.request_origin_allowed("", "192.168.1.246:8765"))
+        self.assertTrue(bridge_server.request_origin_allowed("http://192.168.1.246:8765", "192.168.1.246:8765"))
+        self.assertTrue(bridge_server.request_origin_allowed("chrome-extension://test-extension", "127.0.0.1:8765"))
+
+    def test_bridge_local_only_detection_blocks_lan_clients(self) -> None:
+        self.assertTrue(bridge_server.is_loopback_address("127.0.0.1"))
+        self.assertTrue(bridge_server.is_loopback_address("::1"))
+        self.assertFalse(bridge_server.is_loopback_address("192.168.1.246"))
+        self.assertIn("/status", bridge_server.BRIDGE_LOCAL_ONLY_PATH_PREFIXES)
+        self.assertIn("/result/cardladder", bridge_server.BRIDGE_LOCAL_ONLY_PATH_PREFIXES)
+
     def test_delete_selected_comp_rows_rekeys_sources_for_save_back(self) -> None:
         class FakeTree:
             def selection(self) -> tuple[str, ...]:
@@ -2281,6 +2318,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_unassigned_players = app.CardPipelineApp._save_unassigned_players
             _auto_categorize_unassigned_players = app.CardPipelineApp._auto_categorize_unassigned_players
             _search_unassigned_player_category = app.CardPipelineApp._search_unassigned_player_category
+            _local_unassigned_player_category = app.CardPipelineApp._local_unassigned_player_category
             _category_research_text = app.CardPipelineApp._category_research_text
             _infer_category_from_web_text = app.CardPipelineApp._infer_category_from_web_text
             _write_player_category_override = app.CardPipelineApp._write_player_category_override
@@ -2313,6 +2351,45 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(result["resolved"], 1)
                 self.assertEqual(overrides["players"]["Example Player"]["sport"], "basketball")
                 self.assertEqual(remaining, {})
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.UNASSIGNED_PLAYERS_PATH = old_unassigned
+                app.PLAYER_OVERRIDES_PATH = old_overrides
+
+    def test_unassigned_auto_categorize_uses_card_title_before_web(self) -> None:
+        class Dummy:
+            _load_unassigned_players = app.CardPipelineApp._load_unassigned_players
+            _save_unassigned_players = app.CardPipelineApp._save_unassigned_players
+            _auto_categorize_unassigned_players = app.CardPipelineApp._auto_categorize_unassigned_players
+            _search_unassigned_player_category = app.CardPipelineApp._search_unassigned_player_category
+            _local_unassigned_player_category = app.CardPipelineApp._local_unassigned_player_category
+            _category_research_text = app.CardPipelineApp._category_research_text
+            _infer_category_from_web_text = app.CardPipelineApp._infer_category_from_web_text
+            _write_player_category_override = app.CardPipelineApp._write_player_category_override
+
+            def _wikipedia_search_text(self, _player: str) -> str:
+                raise AssertionError("web search should not run when card title resolves locally")
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_unassigned = app.UNASSIGNED_PLAYERS_PATH
+            old_overrides = app.PLAYER_OVERRIDES_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.UNASSIGNED_PLAYERS_PATH = Path(tmp) / "unassigned_players.json"
+            app.PLAYER_OVERRIDES_PATH = Path(tmp) / "assignment_player_overrides.json"
+            dummy = Dummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            try:
+                dummy._save_unassigned_players({
+                    "yusniel diaz": {
+                        "player": "Yusniel Diaz",
+                        "last_title": "2023 Topps Chrome Platinum Anniversary Autographs Yd Yusniel Diaz PSA 9",
+                    }
+                })
+                result = dummy._auto_categorize_unassigned_players()
+                overrides = json.loads(app.PLAYER_OVERRIDES_PATH.read_text(encoding="utf-8"))
+                self.assertEqual(result["resolved"], 1)
+                self.assertEqual(overrides["players"]["Yusniel Diaz"]["sport"], "baseball")
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.UNASSIGNED_PLAYERS_PATH = old_unassigned
@@ -2935,6 +3012,38 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.ARCHIVED_SHEETS_DIR = old_archive
                 app.SHEET_MARKERS_PATH = old_markers
 
+    def test_deleted_sheet_file_archives_for_two_weeks(self) -> None:
+        class DeleteArchiveDummy:
+            _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
+            _unique_deleted_archive_path = app.CardPipelineApp._unique_deleted_archive_path
+            _archive_deleted_file = app.CardPipelineApp._archive_deleted_file
+            _purge_expired_deleted_archive = app.CardPipelineApp._purge_expired_deleted_archive
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sheet = root / "WORKING SHEETS" / "Lot A.xlsx"
+            sheet.parent.mkdir(parents=True)
+            sheet.write_text("placeholder", encoding="utf-8")
+            old_deleted_archive = app.DELETED_ARCHIVE_DIR
+            old_deleted_sheets = app.DELETED_SHEETS_DIR
+            app.DELETED_ARCHIVE_DIR = root / "DELETED ARCHIVE"
+            app.DELETED_SHEETS_DIR = app.DELETED_ARCHIVE_DIR / "SHEETS"
+            dummy = DeleteArchiveDummy()
+            try:
+                archive_path = dummy._archive_deleted_file(sheet, app.DELETED_SHEETS_DIR, "home_sheet_deleted", {"stage": "Working"})
+                metadata_path = archive_path.with_name(f"{archive_path.name}.archive.json")
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+                self.assertFalse(sheet.exists())
+                self.assertTrue(archive_path.exists())
+                self.assertEqual(archive_path.parent.parent, app.DELETED_SHEETS_DIR)
+                self.assertEqual(metadata["original_path"], str(sheet))
+                self.assertEqual(metadata["reason"], "home_sheet_deleted")
+                self.assertEqual(metadata["retention_days"], 14)
+            finally:
+                app.DELETED_ARCHIVE_DIR = old_deleted_archive
+                app.DELETED_SHEETS_DIR = old_deleted_sheets
+
     def test_team_payout_uses_sold_profit_not_unsold_estimated_profit(self) -> None:
         class PayoutDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
@@ -3129,6 +3238,19 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.COMPANY_SHEETS_DIR = old_company
                 app.PROFIT_LEDGER_PATH = old_ledger
                 app.INVENTORY_LEDGER_PATH = old_inventory_ledger
+
+    def test_received_sheet_move_requires_second_cleanup_confirmation(self) -> None:
+        class MoveConfirmDummy:
+            _confirm_home_stage_move = app.CardPipelineApp._confirm_home_stage_move
+
+        dummy = MoveConfirmDummy()
+        with patch.object(app.messagebox, "askyesno", side_effect=[True, False]) as askyesno:
+            self.assertFalse(dummy._confirm_home_stage_move("Received", "Incoming", "Lot A.xlsx"))
+        self.assertEqual(askyesno.call_count, 2)
+
+        with patch.object(app.messagebox, "askyesno", return_value=True) as askyesno:
+            self.assertTrue(dummy._confirm_home_stage_move("Incoming", "Working", "Lot A.xlsx"))
+        self.assertEqual(askyesno.call_count, 1)
 
     def test_profit_sales_are_deduped_and_delta_is_recorded(self) -> None:
         class ProfitDummy:
@@ -3632,6 +3754,92 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         dummy.inventory_search_var = FieldVar("hidden sold")
         self.assertEqual(dummy._filtered_inventory_records(rows), [])
+
+    def test_inventory_filter_applies_date_min_and_max(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+
+        dummy = InventoryDummy()
+        dummy.inventory_person_var = FieldVar("")
+        dummy.inventory_sport_var = FieldVar("")
+        dummy.inventory_search_var = FieldVar("")
+        dummy.inventory_min_var = FieldVar("")
+        dummy.inventory_max_var = FieldVar("")
+        dummy.inventory_date_min_var = FieldVar("2026-06-01")
+        dummy.inventory_date_max_var = FieldVar("2026-06-30")
+        rows = [
+            {"status": "Active", "cert_number": "111", "card_title": "May Card", "date_added": "2026-05-31", "inventory_value": 50},
+            {"status": "Active", "cert_number": "222", "card_title": "June Card", "date_added": "2026-06-15", "inventory_value": 50},
+            {"status": "Active", "cert_number": "333", "card_title": "July Card", "date_added": "2026-07-01", "inventory_value": 50},
+        ]
+
+        self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["222"])
+
+    def test_inventory_filter_applies_grader(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+
+        dummy = InventoryDummy()
+        dummy.inventory_person_var = FieldVar("")
+        dummy.inventory_sport_var = FieldVar("")
+        dummy.inventory_grader_var = FieldVar("psa")
+        dummy.inventory_search_var = FieldVar("")
+        dummy.inventory_min_var = FieldVar("")
+        dummy.inventory_max_var = FieldVar("")
+        rows = [
+            {"status": "Active", "cert_number": "111", "card_title": "PSA Card", "grader": "PSA", "inventory_value": 50},
+            {"status": "Active", "cert_number": "222", "card_title": "CGC Card", "grader": "CGC", "inventory_value": 50},
+            {"status": "Active", "cert_number": "333", "card_title": "No Grader Card", "grader": "", "inventory_value": 50},
+        ]
+
+        self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["111"])
+
+    def test_inventory_filter_applies_card_year_from_title(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+            _inventory_record_card_years = app.CardPipelineApp._inventory_record_card_years
+
+        dummy = InventoryDummy()
+        dummy.inventory_person_var = FieldVar("")
+        dummy.inventory_sport_var = FieldVar("")
+        dummy.inventory_grader_var = FieldVar("")
+        dummy.inventory_year_var = FieldVar("2023")
+        dummy.inventory_search_var = FieldVar("")
+        dummy.inventory_min_var = FieldVar("")
+        dummy.inventory_max_var = FieldVar("")
+        rows = [
+            {"status": "Active", "cert_number": "111", "card_title": "2022 Topps Chrome Test Card PSA 10", "inventory_value": 50},
+            {"status": "Active", "cert_number": "222", "card_title": "2023 Panini Prizm Test Card PSA 10", "inventory_value": 50},
+            {"status": "Active", "cert_number": "333", "year": "2023", "card_title": "No Year In Title", "inventory_value": 50},
+            {"status": "Sold", "cert_number": "444", "card_title": "2023 Sold Card", "inventory_value": 50},
+        ]
+
+        self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["222"])
 
     def test_table_sorting_handles_money_and_blank_values(self) -> None:
         class SortDummy:
@@ -5049,7 +5257,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
-    def test_inventory_sold_deletes_unshared_photo_file(self) -> None:
+    def test_inventory_sold_archives_unshared_photo_file_for_two_weeks(self) -> None:
         class PhotoSoldDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -5058,6 +5266,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
             _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
+            _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
+            _unique_deleted_archive_path = app.CardPipelineApp._unique_deleted_archive_path
+            _archive_deleted_file = app.CardPipelineApp._archive_deleted_file
+            _purge_expired_deleted_archive = app.CardPipelineApp._purge_expired_deleted_archive
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
             _delete_inventory_photo_files_for_removed_records = app.CardPipelineApp._delete_inventory_photo_files_for_removed_records
@@ -5069,10 +5281,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             old_inventory = app.INVENTORY_LEDGER_PATH
             old_photo_dir = app.INVENTORY_PHOTOS_DIR
             old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            old_deleted_archive = app.DELETED_ARCHIVE_DIR
+            old_deleted_photos = app.DELETED_INVENTORY_PHOTOS_DIR
             app.CARD_PIPELINE_DIR = Path(tmp)
             app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
             app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
             app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            app.DELETED_ARCHIVE_DIR = Path(tmp) / "DELETED ARCHIVE"
+            app.DELETED_INVENTORY_PHOTOS_DIR = app.DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
             app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
             photo = app.INVENTORY_PHOTOS_DIR / "card.jpg"
             photo.write_bytes(b"fake image")
@@ -5084,11 +5300,21 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             try:
                 self.assertEqual(dummy._mark_inventory_record_sold(str(record["inventory_key"]), "Arena Club", 10), 1)
                 self.assertFalse(photo.exists())
+                archived = list(app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card.jpg"))
+                self.assertEqual(len(archived), 1)
+                metadata_path = archived[0].with_name("card.jpg.archive.json")
+                self.assertTrue(metadata_path.exists())
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                self.assertEqual(metadata["original_path"], str(photo))
+                self.assertEqual(metadata["reason"], "inventory_photo_removed")
+                self.assertEqual(metadata["retention_days"], 14)
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+                app.DELETED_ARCHIVE_DIR = old_deleted_archive
+                app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
 
     def test_manual_inventory_add_accepts_cert_without_grader(self) -> None:
         class ManualAddDummy:
@@ -5415,6 +5641,32 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(len(ytd_days), 168)
         self.assertEqual(ytd_values[ytd_days.index("2026-01-05")], 40)
         self.assertEqual(ytd_values[ytd_days.index("2026-06-17")], 30)
+
+    def test_profit_month_period_uses_rolling_thirty_days(self) -> None:
+        class ProfitDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_today = lambda self: datetime(2026, 7, 5).date()
+            _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
+            _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
+
+        rows = [
+            {"assigned_person": "Lucas", "date_added": "2026-06-05", "profit": 10},
+            {"assigned_person": "Lucas", "date_added": "2026-06-06", "profit": 20},
+            {"assigned_person": "Lucas", "date_added": "2026-07-05", "profit": 30},
+        ]
+
+        dummy = ProfitDummy()
+        dummy.profit_person_var = types.SimpleNamespace(get=lambda: "")
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Month")
+        dummy.profit_search_var = types.SimpleNamespace(get=lambda: "")
+
+        period_start, period_end = dummy._profit_period_bounds("Month")
+        filtered = dummy._filtered_profit_records(rows)
+
+        self.assertEqual(period_start.isoformat(), "2026-06-06")
+        self.assertEqual(period_end.isoformat(), "2026-07-05")
+        self.assertEqual([record["date_added"] for record in filtered], ["2026-06-06", "2026-07-05"])
 
     def test_profit_sheet_rows_group_by_person_and_source_sheet(self) -> None:
         class ProfitDummy:

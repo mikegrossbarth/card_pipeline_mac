@@ -121,12 +121,16 @@ PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
 INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
 INVENTORY_PHOTOS_DIR = CARD_PIPELINE_DIR / "INVENTORY PHOTOS"
 INVENTORY_PHOTO_STATE_PATH = CARD_PIPELINE_DIR / "inventory_photo_state.json"
+DELETED_ARCHIVE_DIR = CARD_PIPELINE_DIR / "DELETED ARCHIVE"
+DELETED_INVENTORY_PHOTOS_DIR = DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
+DELETED_SHEETS_DIR = DELETED_ARCHIVE_DIR / "SHEETS"
 ACTIVITY_LOG_PATH = CARD_PIPELINE_DIR / "activity_log.json"
 MOBILE_ACTION_LOG_PATH = CARD_PIPELINE_DIR / "mobile_action_log.json"
 UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
 PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
 PERFORMANCE_LOG_PATH = CARD_PIPELINE_DIR / "lucas_performance.log"
+DELETED_ARCHIVE_RETENTION_DAYS = 14
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
 APP_TITLE = "L.U.C.A.S"
@@ -208,6 +212,53 @@ def ensure_mobile_pin(settings: dict[str, object]) -> str:
     return pin
 
 
+def clean_mobile_host(value: object) -> str:
+    host = str(value or "").strip().strip("/")
+    if not host or "/" in host or ":" in host:
+        return ""
+    return host if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,251}", host) else ""
+
+
+def macos_local_mobile_host() -> str:
+    try:
+        result = subprocess.run(
+            ["scutil", "--get", "LocalHostName"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+        )
+    except Exception:
+        result = None
+    local_name = clean_mobile_host(result.stdout if result else "")
+    if local_name:
+        return f"{local_name.removesuffix('.local')}.local"
+    hostname = clean_mobile_host(socket.gethostname())
+    if hostname and not re.fullmatch(r"\d+(?:\.\d+){3}", hostname):
+        return hostname if hostname.endswith(".local") else f"{hostname}.local"
+    return ""
+
+
+def lan_mobile_host() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as handle:
+            handle.connect(("8.8.8.8", 80))
+            return handle.getsockname()[0]
+    except OSError:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except OSError:
+            return "127.0.0.1"
+
+
+def mobile_app_host(settings: dict[str, object] | None = None) -> str:
+    settings = settings or {}
+    configured = clean_mobile_host(os.environ.get("LUCAS_MOBILE_HOST") or settings.get("mobile_host"))
+    if configured:
+        return configured
+    return macos_local_mobile_host() or lan_mobile_host()
+
+
 def app_debug_log(message: str) -> None:
     try:
         APP_DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -248,7 +299,7 @@ def is_google_sheet_url(value: object) -> bool:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, INVENTORY_PHOTOS_DIR, INVENTORY_PHOTO_STATE_PATH, ACTIVITY_LOG_PATH, MOBILE_ACTION_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, INVENTORY_PHOTOS_DIR, INVENTORY_PHOTO_STATE_PATH, DELETED_ARCHIVE_DIR, DELETED_INVENTORY_PHOTOS_DIR, DELETED_SHEETS_DIR, ACTIVITY_LOG_PATH, MOBILE_ACTION_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -261,6 +312,9 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
     INVENTORY_PHOTOS_DIR = CARD_PIPELINE_DIR / "INVENTORY PHOTOS"
     INVENTORY_PHOTO_STATE_PATH = CARD_PIPELINE_DIR / "inventory_photo_state.json"
+    DELETED_ARCHIVE_DIR = CARD_PIPELINE_DIR / "DELETED ARCHIVE"
+    DELETED_INVENTORY_PHOTOS_DIR = DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
+    DELETED_SHEETS_DIR = DELETED_ARCHIVE_DIR / "SHEETS"
     ACTIVITY_LOG_PATH = CARD_PIPELINE_DIR / "activity_log.json"
     MOBILE_ACTION_LOG_PATH = CARD_PIPELINE_DIR / "mobile_action_log.json"
     UNASSIGNED_PLAYERS_PATH = CARD_PIPELINE_DIR / "unassigned_players.json"
@@ -518,6 +572,70 @@ AUTO_INVENTORY_NOTES = {
     "moved from inventory",
 }
 
+BUTTON_TOOLTIPS = {
+    "lucas settings": "Open LUCAS tools like Activity Log, System Health, Working Folder, and Mobile Help.",
+    "delete selected": "Remove the selected row or rows from this table. Right-click table rows for this action where available.",
+    "clear rows": "Clear the current Create table rows from the screen.",
+    "save as working sheet": "Save the Create rows as a new Working Sheet.",
+    "load selected sheet": "Load the selected incoming or working sheet into Comp.",
+    "refresh sheet list": "Reload the list of incoming and working sheets.",
+    "save back to source sheet": "Write the current Comp table values back to the loaded source sheet.",
+    "run all comps": "Run selected comp sources for the loaded rows.",
+    "stop run": "Stop the active comp run after the current work finishes.",
+    "clear comp rows": "Clear the Comp table from the screen without changing source sheets.",
+    "mark received in sheets": "Mark scanned or loaded receive rows as received in their matching sheets.",
+    "refresh incoming index": "Rebuild the lookup index from Incoming and Working sheets.",
+    "load": "Load the selected sheet.",
+    "refresh received sheets": "Reload the list of sheets in Received.",
+    "company rules": "Open company assignment and payout rules.",
+    "people rules": "Open person-specific rules, seller terms, and payout preferences.",
+    "unassigned players": "Review players LUCAS could not categorize and teach their sport/category.",
+    "copy details": "Copy the diagnostic details to the clipboard.",
+    "close": "Close this window.",
+    "incoming": "Show Incoming sheets on Home.",
+    "working": "Show Working sheets on Home.",
+    "received": "Show Received sheets on Home.",
+    "edit markers": "Edit the selected Home sheet markers.",
+    "refresh home view": "Reload Home lists, summaries, and sheet statuses.",
+    "add card": "Add a card directly to inventory.",
+    "export": "Export the current visible inventory rows.",
+    "filters": "Open inventory filters for sport, grader, price, and date.",
+    "settings": "Open inventory maintenance actions.",
+    "bulk edit": "Turn multi-cell inventory editing on or off.",
+    "clear filters": "Reset the inventory filter fields.",
+    "apply filters": "Refresh inventory using the selected filters.",
+    "refresh view": "Reload the current Profit view.",
+    "recover sold ledger": "Repair missing sold-card profit rows by scanning company sheets.",
+    "add expense": "Add an expense record to Profit.",
+    "sold cards": "Show individual sold-card profit rows.",
+    "sold sheets": "Group Profit by sold sheet.",
+    "expenses": "Show expense rows.",
+    "refresh": "Reload this view.",
+    "cancel": "Close without saving changes.",
+    "mark sold": "Move the inventory card to Profit as sold.",
+    "save": "Save these changes.",
+    "move": "Move the selected item.",
+    "start recomp": "Start recomping the selected inventory value fields.",
+    "delete": "Delete the selected item after confirmation.",
+    "enter receive scanning mode": "Arm Receive so barcode scans add received rows.",
+    "exit receive scanning mode": "Turn off Receive barcode scanning mode.",
+    "add receive photos": "Choose receive photos to scan.",
+    "scan receive photos": "Read selected receive photos and add detected cards.",
+    "clear receive photos": "Remove selected receive photos from the scan queue.",
+    "enter scanning station mode": "Arm Create so barcode scans add new rows.",
+    "exit scanning station mode": "Turn off Create barcode scanning mode.",
+    "browse": "Choose a spreadsheet file to load.",
+    "load rows": "Load rows from the selected file.",
+    "add photos": "Choose card photos to scan.",
+    "add folder": "Add all card photos from a folder.",
+    "scan photos": "Read selected photos and add detected cards.",
+    "clear photos": "Remove selected photos from the scan queue.",
+    "web search": "Search the selected player/card in a browser.",
+    "save category": "Save this player/category so LUCAS can assign it next time.",
+    "auto categorize all": "Try to categorize all unassigned players automatically.",
+    "remove": "Remove the selected entry from this list.",
+}
+
 
 def inventory_display_notes(record: dict[str, object]) -> str:
     notes = str(record.get("notes") or "").strip()
@@ -537,6 +655,10 @@ class CardPipelineApp(tk.Tk):
         self._tab_scroll_hosts: dict[str, tk.Widget] = {}
         self._tab_scroll_contents: list[tk.Widget] = []
         self._tab_scroll_bound_widgets: set[str] = set()
+        self.tooltip_window: tk.Toplevel | None = None
+        self.tooltip_after_id: str | None = None
+        self.tooltip_widget: tk.Widget | None = None
+        self._button_tooltip_classes_bound = False
 
         self.events: queue.Queue[str] = queue.Queue()
         self.intake_rows: list[WorkbookRow] = []
@@ -650,9 +772,13 @@ class CardPipelineApp(tk.Tk):
         self.inventory_metric_var = tk.StringVar(value="")
         self.inventory_person_var = tk.StringVar()
         self.inventory_sport_var = tk.StringVar()
+        self.inventory_grader_var = tk.StringVar()
+        self.inventory_year_var = tk.StringVar()
         self.inventory_search_var = tk.StringVar()
         self.inventory_min_var = tk.StringVar()
         self.inventory_max_var = tk.StringVar()
+        self.inventory_date_min_var = tk.StringVar()
+        self.inventory_date_max_var = tk.StringVar()
         self.inventory_bulk_edit_var = tk.BooleanVar(value=False)
         self.inventory_rows: list[dict[str, object]] = []
         self.filtered_inventory_rows: list[dict[str, object]] = []
@@ -682,6 +808,7 @@ class CardPipelineApp(tk.Tk):
         self.profit_sort_column = "date"
         self.profit_sort_descending = True
 
+        self._install_button_tooltips()
         self._build_ui()
         self._show_mode()
         self.after_idle(self._refresh_tab_scroll_bindings)
@@ -695,7 +822,96 @@ class CardPipelineApp(tk.Tk):
         record_performance_event("app.init", perf_start, f"pipeline={CARD_PIPELINE_DIR}", force=True)
 
     def _on_close(self) -> None:
+        self._hide_tooltip()
         self.destroy()
+
+    def _install_button_tooltips(self) -> None:
+        if getattr(self, "_button_tooltip_classes_bound", False):
+            return
+        self._button_tooltip_classes_bound = True
+        for class_name in ("TButton", "Button", "TCheckbutton", "Checkbutton"):
+            self.bind_class(class_name, "<Enter>", self._schedule_tooltip_for_event, add="+")
+            self.bind_class(class_name, "<Leave>", lambda _event: self._hide_tooltip(), add="+")
+            self.bind_class(class_name, "<ButtonPress>", lambda _event: self._hide_tooltip(), add="+")
+
+    def _set_tooltip(self, widget: tk.Widget, text: str | None = None) -> None:
+        if text:
+            setattr(widget, "_lucas_tooltip", text)
+        widget.bind("<Enter>", self._schedule_tooltip_for_event, add="+")
+        widget.bind("<Leave>", lambda _event: self._hide_tooltip(), add="+")
+        widget.bind("<ButtonPress>", lambda _event: self._hide_tooltip(), add="+")
+
+    def _schedule_tooltip_for_event(self, event: tk.Event) -> None:
+        widget = event.widget
+        text = self._button_tooltip_text(widget)
+        if not text:
+            return
+        self._hide_tooltip()
+        self.tooltip_widget = widget
+        self.tooltip_after_id = self.after(550, lambda target=widget, message=text: self._show_tooltip(target, message))
+
+    def _button_tooltip_text(self, widget: tk.Widget) -> str:
+        direct = str(getattr(widget, "_lucas_tooltip", "") or "").strip()
+        if direct:
+            return direct
+        try:
+            label = str(widget.cget("text") or "").strip()
+        except Exception:
+            label = ""
+        if not label:
+            return ""
+        key = re.sub(r"[^a-z0-9]+", " ", label.lower()).strip()
+        mapped = BUTTON_TOOLTIPS.get(key)
+        if mapped:
+            return mapped
+        return f"Click to {label[0].lower() + label[1:] if len(label) > 1 else label.lower()}."
+
+    def _show_tooltip(self, widget: tk.Widget, text: str) -> None:
+        if self.tooltip_widget is not widget or not str(text or "").strip():
+            return
+        try:
+            if not widget.winfo_viewable():
+                return
+            x = widget.winfo_rootx() + min(widget.winfo_width(), 26)
+            y = widget.winfo_rooty() + widget.winfo_height() + 8
+        except tk.TclError:
+            return
+        self._hide_tooltip(cancel_after=False)
+        tooltip = tk.Toplevel(self)
+        tooltip.wm_overrideredirect(True)
+        tooltip.configure(bg="#0f0f0f")
+        tooltip.attributes("-topmost", True)
+        label = tk.Label(
+            tooltip,
+            text=text,
+            bg="#0f0f0f",
+            fg="#f5f5f5",
+            justify=tk.LEFT,
+            wraplength=320,
+            padx=10,
+            pady=7,
+            borderwidth=1,
+            relief=tk.SOLID,
+            font=("Segoe UI", 9),
+        )
+        label.pack()
+        tooltip.wm_geometry(f"+{x}+{y}")
+        self.tooltip_window = tooltip
+
+    def _hide_tooltip(self, cancel_after: bool = True) -> None:
+        if cancel_after and self.tooltip_after_id:
+            try:
+                self.after_cancel(self.tooltip_after_id)
+            except tk.TclError:
+                pass
+        self.tooltip_after_id = None
+        if self.tooltip_window is not None:
+            try:
+                self.tooltip_window.destroy()
+            except tk.TclError:
+                pass
+        self.tooltip_window = None
+        self.tooltip_widget = None
 
     def _scroll_canvas_pixels(self, canvas: tk.Canvas, orient: str, pixels: int) -> bool:
         if pixels == 0:
@@ -1072,12 +1288,8 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(header, textvariable=self.bridge_status_var, style="BridgeBadge.TLabel").grid(row=0, column=2, sticky="ne", padx=(16, 0))
         header_actions = ttk.Frame(header, style="Header.TFrame")
         header_actions.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(12, 0))
-        header_buttons = [
-            self._make_colored_button(header_actions, "Activity Log", self.open_activity_log, variant="primary"),
-            self._make_colored_button(header_actions, "System Health", self.open_setup_doctor, variant="primary"),
-            self._make_colored_button(header_actions, "Working Folder", self.choose_working_folder, variant="primary"),
-            self._make_colored_button(header_actions, "Mobile Help", self.open_mobile_connection_helper, variant="primary"),
-        ]
+        lucas_settings_button = self._make_colored_button(header_actions, "⚙ LUCAS Settings", lambda: self._show_lucas_settings_menu(lucas_settings_button), variant="primary")
+        header_buttons = [lucas_settings_button]
         self._bind_responsive_button_row(header_actions, header_buttons, min_button_width=132)
 
         self.tabs = ttk.Notebook(self)
@@ -1196,15 +1408,14 @@ class CardPipelineApp(tk.Tk):
         comp_main.rowconfigure(0, weight=1)
         comp_main.columnconfigure(0, weight=1)
         self.comp_tree = self._build_table(comp_main, editable=True, columns=COMP_COLUMNS)
+        self._bind_context_menu(self.comp_tree, self._show_comp_context_menu)
         comp_controls = ttk.Frame(comp_main, style="Panel.TFrame", padding=(16, 12))
         comp_controls.pack(fill=tk.X, pady=(10, 0))
         comp_actions = ttk.Frame(comp_controls, style="Panel.TFrame")
         comp_actions.pack(fill=tk.X)
         comp_options = ttk.Frame(comp_controls, style="Panel.TFrame")
         comp_options.pack(fill=tk.X, pady=(10, 0))
-        ttk.Button(comp_actions, text="Save Output", command=self.save_output, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Save Back to Source Sheet", command=self.save_comp_to_source_sheet, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(comp_actions, text="Delete Selected", command=self.delete_selected_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
@@ -1255,12 +1466,11 @@ class CardPipelineApp(tk.Tk):
         self.review_mode_host = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
         self.review_mode_host.pack(fill=tk.X, pady=(0, 10))
         self.receive_tree = self._build_table(self.receive_tab, editable=True, columns=RECEIVE_COLUMNS)
+        self._bind_context_menu(self.receive_tree, self._show_receive_context_menu)
         receive_bottom = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
         receive_bottom.pack(fill=tk.X, pady=(10, 0))
         ttk.Button(receive_bottom, text="Mark Received in Sheets", command=self.mark_review_received_in_sheets, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(receive_bottom, text="Refresh Incoming Index", command=self.refresh_incoming_index, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(receive_bottom, text="Delete Selected", command=self.delete_selected_review_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(receive_bottom, text="Clear Receive Rows", command=self.clear_review_rows, style="Soft.TButton").pack(side=tk.RIGHT)
 
         review_controls = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
         review_controls.pack(fill=tk.X, pady=(0, 10))
@@ -1284,10 +1494,7 @@ class CardPipelineApp(tk.Tk):
         )
         self.assignment_progress.grid(row=3, column=0, columnspan=8, sticky="ew", pady=(8, 0))
         self.review_tree = self._build_table(self.review_tab, editable=True, columns=REVIEW_COLUMNS)
-        review_bottom = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
-        review_bottom.pack(fill=tk.X, pady=(10, 0))
-        ttk.Button(review_bottom, text="Delete Selected", command=self.delete_selected_review_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(review_bottom, text="Clear Assignment Rows", command=self.clear_review_rows, style="Soft.TButton").pack(side=tk.RIGHT)
+        self._bind_context_menu(self.review_tree, self._show_receive_context_menu)
         self._show_review_mode()
         self._build_payouts_tab()
         self._build_inventory_tab()
@@ -1677,26 +1884,25 @@ class CardPipelineApp(tk.Tk):
         self.inventory_person_combo.grid(row=1, column=1, sticky="w", padx=(8, 14), pady=(10, 0))
         self._bind_person_autocomplete(self.inventory_person_combo, refresh_callback=self.refresh_inventory_tab)
         self.inventory_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_inventory_tab(), add="+")
-        ttk.Label(controls, text="Sport", style="Muted.TLabel").grid(row=1, column=2, sticky="e", padx=(0, 6), pady=(10, 0))
-        sport_combo = ttk.Combobox(controls, textvariable=self.inventory_sport_var, values=ASSIGNMENT_CATEGORY_OPTIONS, width=14)
-        sport_combo.grid(row=1, column=3, sticky="w", padx=(0, 14), pady=(10, 0))
-        sport_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_inventory_tab(), add="+")
-        ttk.Label(controls, text="Min", style="Muted.TLabel").grid(row=1, column=4, sticky="e", padx=(0, 6), pady=(10, 0))
-        ttk.Entry(controls, textvariable=self.inventory_min_var, width=9).grid(row=1, column=5, sticky="w", pady=(10, 0))
-        ttk.Label(controls, text="Max", style="Muted.TLabel").grid(row=1, column=6, sticky="e", padx=(10, 6), pady=(10, 0))
-        ttk.Entry(controls, textvariable=self.inventory_max_var, width=9).grid(row=1, column=7, sticky="w", pady=(10, 0))
-        ttk.Label(controls, text="Search ID/Cert/Card", style="Muted.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=2, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(10, 0))
+        ttk.Label(controls, text="Search ID/Cert/Card", style="Muted.TLabel").grid(row=1, column=2, sticky="e", padx=(0, 6), pady=(10, 0))
+        ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=3, columnspan=4, sticky="w", pady=(10, 0))
         action_row = ttk.Frame(controls, style="Panel.TFrame")
-        action_row.grid(row=3, column=0, columnspan=10, sticky="w", pady=(10, 0))
+        action_row.grid(row=2, column=0, columnspan=10, sticky="w", pady=(10, 0))
         ttk.Button(action_row, text="Add Card", command=self.add_raw_inventory_card, style="Primary.TButton").pack(side=tk.LEFT)
-        ttk.Button(action_row, text="Sync Received to Inventory", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(action_row, text="Update Best Company/Payouts", command=self.update_inventory_payouts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(action_row, text="Recomp Visible Cards", command=self.open_inventory_recomp_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(action_row, text="Photo Folder", command=self.choose_inventory_photo_folder, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(action_row, text="Scan Photos", command=lambda: self.scan_inventory_photos(manual=True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(action_row, text="Import Mobile Queue", command=self.import_mobile_queue_file, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        self._make_inventory_toolbar_icon_button(
+            action_row,
+            "filter",
+            "Open inventory filters for sport, grader, card year, price, and date.",
+            self.open_inventory_filters_popup,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        settings_button = self._make_inventory_toolbar_icon_button(
+            action_row,
+            "gear",
+            "Open inventory settings and maintenance actions.",
+            lambda: self._show_inventory_settings_menu(settings_button),
+        )
+        settings_button.pack(side=tk.LEFT, padx=(8, 0))
         self.inventory_bulk_toggle = tk.Checkbutton(
             action_row,
             text="Bulk Edit",
@@ -1713,8 +1919,8 @@ class CardPipelineApp(tk.Tk):
         )
         self.inventory_bulk_toggle.pack(side=tk.LEFT, padx=(14, 0))
         self._style_inventory_bulk_toggle()
-        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=4, column=0, columnspan=10, sticky="w", pady=(8, 0))
-        for var in (self.inventory_sport_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var):
+        ttk.Label(controls, textvariable=self.inventory_status_var, style="Muted.TLabel").grid(row=3, column=0, columnspan=10, sticky="w", pady=(8, 0))
+        for var in (self.inventory_sport_var, self.inventory_grader_var, self.inventory_year_var, self.inventory_search_var, self.inventory_min_var, self.inventory_max_var, self.inventory_date_min_var, self.inventory_date_max_var):
             var.trace_add("write", lambda *_args: self._schedule_inventory_filter_refresh())
 
         self.inventory_tree = self._build_home_tree(
@@ -1742,9 +1948,69 @@ class CardPipelineApp(tk.Tk):
         self.inventory_tree.bind("<Command-Z>", self._undo_inventory_bulk_edit, add="+")
         self.refresh_inventory_tab()
 
+    def open_inventory_filters_popup(self) -> None:
+        popup = tk.Toplevel(self)
+        popup.title("Inventory Filters")
+        popup.configure(bg=self.colors["bg"])
+        popup.transient(self)
+        popup.geometry("440x345")
+        popup.minsize(420, 325)
+        frame = ttk.Frame(popup, style="App.TFrame", padding=18)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Inventory Filters", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 12))
+
+        ttk.Label(frame, text="Sport", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(0, 10))
+        sport_combo = ttk.Combobox(frame, textvariable=self.inventory_sport_var, values=("", *ASSIGNMENT_CATEGORY_OPTIONS), width=22)
+        sport_combo.grid(row=1, column=1, columnspan=3, sticky="w", pady=(0, 10))
+
+        ttk.Label(frame, text="Grader", style="Muted.TLabel").grid(row=2, column=0, sticky="w", pady=(0, 10))
+        grader_combo = ttk.Combobox(frame, textvariable=self.inventory_grader_var, values=("", "PSA", "BGS", "CGC", "SGC"), width=22)
+        grader_combo.grid(row=2, column=1, columnspan=3, sticky="w", pady=(0, 10))
+
+        ttk.Label(frame, text="Card Year", style="Muted.TLabel").grid(row=3, column=0, sticky="w", pady=(0, 10))
+        ttk.Entry(frame, textvariable=self.inventory_year_var, width=12).grid(row=3, column=1, sticky="w", pady=(0, 10))
+
+        ttk.Label(frame, text="Price", style="Muted.TLabel").grid(row=4, column=0, sticky="w", pady=(0, 10))
+        ttk.Entry(frame, textvariable=self.inventory_min_var, width=12).grid(row=4, column=1, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="to", style="Muted.TLabel").grid(row=4, column=2, sticky="w", padx=(8, 8), pady=(0, 10))
+        ttk.Entry(frame, textvariable=self.inventory_max_var, width=12).grid(row=4, column=3, sticky="w", pady=(0, 10))
+
+        ttk.Label(frame, text="Date Added", style="Muted.TLabel").grid(row=5, column=0, sticky="w", pady=(0, 10))
+        ttk.Entry(frame, textvariable=self.inventory_date_min_var, width=12).grid(row=5, column=1, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="to", style="Muted.TLabel").grid(row=5, column=2, sticky="w", padx=(8, 8), pady=(0, 10))
+        ttk.Entry(frame, textvariable=self.inventory_date_max_var, width=12).grid(row=5, column=3, sticky="w", pady=(0, 10))
+
+        actions = ttk.Frame(frame, style="App.TFrame")
+        actions.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        actions.columnconfigure(1, weight=1)
+        ttk.Button(actions, text="Clear Filters", command=self.clear_inventory_filters, style="Soft.TButton", width=14).grid(row=0, column=0, sticky="w")
+        ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton", width=12).grid(row=0, column=2, sticky="e", padx=(0, 8))
+        ttk.Button(actions, text="Apply Filters", command=self.refresh_inventory_tab, style="Primary.TButton", width=14).grid(row=0, column=3, sticky="e")
+        frame.columnconfigure(3, weight=1)
+
+    def clear_inventory_filters(self) -> None:
+        for var in (self.inventory_sport_var, self.inventory_grader_var, self.inventory_year_var, self.inventory_min_var, self.inventory_max_var, self.inventory_date_min_var, self.inventory_date_max_var):
+            var.set("")
+        self.refresh_inventory_tab()
+
+    def _show_inventory_settings_menu(self, anchor: tk.Widget) -> None:
+        menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        menu.add_command(label="Sync Received to Inventory", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True))
+        menu.add_command(label="Update Best Company/Payouts", command=self.update_inventory_payouts)
+        menu.add_command(label="Recomp Visible Cards", command=self.open_inventory_recomp_popup)
+        menu.add_separator()
+        menu.add_command(label="Photo Folder", command=self.choose_inventory_photo_folder)
+        menu.add_command(label="Scan Photos", command=lambda: self.scan_inventory_photos(manual=True))
+        menu.add_separator()
+        menu.add_command(label="Import Mobile Queue", command=self.import_mobile_queue_file)
+        try:
+            menu.tk_popup(anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height())
+        finally:
+            menu.grab_release()
+
     def _build_profit_tab(self) -> None:
-        controls = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(16, 12))
-        controls.pack(fill=tk.X, pady=(0, 10))
+        controls = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(14, 8))
+        controls.pack(fill=tk.X, pady=(0, 6))
         ttk.Label(controls, text="Profit", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, sticky="w")
         ttk.Label(controls, text="Person", style="Muted.TLabel").grid(row=0, column=1, sticky="e", padx=(18, 6))
         self.profit_person_combo = ttk.Combobox(controls, textvariable=self.profit_person_var, width=28)
@@ -1772,44 +2038,52 @@ class CardPipelineApp(tk.Tk):
         self.profit_graph_combo.grid(row=0, column=6, sticky="w")
         self.profit_graph_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
         ttk.Button(controls, text="Refresh View", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(10, 0))
-        self.profit_recover_button = ttk.Button(controls, text="Recover Sold Ledger", command=self.recover_sold_ledger, style="Soft.TButton")
-        self.profit_recover_button.grid(row=0, column=8, sticky="w", padx=(8, 0))
-        ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=9, sticky="w", padx=(8, 0))
+        ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=8, sticky="w", padx=(8, 0))
         controls.columnconfigure(10, weight=1)
         self.profit_search_var.trace_add("write", lambda *_args: self.refresh_profit_tab())
-        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=10, sticky="w", pady=(10, 0))
-        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=10, sticky="w", pady=(6, 0))
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=10, sticky="w", pady=(8, 0))
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=10, sticky="w", pady=(4, 0))
 
-        chart_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
-        chart_panel.pack(fill=tk.X, pady=(0, 10))
+        profit_split = tk.PanedWindow(
+            self.profit_tab,
+            orient=tk.VERTICAL,
+            bg=self.app_palette["border"],
+            bd=0,
+            sashwidth=8,
+            sashrelief=tk.RAISED,
+            showhandle=True,
+            handlesize=28,
+            opaqueresize=True,
+        )
+        profit_split.pack(fill=tk.BOTH, expand=True)
+
+        chart_panel = ttk.Frame(profit_split, style="Panel.TFrame", padding=(10, 8))
         ttk.Label(chart_panel, textvariable=self.profit_chart_title_var, style="Panel.TLabel").pack(anchor=tk.W)
         self.profit_chart_canvas = tk.Canvas(
             chart_panel,
-            height=230,
+            height=210,
             bg="#1f1f1f",
             highlightthickness=1,
             highlightbackground="#333333",
         )
-        self.profit_chart_canvas.pack(fill=tk.X, expand=False, pady=(8, 0))
+        self.profit_chart_canvas.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
         self.profit_chart_canvas.bind("<Configure>", lambda _event: self._draw_profit_chart())
+        profit_split.add(chart_panel, minsize=120)
 
-        search_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 10))
-        search_panel.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(search_panel, text="Search Profit Rows", style="Muted.TLabel").pack(side=tk.LEFT)
-        ttk.Entry(search_panel, textvariable=self.profit_search_var, width=44).pack(side=tk.LEFT, padx=(8, 0))
-
-        ledger_panel = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(12, 12))
-        ledger_panel.pack(fill=tk.BOTH, expand=True)
-        view_row = ttk.Frame(ledger_panel, style="Panel.TFrame")
-        view_row.pack(anchor=tk.W, pady=(0, 10))
-        self.profit_cards_button = ttk.Button(view_row, text="Sold Cards", command=lambda: self._set_profit_view_mode("Sold Cards"), style="Soft.TButton")
+        ledger_panel = ttk.Frame(profit_split, style="Panel.TFrame", padding=(12, 10))
+        profit_split.add(ledger_panel, minsize=220)
+        toolbar = ttk.Frame(ledger_panel, style="Panel.TFrame")
+        toolbar.pack(fill=tk.X, pady=(0, 8))
+        self.profit_cards_button = ttk.Button(toolbar, text="Sold Cards", command=lambda: self._set_profit_view_mode("Sold Cards"), style="Soft.TButton")
         self.profit_cards_button.pack(side=tk.LEFT)
-        self.profit_sheets_button = ttk.Button(view_row, text="Sold Sheets", command=lambda: self._set_profit_view_mode("Sold Sheets"), style="Soft.TButton")
+        self.profit_sheets_button = ttk.Button(toolbar, text="Sold Sheets", command=lambda: self._set_profit_view_mode("Sold Sheets"), style="Soft.TButton")
         self.profit_sheets_button.pack(side=tk.LEFT, padx=(8, 0))
-        self.profit_expenses_button = ttk.Button(view_row, text="Expenses", command=lambda: self._set_profit_view_mode("Expenses"), style="Soft.TButton")
+        self.profit_expenses_button = ttk.Button(toolbar, text="Expenses", command=lambda: self._set_profit_view_mode("Expenses"), style="Soft.TButton")
         self.profit_expenses_button.pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(toolbar, text="Search", style="Muted.TLabel").pack(side=tk.LEFT, padx=(18, 6))
+        ttk.Entry(toolbar, textvariable=self.profit_search_var, width=36).pack(side=tk.LEFT)
         self.profit_table_title_var = tk.StringVar(value="Sold Cards")
-        ttk.Label(ledger_panel, textvariable=self.profit_table_title_var, style="Panel.TLabel").pack(anchor=tk.W)
+        ttk.Label(toolbar, textvariable=self.profit_table_title_var, style="Panel.TLabel").pack(side=tk.RIGHT)
         self.profit_tree = self._build_home_tree(
             ledger_panel,
             columns=("date", "company", "card", "cert", "purchase", "sale", "profit", "sheet"),
@@ -1824,7 +2098,8 @@ class CardPipelineApp(tk.Tk):
                 "sheet": "Company Sheet",
             },
             widths={"date": 95, "company": 150, "card": 440, "cert": 110, "purchase": 105, "sale": 105, "profit": 105, "sheet": 220},
-            height=18,
+            height=28,
+            max_height=520,
         )
         self.profit_tree.tag_configure("profit_positive", foreground="#d7fbe8")
         self.profit_tree.tag_configure("profit_negative", foreground="#ffd1d1")
@@ -2082,16 +2357,7 @@ class CardPipelineApp(tk.Tk):
         return added
 
     def _mobile_app_url(self) -> str:
-        host = "127.0.0.1"
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as handle:
-                handle.connect(("8.8.8.8", 80))
-                host = handle.getsockname()[0]
-        except OSError:
-            try:
-                host = socket.gethostbyname(socket.gethostname())
-            except OSError:
-                host = "127.0.0.1"
+        host = mobile_app_host(getattr(self, "app_settings", {}))
         return f"http://{host}:{self.bridge.port}/mobile"
 
     def open_mobile_connection_helper(self) -> None:
@@ -3219,6 +3485,84 @@ class CardPipelineApp(tk.Tk):
             safe.append(resolved)
         return safe
 
+    def _deleted_archive_metadata_path(self, path: Path) -> Path:
+        return path.with_name(f"{path.name}.archive.json")
+
+    def _unique_deleted_archive_path(self, archive_root: Path, source: Path, archived_at: datetime) -> Path:
+        folder = archive_root / archived_at.strftime("%Y-%m-%d")
+        folder.mkdir(parents=True, exist_ok=True)
+        destination = folder / source.name
+        if not destination.exists() and not self._deleted_archive_metadata_path(destination).exists():
+            return destination
+        for index in range(2, 1000):
+            candidate = folder / f"{source.stem}-{index}{source.suffix}"
+            if not candidate.exists() and not self._deleted_archive_metadata_path(candidate).exists():
+                return candidate
+        return folder / f"{source.stem}-{archived_at.strftime('%H%M%S')}-{time.time_ns()}{source.suffix}"
+
+    def _archive_deleted_file(self, source: Path, archive_root: Path, reason: str, details: dict[str, object] | None = None) -> Path:
+        self._purge_expired_deleted_archive()
+        archived_at = datetime.now()
+        expires_at = archived_at + timedelta(days=DELETED_ARCHIVE_RETENTION_DAYS)
+        destination = self._unique_deleted_archive_path(archive_root, source, archived_at)
+        shutil.move(str(source), str(destination))
+        atomic_write_json(
+            self._deleted_archive_metadata_path(destination),
+            {
+                "original_path": str(source),
+                "archive_path": str(destination),
+                "reason": reason,
+                "archived_at": archived_at.isoformat(timespec="seconds"),
+                "expires_at": expires_at.isoformat(timespec="seconds"),
+                "retention_days": DELETED_ARCHIVE_RETENTION_DAYS,
+                "details": details or {},
+            },
+        )
+        return destination
+
+    def _purge_expired_deleted_archive(self) -> int:
+        archive_root = DELETED_ARCHIVE_DIR
+        if not archive_root.exists():
+            return 0
+        now = datetime.now()
+        purged = 0
+        for metadata_path in archive_root.rglob("*.archive.json"):
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            expires_raw = str(metadata.get("expires_at") or "").strip()
+            try:
+                expires_at = datetime.fromisoformat(expires_raw)
+            except ValueError:
+                continue
+            if expires_at > now:
+                continue
+            archive_path = Path(str(metadata.get("archive_path") or "")).expanduser()
+            try:
+                resolved_archive = archive_path.resolve()
+                resolved_root = archive_root.resolve()
+            except Exception:
+                continue
+            if resolved_archive == resolved_root or resolved_root not in resolved_archive.parents:
+                continue
+            try:
+                if resolved_archive.exists():
+                    resolved_archive.unlink()
+                    purged += 1
+            except OSError:
+                continue
+            try:
+                metadata_path.unlink()
+            except OSError:
+                pass
+        for folder in sorted((path for path in archive_root.rglob("*") if path.is_dir()), key=lambda path: len(path.parts), reverse=True):
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
+        return purged
+
     def _delete_inventory_photo_files_for_removed_records(
         self,
         removed_records: list[dict[str, object]],
@@ -3240,7 +3584,8 @@ class CardPipelineApp(tk.Tk):
                 still_used.add(str(path))
                 for candidate in photo_safe_candidates(path):
                     still_used.add(str(candidate))
-        deleted_paths: list[str] = []
+        archived_paths: list[str] = []
+        archived_by_original: dict[str, str] = {}
         for record in removed_records:
             for path_value in record.get("photo_paths") or []:
                 if str(path_value) in still_used:
@@ -3249,14 +3594,25 @@ class CardPipelineApp(tk.Tk):
                     if str(path) in still_used or not path.exists():
                         continue
                     try:
-                        path.unlink()
-                        deleted_paths.append(str(path))
+                        archive_path = self._archive_deleted_file(
+                            path,
+                            DELETED_INVENTORY_PHOTOS_DIR,
+                            "inventory_photo_removed",
+                            {
+                                "inventory_key": record.get("inventory_key") or "",
+                                "cert_number": record.get("cert_number") or "",
+                                "card_title": record.get("card_title") or "",
+                                "source_sheet": record.get("source_sheet") or "",
+                            },
+                        )
+                        archived_paths.append(str(archive_path))
+                        archived_by_original[str(path)] = str(archive_path)
                     except Exception:
                         continue
-        if deleted_paths:
+        if archived_paths:
             state = self._load_inventory_photo_state()
             photos = state.setdefault("photos", {})
-            deleted_set = {str(Path(path).resolve()) for path in deleted_paths}
+            archive_expires_at = (datetime.now() + timedelta(days=DELETED_ARCHIVE_RETENTION_DAYS)).isoformat(timespec="seconds")
             for record in photos.values():
                 if not isinstance(record, dict):
                     continue
@@ -3265,12 +3621,15 @@ class CardPipelineApp(tk.Tk):
                     resolved = str(Path(str(record_path or "")).resolve())
                 except Exception:
                     resolved = str(record_path or "")
-                if resolved in deleted_set:
-                    record["status"] = "deleted_from_album"
-                    record["deleted_at"] = datetime.now().isoformat(timespec="seconds")
+                archive_path = archived_by_original.get(resolved)
+                if archive_path:
+                    record["status"] = "archived_from_album"
+                    record["archived_at"] = datetime.now().isoformat(timespec="seconds")
+                    record["archive_expires_at"] = archive_expires_at
+                    record["archive_path"] = archive_path
             self._save_inventory_photo_state(state)
-            self._append_activity("Inventory Photo Delete", f"Deleted {len(deleted_paths)} inventory photo file(s).", {"paths": deleted_paths[:20]})
-        return len(deleted_paths)
+            self._append_activity("Inventory Photo Archive", f"Archived {len(archived_paths)} inventory photo file(s) for {DELETED_ARCHIVE_RETENTION_DAYS} days.", {"paths": archived_paths[:20]})
+        return len(archived_paths)
 
     def _mark_inventory_record_sold(self, inventory_key: str, company: str, sale_price: float) -> int:
         if not inventory_key:
@@ -4198,6 +4557,50 @@ class CardPipelineApp(tk.Tk):
         for sequence in ("<Button-3>", "<Button-2>", "<Control-Button-1>", "<Command-Button-1>"):
             widget.bind(sequence, callback, add="+")
 
+    def _show_comp_context_menu(self, event: tk.Event) -> str:
+        if not hasattr(self, "comp_tree"):
+            return "break"
+        row_id = self.comp_tree.identify_row(event.y)
+        if not row_id:
+            return "break"
+        column_id = self.comp_tree.identify_column(event.x)
+        if row_id not in self.comp_tree.selection():
+            self.comp_tree.selection_set(row_id)
+            self.comp_tree.focus(row_id)
+        menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        menu.add_command(label="Copy Cell", command=lambda row=row_id, column=column_id: self.copy_tree_cell_value(self.comp_tree, row, column, "comp cell"))
+        menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_tree_row_values(self.comp_tree, row, "comp row"))
+        menu.add_separator()
+        menu.add_command(label="Delete Selected", command=self.delete_selected_comp_rows)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
+    def _show_receive_context_menu(self, event: tk.Event) -> str:
+        tree = event.widget
+        if not self._is_review_row_tree(tree):
+            return "break"
+        row_id = tree.identify_row(event.y)
+        if not row_id or row_id == ADD_REVIEW_ROW_IID:
+            return "break"
+        column_id = tree.identify_column(event.x)
+        if row_id not in tree.selection():
+            tree.selection_set(row_id)
+            tree.focus(row_id)
+        label_prefix = "receive" if self._is_receive_tree(tree) else "assignment"
+        menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        menu.add_command(label="Copy Cell", command=lambda row=row_id, column=column_id: self.copy_tree_cell_value(tree, row, column, f"{label_prefix} cell"))
+        menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_tree_row_values(tree, row, f"{label_prefix} row"))
+        menu.add_separator()
+        menu.add_command(label="Delete Selected", command=self.delete_selected_review_rows)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
     def _show_inventory_context_menu(self, event) -> str:
         if not hasattr(self, "inventory_tree"):
             return "break"
@@ -4686,9 +5089,13 @@ class CardPipelineApp(tk.Tk):
     def _filtered_inventory_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         person = self.inventory_person_var.get().strip().lower() if hasattr(self, "inventory_person_var") else ""
         sport = self.inventory_sport_var.get().strip().lower() if hasattr(self, "inventory_sport_var") else ""
+        grader = self.inventory_grader_var.get().strip().lower() if hasattr(self, "inventory_grader_var") else ""
+        card_year = re.sub(r"\D", "", self.inventory_year_var.get()) if hasattr(self, "inventory_year_var") else ""
         search = self.inventory_search_var.get().strip().lower() if hasattr(self, "inventory_search_var") else ""
         min_value = self._money_value(self.inventory_min_var.get()) if hasattr(self, "inventory_min_var") else None
         max_value = self._money_value(self.inventory_max_var.get()) if hasattr(self, "inventory_max_var") else None
+        min_date = self._profit_record_date(self.inventory_date_min_var.get()) if hasattr(self, "inventory_date_min_var") else None
+        max_date = self._profit_record_date(self.inventory_date_max_var.get()) if hasattr(self, "inventory_date_max_var") else None
         filtered: list[dict[str, object]] = []
         for record in rows:
             if str(record.get("status") or "").lower() != "active":
@@ -4696,6 +5103,10 @@ class CardPipelineApp(tk.Tk):
             if person and person not in str(record.get("assigned_person") or "Unassigned").lower():
                 continue
             if sport and sport not in str(record.get("sport") or "").lower():
+                continue
+            if grader and grader not in str(record.get("grader") or "").lower():
+                continue
+            if card_year and card_year not in self._inventory_record_card_years(record):
                 continue
             if search:
                 searchable = f"{record.get('item_id') or ''} {record.get('cert_number') or ''} {record.get('card_title') or ''}".lower()
@@ -4706,8 +5117,23 @@ class CardPipelineApp(tk.Tk):
                 continue
             if max_value is not None and value > max_value:
                 continue
+            if min_date is not None or max_date is not None:
+                record_date = self._profit_record_date(record.get("date_added"))
+                if min_date is not None and (record_date is None or record_date < min_date):
+                    continue
+                if max_date is not None and (record_date is None or record_date > max_date):
+                    continue
             filtered.append(record)
         return filtered
+
+    def _inventory_record_card_years(self, record: dict[str, object]) -> set[str]:
+        values = (
+            record.get("card_title"),
+            record.get("title"),
+            record.get("description"),
+        )
+        text = " ".join(str(value or "") for value in values)
+        return set(re.findall(r"\b(?:19|20)\d{2}\b", text))
 
     def export_inventory(self) -> None:
         rows = self.filtered_inventory_rows if hasattr(self, "filtered_inventory_rows") else []
@@ -4949,7 +5375,7 @@ class CardPipelineApp(tk.Tk):
         if label == "week":
             return today - timedelta(days=6), today
         if label == "month":
-            return today.replace(day=1), today
+            return today - timedelta(days=29), today
         if label in {"year", "ytd", "year to date"}:
             return today.replace(month=1, day=1), today
         return None, today
@@ -5765,8 +6191,10 @@ class CardPipelineApp(tk.Tk):
         canvas = self.profit_chart_canvas
         canvas.delete("all")
         width = max(canvas.winfo_width(), 400)
-        height = max(canvas.winfo_height(), 220)
-        pad_left, pad_right, pad_top, pad_bottom = 62, 22, 26, 44
+        height = max(canvas.winfo_height(), 120)
+        pad_left, pad_right = 62, 22
+        pad_top = 26 if height >= 170 else 18
+        pad_bottom = 44 if height >= 170 else 28
         plot_w = max(width - pad_left - pad_right, 10)
         plot_h = max(height - pad_top - pad_bottom, 10)
         chart_rows = self.filtered_profit_rows if hasattr(self, "filtered_profit_rows") else self.profit_rows
@@ -5810,7 +6238,7 @@ class CardPipelineApp(tk.Tk):
             color = "#22c55e" if value >= 0 else "#ef4444"
             canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=color, outline="")
             if len(days) <= 14 or index % max(1, len(days) // 8) == 0:
-                canvas.create_text(x, height - 24, text=days[index][5:], fill="#b3b3b3", font=("Segoe UI", 8))
+                canvas.create_text(x, height - max(18, pad_bottom - 20), text=days[index][5:], fill="#b3b3b3", font=("Segoe UI", 8))
         canvas.create_text(pad_left, 8, anchor="nw", text=f"Line: {chart_title.lower()}", fill="#22c55e", font=("Segoe UI", 9, "bold"))
 
     def choose_working_folder(self) -> None:
@@ -5887,7 +6315,68 @@ class CardPipelineApp(tk.Tk):
         button.bind("<Leave>", lambda _event: button.configure(bg=getattr(button, "_lucas_bg", bg)), add="+")
         button.bind("<ButtonPress-1>", lambda _event: button.configure(bg=getattr(button, "_lucas_pressed", pressed)), add="+")
         button.bind("<ButtonRelease-1>", lambda _event: (button.configure(bg=getattr(button, "_lucas_hover", hover)), command()), add="+")
+        self._set_tooltip(button)
         return button
+
+    def _make_inventory_toolbar_icon_button(self, parent: tk.Widget, icon: str, tooltip: str, command) -> tk.Canvas:
+        palette = getattr(self, "app_palette", {})
+        bg = str(palette.get("button") or "#1ed760")
+        hover = str(palette.get("button_hover") or "#1fdf64")
+        pressed = str(palette.get("button_pressed") or "#169c46")
+        canvas = tk.Canvas(
+            parent,
+            width=38,
+            height=38,
+            bg=bg,
+            highlightthickness=0,
+            borderwidth=0,
+            cursor="hand2",
+        )
+        setattr(canvas, "_lucas_bg", bg)
+        setattr(canvas, "_lucas_hover", hover)
+        setattr(canvas, "_lucas_pressed", pressed)
+        setattr(canvas, "_lucas_icon", icon)
+        setattr(canvas, "_lucas_command", command)
+
+        def redraw(fill: str) -> None:
+            canvas.delete("all")
+            canvas.configure(bg=fill)
+            if icon == "filter":
+                canvas.create_polygon(9, 10, 29, 10, 22, 19, 22, 27, 16, 30, 16, 19, fill="#000000", outline="")
+            else:
+                canvas.create_text(19, 19, text="⚙", fill="#000000", font=("Segoe UI Semibold", 19))
+
+        canvas._lucas_redraw = redraw  # type: ignore[attr-defined]
+        redraw(bg)
+        canvas.bind("<Enter>", lambda _event: redraw(getattr(canvas, "_lucas_hover", hover)), add="+")
+        canvas.bind("<Leave>", lambda _event: redraw(getattr(canvas, "_lucas_bg", bg)), add="+")
+        canvas.bind("<ButtonPress-1>", lambda _event: redraw(getattr(canvas, "_lucas_pressed", pressed)), add="+")
+        canvas.bind("<ButtonRelease-1>", lambda event, button=canvas, run=command: self._release_inventory_icon_button(event, button, run), add="+")
+        self._set_tooltip(canvas, tooltip)
+        return canvas
+
+    def _release_inventory_icon_button(self, event: tk.Event, button: tk.Canvas, command) -> None:
+        redraw = getattr(button, "_lucas_redraw", None)
+        if callable(redraw):
+            redraw(getattr(button, "_lucas_hover", getattr(button, "_lucas_bg", "#1ed760")))
+        width = max(button.winfo_width(), 1)
+        height = max(button.winfo_height(), 1)
+        if 0 <= event.x <= width and 0 <= event.y <= height:
+            command()
+
+    def _show_lucas_settings_menu(self, anchor: tk.Widget) -> None:
+        menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        menu.add_command(label="Activity Log", command=self.open_activity_log)
+        menu.add_command(label="System Health", command=self.open_setup_doctor)
+        menu.add_command(label="Working Folder", command=self.choose_working_folder)
+        menu.add_separator()
+        menu.add_command(label="Recover Sold Ledger", command=self.recover_sold_ledger)
+        menu.add_separator()
+        menu.add_command(label="Mobile Help", command=self.open_mobile_connection_helper)
+        try:
+            menu.tk_popup(anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height())
+        finally:
+            menu.grab_release()
 
     def _bind_responsive_button_row(
         self,
@@ -5943,6 +6432,7 @@ class CardPipelineApp(tk.Tk):
         button.bind("<Leave>", lambda _event: button.configure(bg=getattr(button, "_lucas_bg", palette["soft_button"])), add="+")
         button.bind("<ButtonPress-1>", lambda _event: button.configure(bg=getattr(button, "_lucas_pressed", palette["border"])), add="+")
         button.bind("<ButtonRelease-1>", lambda _event: (button.configure(bg=getattr(button, "_lucas_hover", palette["soft_button_hover"])), command()), add="+")
+        self._set_tooltip(button)
         return button
 
     def _set_home_sheet_kind(self, kind: str) -> None:
@@ -7896,14 +8386,7 @@ class CardPipelineApp(tk.Tk):
         if not self._sheet_path_is_visible_home_sheet(source_stage, path):
             messagebox.showerror("Move blocked", f"Move is only allowed inside {source_stage} sheets.")
             return
-        confirmed = messagebox.askyesno(
-            "Move sheet?",
-            (
-                f"Move this sheet from {source_stage} to {target_stage}?\n\n{name}\n\n"
-                "If moving out of Received, L.U.C.A.S will clear received/paid markers and remove inventory, company-sheet, and profit rows created from this sheet."
-            ),
-        )
-        if not confirmed:
+        if not self._confirm_home_stage_move(source_stage, target_stage, name):
             return
         try:
             lock_started = time.perf_counter()
@@ -7941,6 +8424,32 @@ class CardPipelineApp(tk.Tk):
             move_started,
             f"sheet={name} from={source_stage} to={target_stage} {' '.join(move_phases)}",
             force=True,
+        )
+
+    def _confirm_home_stage_move(self, source_stage: str, target_stage: str, name: str) -> bool:
+        if source_stage == "Received" and target_stage != "Received":
+            confirmed = messagebox.askyesno(
+                "Move received sheet?",
+                (
+                    f"Move this sheet from Received to {target_stage}?\n\n{name}\n\n"
+                    "This will clear received/paid markers and remove inventory, company-sheet, and profit rows created from this sheet."
+                ),
+                icon="warning",
+            )
+            if not confirmed:
+                return False
+            return messagebox.askyesno(
+                "Remove received side effects?",
+                (
+                    "Confirm one more time before L.U.C.A.S removes rows tied to this received sheet.\n\n"
+                    f"Sheet: {name}\n"
+                    "Affected data: active inventory rows, company-sheet rows, and profit ledger rows created from this sheet."
+                ),
+                icon="warning",
+            )
+        return messagebox.askyesno(
+            "Move sheet?",
+            f"Move this sheet from {source_stage} to {target_stage}?\n\n{name}",
         )
 
     def _refresh_after_home_stage_move(self, sheet_name: str, source_stage: str, target_stage: str) -> None:
@@ -8030,14 +8539,19 @@ class CardPipelineApp(tk.Tk):
             return
         confirmed = messagebox.askyesno(
             "Delete sheet?",
-            f"Delete this {kind.lower()} sheet?\n\n{name}\n\nThis removes the .xlsx file from the pipeline folder.",
+            f"Delete this {kind.lower()} sheet?\n\n{name}\n\nThis archives the .xlsx file for {DELETED_ARCHIVE_RETENTION_DAYS} days, then it can be removed from the deleted archive.",
             icon="warning",
         )
         if not confirmed:
             return
         try:
             with shared_lock(CARD_PIPELINE_DIR, "sheet-delete", self.lucas_identity):
-                path.unlink()
+                archive_path = self._archive_deleted_file(
+                    path,
+                    DELETED_SHEETS_DIR,
+                    "home_sheet_deleted",
+                    {"sheet": name, "stage": kind},
+                )
                 inventory_rows_removed = self._remove_inventory_rows_for_source(name)
                 self._delete_sheet_marker(self.home_selected_sheet_key)
                 self._save_sheet_markers()
@@ -8047,8 +8561,12 @@ class CardPipelineApp(tk.Tk):
         self.home_selected_sheet_key = ""
         self.refresh_pipeline()
         self.refresh_home()
-        self.status_var.set(f"Deleted {kind.lower()} sheet: {name}. Removed {inventory_rows_removed} inventory row(s).")
-        self._append_activity("Sheet Delete", f"Deleted {kind.lower()} sheet {name}.", {"sheet": name, "stage": kind, "inventory_rows_removed": inventory_rows_removed})
+        self.status_var.set(f"Archived deleted {kind.lower()} sheet for {DELETED_ARCHIVE_RETENTION_DAYS} days: {name}. Removed {inventory_rows_removed} inventory row(s).")
+        self._append_activity(
+            "Sheet Delete",
+            f"Archived deleted {kind.lower()} sheet {name} for {DELETED_ARCHIVE_RETENTION_DAYS} days.",
+            {"sheet": name, "stage": kind, "archive_path": str(archive_path), "inventory_rows_removed": inventory_rows_removed},
+        )
 
     def open_sheet_marker_editor(self) -> None:
         if not self.home_selected_sheet_key:
@@ -10468,9 +10986,31 @@ class CardPipelineApp(tk.Tk):
     def _search_unassigned_player_category(self, entry: dict[str, object]) -> tuple[str, str]:
         player = str(entry.get("player") or "").strip()
         title = str(entry.get("last_title") or "").strip()
+        local_category, local_evidence = self._local_unassigned_player_category(entry)
+        if local_category:
+            return local_category, local_evidence
         query = " ".join(part for part in (player, title, "sports cards category") if part)
         text = " ".join(part for part in (player, title, self._category_research_text(player, query)) if part)
         return self._infer_category_from_web_text(text)
+
+    def _local_unassigned_player_category(self, entry: dict[str, object]) -> tuple[str, str]:
+        explicit = str(entry.get("sport") or entry.get("category") or "").strip()
+        normalized = assignment_engine.canonical_sport_label(explicit)
+        if normalized:
+            return normalized, "saved entry category"
+        player = str(entry.get("player") or "").strip()
+        titles = [str(entry.get("last_title") or "").strip()]
+        samples = entry.get("sample_titles")
+        if isinstance(samples, list):
+            titles.extend(str(sample or "").strip() for sample in samples)
+        for title in [item for item in titles if item]:
+            parsed = assignment_engine.parse_card_for_matching(title)
+            sport = assignment_engine.canonical_sport_label(parsed.get("sport") or "")
+            parsed_player = str(parsed.get("playerName") or "").strip()
+            if sport and (not player or not parsed_player or parsed_player.lower() == player.lower() or player.lower() in title.lower()):
+                return sport, "card title parser"
+        local_text = " ".join(part for part in [player, *titles] if part)
+        return self._infer_category_from_web_text(local_text)
 
     def _category_research_text(self, player: str, query: str) -> str:
         parts: list[str] = []
