@@ -4668,6 +4668,7 @@ class CardPipelineApp(tk.Tk):
             menu.add_separator()
             menu.add_command(label="Open Photo", command=self.open_selected_inventory_photo)
             menu.add_command(label="Open Photo Folder", command=self.open_selected_inventory_photo_folder)
+            menu.add_command(label="Detach Photo...", command=self.detach_photo_from_selected_inventory_row)
         if len(active_records) == 1 and len(records) == 1:
             menu.add_command(label="Mark Sold", command=self.mark_selected_inventory_sold)
         if records and all(self._inventory_record_can_move_to_company_sheet(record) for record in records):
@@ -4764,6 +4765,147 @@ class CardPipelineApp(tk.Tk):
         shutil.copy2(source_path, destination)
         return destination
 
+    def _inventory_photo_used_path_keys(self, rows: list[dict[str, object]] | None = None) -> set[str]:
+        rows = rows if rows is not None else [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        used: set[str] = set()
+        for record in rows:
+            if str(record.get("status") or "").lower() != "active":
+                continue
+            for value in record.get("photo_paths") or []:
+                text = str(value or "").strip()
+                if not text:
+                    continue
+                used.add(text)
+                for candidate in self._inventory_photo_path_candidates(text):
+                    used.add(str(candidate))
+                    try:
+                        used.add(str(candidate.resolve()))
+                    except Exception:
+                        pass
+        return used
+
+    def _inventory_unattached_photo_paths(self) -> list[Path]:
+        used = self._inventory_photo_used_path_keys()
+        paths: list[Path] = []
+        seen: set[str] = set()
+        for folder in (self._inventory_photo_source_folder(), self._inventory_photo_shared_folder()):
+            for path in self._inventory_photo_paths(folder):
+                keys = {str(path)}
+                try:
+                    keys.add(str(path.resolve()))
+                except Exception:
+                    pass
+                storage = self._inventory_photo_storage_value(path)
+                if storage:
+                    keys.add(storage)
+                if keys & used:
+                    continue
+                unique_key = next(iter(keys))
+                try:
+                    unique_key = str(path.resolve())
+                except Exception:
+                    pass
+                if unique_key in seen:
+                    continue
+                seen.add(unique_key)
+                paths.append(path)
+        return sorted(paths, key=lambda item: str(item).lower())
+
+    def _choose_unattached_inventory_photos(self) -> list[Path]:
+        available = self._inventory_unattached_photo_paths()
+        if not available:
+            messagebox.showinfo("No unattached photos", "No unattached inventory photos were found in the configured photo bucket.")
+            return []
+        popup = tk.Toplevel(self)
+        popup.title("Attach Unattached Inventory Photos")
+        popup.configure(bg="#121212")
+        popup.geometry("980x560")
+        popup.transient(self)
+        popup.grab_set()
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(16, 14))
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+        ttk.Label(frame, text="Unattached Photos", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        search_var = tk.StringVar()
+        search = ttk.Entry(frame, textvariable=search_var)
+        search.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        columns = ("filename", "folder", "modified")
+        tree_frame = ttk.Frame(frame, style="Panel.TFrame")
+        tree_frame.grid(row=2, column=0, sticky="nsew")
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="extended")
+        tree.grid(row=0, column=0, sticky="nsew")
+        y_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=tree.xview)
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        headings = {"filename": "File", "folder": "Folder", "modified": "Modified"}
+        widths = {"filename": 360, "folder": 420, "modified": 150}
+        for column in columns:
+            tree.heading(column, text=headings[column])
+            tree.column(column, width=widths[column], anchor="w", stretch=column != "modified")
+        path_by_iid: dict[str, Path] = {}
+        selected_paths: list[Path] = []
+
+        def row_text(path: Path) -> str:
+            try:
+                rel = path.relative_to(self._inventory_photo_picker_initial_dir()).as_posix()
+            except Exception:
+                rel = str(path)
+            return f"{path.name} {path.parent} {rel}".lower()
+
+        searchable = [(path, row_text(path)) for path in available]
+
+        def render() -> None:
+            query = search_var.get().strip().lower()
+            tree.delete(*tree.get_children())
+            path_by_iid.clear()
+            for index, (path, text) in enumerate(searchable):
+                if query and query not in text:
+                    continue
+                try:
+                    modified = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %I:%M %p")
+                except Exception:
+                    modified = ""
+                try:
+                    folder = path.parent.relative_to(self._inventory_photo_picker_initial_dir()).as_posix() or "."
+                except Exception:
+                    folder = str(path.parent)
+                iid = f"photo-{index}"
+                path_by_iid[iid] = path
+                tree.insert("", tk.END, iid=iid, values=(path.name, folder, modified))
+
+        def attach() -> None:
+            selected_paths[:] = [path_by_iid[iid] for iid in tree.selection() if iid in path_by_iid]
+            if not selected_paths:
+                messagebox.showinfo("Choose photo", "Select one or more unattached photos to attach.")
+                return
+            popup.destroy()
+
+        def close() -> None:
+            selected_paths.clear()
+            popup.destroy()
+
+        search_var.trace_add("write", lambda *_: render())
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        buttons.columnconfigure(0, weight=1)
+        ttk.Button(buttons, text="Cancel", command=close, style="Soft.TButton").grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(buttons, text="Attach Selected", command=attach, style="Primary.TButton").grid(row=0, column=2)
+        tree.bind("<Double-1>", lambda _event: attach())
+        popup.protocol("WM_DELETE_WINDOW", close)
+        render()
+        search.focus_set()
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(50, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(50, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        self.wait_window(popup)
+        return selected_paths
+
     def attach_photo_to_selected_inventory_row(self) -> None:
         if not hasattr(self, "inventory_tree"):
             return
@@ -4774,14 +4916,7 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("Choose one card", "Select one active inventory row to attach photo(s).")
             return
         iid, record = active_selected[0]
-        paths = filedialog.askopenfilenames(
-            title="Attach Inventory Photo",
-            initialdir=str(self._inventory_photo_picker_initial_dir()),
-            filetypes=[
-                ("Image files", "*.jpg *.jpeg *.png *.webp *.heic *.heif"),
-                ("All files", "*.*"),
-            ],
-        )
+        paths = self._choose_unattached_inventory_photos()
         if not paths:
             return
         copied_paths: list[Path] = []
@@ -4828,6 +4963,140 @@ class CardPipelineApp(tk.Tk):
             )
         if errors:
             self._show_copyable_error("Attach photo warning", "\n".join(errors[:10]))
+
+    def detach_photo_from_selected_inventory_row(self) -> None:
+        if not hasattr(self, "inventory_tree"):
+            return
+        selected = list(self.inventory_tree.selection())
+        if len(selected) != 1:
+            messagebox.showinfo("Choose one card", "Select one inventory row to detach photo(s).")
+            return
+        iid = selected[0]
+        record = self.inventory_tree_records.get(iid)
+        if not record:
+            return
+        photo_values = [str(value or "").strip() for value in (record.get("photo_paths") or []) if str(value or "").strip()]
+        if not photo_values:
+            messagebox.showinfo("No photo", "This inventory row does not have an attached photo.")
+            return
+        remove_values: list[str] = []
+        if len(photo_values) == 1:
+            if not messagebox.askyesno("Detach photo", f"Detach this photo from the inventory row?\n\n{photo_values[0]}\n\nThe photo file will not be deleted."):
+                return
+            remove_values = photo_values
+        else:
+            remove_values = self._choose_inventory_photos_to_detach(photo_values)
+            if not remove_values:
+                return
+        remaining = [value for value in photo_values if value not in set(remove_values)]
+        updates = {"photo_paths": remaining, "photo_count": len(remaining)}
+        changed = self._update_inventory_record_by_key(str(record.get("inventory_key") or ""), updates)
+        if not changed:
+            return
+        self._remove_inventory_photo_state_links(str(record.get("inventory_key") or ""), remove_values)
+        updated_record = dict(record)
+        updated_record.update(updates)
+        normalized = self._normalize_inventory_record(updated_record)
+        self.inventory_tree_records[iid] = normalized
+        self._refresh_inventory_tree_row(iid, normalized)
+        self.inventory_status_var.set(f"Detached {len(remove_values)} photo(s) from inventory row.")
+        self.status_var.set(f"Detached {len(remove_values)} inventory photo(s).")
+        self._append_activity(
+            "Inventory Photo Detach",
+            f"Detached {len(remove_values)} photo(s) from inventory row.",
+            {
+                "inventory_key": normalized.get("inventory_key") or "",
+                "cert_number": normalized.get("cert_number") or "",
+                "paths": remove_values[:10],
+            },
+        )
+
+    def _choose_inventory_photos_to_detach(self, photo_values: list[str]) -> list[str]:
+        popup = tk.Toplevel(self)
+        popup.title("Detach Inventory Photos")
+        popup.configure(bg="#121212")
+        popup.geometry("760x420")
+        popup.transient(self)
+        popup.grab_set()
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(16, 14))
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+        ttk.Label(frame, text="Detach Photos", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        tree = ttk.Treeview(frame, columns=("path",), show="headings", selectmode="extended")
+        tree.heading("path", text="Attached Photo")
+        tree.column("path", width=680, anchor="w", stretch=True)
+        tree.grid(row=1, column=0, sticky="nsew")
+        y_scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        y_scroll.grid(row=1, column=1, sticky="ns")
+        tree.configure(yscrollcommand=y_scroll.set)
+        for index, value in enumerate(photo_values):
+            tree.insert("", tk.END, iid=f"photo-{index}", values=(value,))
+        result: list[str] = []
+
+        def detach() -> None:
+            result[:] = [str(tree.item(iid, "values")[0]) for iid in tree.selection()]
+            if not result:
+                messagebox.showinfo("Choose photo", "Select one or more photos to detach.")
+                return
+            popup.destroy()
+
+        def close() -> None:
+            result.clear()
+            popup.destroy()
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        buttons.columnconfigure(0, weight=1)
+        ttk.Button(buttons, text="Cancel", command=close, style="Soft.TButton").grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(buttons, text="Detach Selected", command=detach, style="Primary.TButton").grid(row=0, column=2)
+        popup.protocol("WM_DELETE_WINDOW", close)
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(70, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(70, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        self.wait_window(popup)
+        return result
+
+    def _remove_inventory_photo_state_links(self, inventory_key: str, removed_values: list[str]) -> None:
+        if not inventory_key or not removed_values:
+            return
+        removed_keys: set[str] = set(removed_values)
+        for value in removed_values:
+            for candidate in self._inventory_photo_path_candidates(value):
+                removed_keys.add(str(candidate))
+                try:
+                    removed_keys.add(str(candidate.resolve()))
+                except Exception:
+                    pass
+        state = self._load_inventory_photo_state()
+        photos = state.get("photos")
+        if not isinstance(photos, dict):
+            return
+        changed = False
+        for entry in photos.values():
+            if not isinstance(entry, dict):
+                continue
+            linked_keys = [str(key) for key in (entry.get("linked_keys") or [])]
+            if inventory_key not in linked_keys:
+                continue
+            entry_path = str(entry.get("path") or entry.get("relative_path") or "")
+            entry_keys = {entry_path}
+            for candidate in self._inventory_photo_path_candidates(entry_path):
+                entry_keys.add(str(candidate))
+                try:
+                    entry_keys.add(str(candidate.resolve()))
+                except Exception:
+                    pass
+            if not (entry_keys & removed_keys):
+                continue
+            linked_keys = [key for key in linked_keys if key != inventory_key]
+            entry["linked_keys"] = linked_keys
+            entry["status"] = "linked" if linked_keys else "no_matching_inventory"
+            entry["detached_at"] = datetime.now().isoformat(timespec="seconds")
+            changed = True
+        if changed:
+            self._save_inventory_photo_state(state)
 
     def refresh_inventory_tab(self, reconcile: bool = False, enrich: bool = False, filtered_only: bool = False) -> None:
         perf_start = time.perf_counter()
