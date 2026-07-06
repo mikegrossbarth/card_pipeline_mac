@@ -121,6 +121,8 @@ class BridgeState:
         self.last_keep_sync: dict[str, str] = {}
         self.cy_lookup_inflight: set[int] = set()
         self.cy_lookup_pending: set[int] = set()
+        self.cy_lookup_generation = 0
+        self.cardladder_allows_cy = False
         self.cy_batch_running = False
 
     def set_rows(self, rows: list[WorkbookRow]) -> None:
@@ -246,9 +248,10 @@ class BridgeState:
             return {"ok": False, "error": "Mobile queue sync is not available."}
         return self.mobile_queue_sync(payload)
 
-    def start_all_comps(self, requery_all: bool = False) -> int:
+    def start_all_comps(self, requery_all: bool = False, allow_deferred_cy: bool = False) -> int:
         with self.lock:
             self.command_id += 1
+            self.cardladder_allows_cy = bool(allow_deferred_cy)
             eligible_rows = [
                 row
                 for row in self.rows
@@ -268,7 +271,8 @@ class BridgeState:
             if not queue:
                 self.command = None
                 self.cardladder_running = False
-                debug_log(f"start_all_comps command={self.command_id} eligible=0 requery_all={requery_all}")
+                self.cardladder_allows_cy = False
+                debug_log(f"start_all_comps command={self.command_id} eligible=0 requery_all={requery_all} allow_deferred_cy={allow_deferred_cy}")
                 return self.command_id
             self.command = {
                 "id": self.command_id,
@@ -279,13 +283,17 @@ class BridgeState:
             }
             self.cardladder_running = True
             self.cancel_requested = False
-            debug_log(f"start_all_comps command={self.command_id} queued={len(queue)} requery_all={requery_all}")
+            debug_log(f"start_all_comps command={self.command_id} queued={len(queue)} requery_all={requery_all} allow_deferred_cy={allow_deferred_cy}")
             return self.command_id
 
     def start_cy_lookups(self, rows: list[WorkbookRow], defer: bool = False) -> int:
-        cy_lookups: list[tuple[int, str, str]] = []
+        cy_lookups: list[tuple[int, str, str, int]] = []
         with self.lock:
             self.command_id += 1
+            self.cy_lookup_generation += 1
+            cy_generation = self.cy_lookup_generation
+            if defer or self.cardladder_running:
+                self.cardladder_allows_cy = True
             for row in rows:
                 candidate = self._cy_lookup_candidate(row, force=True)
                 if candidate is None:
@@ -295,7 +303,7 @@ class BridgeState:
                     self.cy_lookup_pending.add(row.excel_row)
                     continue
                 self.cy_lookup_inflight.add(row.excel_row)
-                cy_lookups.append(candidate)
+                cy_lookups.append((*candidate, cy_generation))
             if cy_lookups or self.cy_lookup_pending:
                 self.cy_batch_running = True
             debug_log(
@@ -309,15 +317,24 @@ class BridgeState:
         return self.command_id
 
     def request_cancel(self) -> None:
+        should_close_cy = False
         with self.lock:
             self.cancel_requested = True
             self.command = None
             self.cardladder_running = False
+            self.cardladder_allows_cy = False
+            self.cy_lookup_generation += 1
             self.cy_lookup_pending.clear()
+            should_close_cy = bool(self.cy_lookup_inflight or self.cy_batch_running)
+            self.cy_lookup_inflight.clear()
             self.cy_batch_running = False
             for row in self.rows:
                 if row.status == "Queued":
                     row.status = "Card Ladder cancelled"
+                elif row.status == "CY queued":
+                    row.status = "CY cancelled"
+        if should_close_cy:
+            close_cy_adapter()
         if self.on_update:
             self.on_update()
 
@@ -357,7 +374,7 @@ class BridgeState:
             json.dumps(result, indent=2),
             encoding="utf-8",
         )
-        cy_lookup: tuple[int, str, str] | None = None
+        cy_lookup: tuple[int, str, str, int] | None = None
         with self.lock:
             result_extension_version = str(result.get("extensionVersion") or "")
             if result_extension_version:
@@ -371,7 +388,8 @@ class BridgeState:
             if target_row is not None:
                 self._apply_cardladder_result_to_row(target_row, result)
                 self.updated_row_ids.add(id(target_row))
-                cy_lookup = self._queue_or_prepare_cy_lookup(target_row)
+                if self.cardladder_allows_cy or target_row.excel_row in self.cy_lookup_pending:
+                    cy_lookup = self._queue_or_prepare_cy_lookup(target_row)
                 debug_log(f"cardladder_result row={target_row.excel_row} cert={target_row.cert_number} cy_lookup={bool(cy_lookup)}")
             else:
                 debug_log(f"cardladder_result no_target excel_row={excel_row} cert={cert}")
@@ -397,7 +415,7 @@ class BridgeState:
             return None
         return row.excel_row, cert_number, slab_type
 
-    def _queue_or_prepare_cy_lookup(self, row: WorkbookRow) -> tuple[int, str, str] | None:
+    def _queue_or_prepare_cy_lookup(self, row: WorkbookRow) -> tuple[int, str, str, int] | None:
         candidate = self._cy_lookup_candidate(row)
         if candidate is None:
             return None
@@ -406,13 +424,17 @@ class BridgeState:
             debug_log(f"cy_lookup_pending row={row.excel_row} cert={row.cert_number}")
             return None
         self.cy_lookup_inflight.add(row.excel_row)
-        return candidate
+        return (*candidate, self.cy_lookup_generation)
 
-    def _cy_lookup_worker(self, excel_row: int, cert_number: str, slab_type: str) -> None:
+    def _cy_lookup_worker(self, excel_row: int, cert_number: str, slab_type: str, generation: int) -> None:
         value = None
         confidence = None
         message = ""
         should_close = False
+        with self.lock:
+            if generation != self.cy_lookup_generation or excel_row not in self.cy_lookup_inflight:
+                debug_log(f"cy_lookup_cancelled_before_start row={excel_row} cert={cert_number}")
+                return
         try:
             result = lookup_cy_buy_price(cert_number, slab_type)
             if len(result) == 3:
@@ -423,6 +445,9 @@ class BridgeState:
             message = str(error)
             debug_log(f"cy_lookup_error row={excel_row} cert={cert_number} slab={slab_type} error={message}")
         with self.lock:
+            if generation != self.cy_lookup_generation or excel_row not in self.cy_lookup_inflight:
+                debug_log(f"cy_lookup_cancelled_after_lookup row={excel_row} cert={cert_number}")
+                return
             self.cy_lookup_inflight.discard(excel_row)
             row = next((candidate for candidate in self.rows if candidate.excel_row == excel_row), None)
             if row is not None and str(row.cert_number or "").strip() == cert_number:
@@ -520,10 +545,11 @@ class BridgeState:
         row.notes = " ".join(part for part in (str(result.get("error") or result.get("status") or ""), filter_note) if part).strip()
 
     def finish_cardladder(self, payload: dict) -> None:
-        cy_lookups: list[tuple[int, str, str]] = []
+        cy_lookups: list[tuple[int, str, str, int]] = []
         with self.lock:
             self.cardladder_running = False
             self.cancel_requested = False
+            cy_generation = self.cy_lookup_generation
             for row in self.rows:
                 if row.status == "Queued":
                     row.status = "Card Ladder not found"
@@ -537,9 +563,10 @@ class BridgeState:
                 candidate = self._cy_lookup_candidate(row, force=True)
                 if candidate is not None:
                     self.cy_lookup_inflight.add(row.excel_row)
-                    cy_lookups.append(candidate)
+                    cy_lookups.append((*candidate, cy_generation))
             if cy_lookups:
                 self.cy_batch_running = True
+            self.cardladder_allows_cy = False
             debug_log(f"finish_cardladder pending_cy={len(cy_lookups)}")
         for cy_lookup in cy_lookups:
             threading.Thread(target=self._cy_lookup_worker, args=cy_lookup, daemon=True).start()
@@ -571,8 +598,15 @@ class BridgeState:
 def parse_value(value) -> float | None:
     if value is None or value == "":
         return None
+    text = str(value).replace("$", "").replace(",", "").strip()
+    multiplier = 1
+    if text.lower().endswith("k"):
+        multiplier = 1000
+        text = text[:-1].strip()
+    if re.fullmatch(r"-?\d{1,3}\.\d{3}", text):
+        text = text.replace(".", "")
     try:
-        return float(str(value).replace("$", "").replace(",", "").strip())
+        return float(text) * multiplier
     except ValueError:
         return None
 

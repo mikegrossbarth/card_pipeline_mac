@@ -5495,7 +5495,7 @@ class CardPipelineApp(tk.Tk):
         command_id = 0
         card_ladder_command_id = 0
         if run_card_ladder:
-            card_ladder_command_id = self.state.start_all_comps(requery_all=True)
+            card_ladder_command_id = self.state.start_all_comps(requery_all=True, allow_deferred_cy=run_cy)
             command_id = card_ladder_command_id
         if run_cy:
             command_id = self.state.start_cy_lookups(temp_rows, defer=run_card_ladder)
@@ -11210,7 +11210,7 @@ class CardPipelineApp(tk.Tk):
         command_id = 0
         card_ladder_command_id = 0
         if card_ladder_eligible:
-            card_ladder_command_id = self.state.start_all_comps(requery_all=requery_all)
+            card_ladder_command_id = self.state.start_all_comps(requery_all=requery_all, allow_deferred_cy=run_cy)
             command_id = card_ladder_command_id
         if cy_eligible:
             command_id = self.state.start_cy_lookups(cy_eligible, defer=bool(card_ladder_eligible))
@@ -11249,7 +11249,7 @@ class CardPipelineApp(tk.Tk):
         self.state.request_cancel()
         self.comp_output_saved = False
         self._refresh_table()
-        self.status_var.set("Stop requested. Card Ladder will stop after the current row.")
+        self.status_var.set("Stop requested. Card Ladder and queued CY work were cancelled.")
 
     def clear_comp_rows(self) -> None:
         if self.state.rows and not self.comp_output_saved:

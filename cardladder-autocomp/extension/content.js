@@ -1160,24 +1160,24 @@ async function submitSearch() {
 function readCardLadderValue() {
   const text = document.body.innerText;
   const normalized = text.replace(/\s+/g, " ");
-  const labeled = normalized.match(/Card\s*Ladder\s*Value[\s\S]{0,80}?\$\s*([\d,]+(?:\.\d{1,2})?)/i)
-    || normalized.match(/\bC\s*L\s*Value[\s\S]{0,80}?\$\s*([\d,]+(?:\.\d{1,2})?)/i);
-  if (labeled) return Number(labeled[1].replace(/,/g, ""));
+  const labeled = normalized.match(/Card\s*Ladder\s*Value[\s\S]{0,80}?\$\s*([\d,.]+\s*[kK]?)/i)
+    || normalized.match(/\bC\s*L\s*Value[\s\S]{0,80}?\$\s*([\d,.]+\s*[kK]?)/i);
+  if (labeled) return parseMoneyValue(labeled[1]);
 
   const valueLabel = normalized.search(/\b(?:C\s*L|Card\s*Ladder)\s*Value\b/i);
   if (valueLabel >= 0) {
     const afterLabel = normalized.slice(valueLabel, valueLabel + 300);
-    const nearbyMoney = afterLabel.match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
-    if (nearbyMoney) return Number(nearbyMoney[1].replace(/,/g, ""));
+    const nearbyMoney = afterLabel.match(/\$\s*([\d,.]+\s*[kK]?)/);
+    if (nearbyMoney) return parseMoneyValue(nearbyMoney[1]);
   }
 
-  const profileSummary = normalized.match(/\b\d+\s+results\s+Grade:\s*[^$]{0,260}?\$\s*([\d,]+(?:\.\d{1,2})?)/i);
-  if (profileSummary) return Number(profileSummary[1].replace(/,/g, ""));
+  const profileSummary = normalized.match(/\b\d+\s+results\s+Grade:\s*[^$]{0,260}?\$\s*([\d,.]+\s*[kK]?)/i);
+  if (profileSummary) return parseMoneyValue(profileSummary[1]);
 
   const beforeFirstSale = normalized.split(/\bEBAY\s+-\s+/i)[0] || "";
   if (/Grade:\s*/i.test(beforeFirstSale) && /Profile:/i.test(beforeFirstSale)) {
-    const summaryMoney = beforeFirstSale.match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
-    if (summaryMoney) return Number(summaryMoney[1].replace(/,/g, ""));
+    const summaryMoney = beforeFirstSale.match(/\$\s*([\d,.]+\s*[kK]?)/);
+    if (summaryMoney) return parseMoneyValue(summaryMoney[1]);
   }
 
   const clNode = [...document.querySelectorAll("body *")]
@@ -1188,12 +1188,12 @@ function readCardLadderValue() {
 
   if (clNode) {
     const localText = collectNearbyText(clNode.el);
-    const localMatch = localText.replace(/\s+/g, " ").match(/\$?\s*([\d,]+(?:\.\d{1,2})?)/);
-    if (localMatch) return Number(localMatch[1].replace(/,/g, ""));
+    const localMatch = localText.replace(/\s+/g, " ").match(/\$?\s*([\d,.]+\s*[kK]?)/);
+    if (localMatch) return parseMoneyValue(localMatch[1]);
   }
 
-  const moneyValues = [...text.matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)/g)]
-    .map((match) => Number(match[1].replace(/,/g, "")))
+  const moneyValues = [...text.matchAll(/\$\s*([\d,.]+\s*[kK]?)/g)]
+    .map((match) => parseMoneyValue(match[1]))
     .filter((value) => Number.isFinite(value) && value > 0);
 
   return moneyValues.length === 1 ? moneyValues[0] : null;
@@ -1458,17 +1458,26 @@ function compQuality(comp) {
 function compPriceConflictsWithTitle(comp) {
   const price = parseMoneyValue(comp?.price);
   if (price == null) return false;
-  const titleValues = [...cleanCompTitle(comp?.title).matchAll(/\$\s*[\d,]+(?:\.\d{1,2})?/g)]
+  const titleValues = [...cleanCompTitle(comp?.title).matchAll(/\$\s*[\d,.]+\s*[kK]?/g)]
     .map((match) => parseMoneyValue(match[0]))
     .filter((value) => value != null);
   return Boolean(titleValues.length && titleValues.every((value) => Math.abs(value - price) > 0.01));
 }
 
 function parseMoneyValue(value) {
-  const text = String(value || "").replace(/[$,\s]/g, "");
+  let text = String(value || "").replace(/[$\s]/g, "").replace(/^[,.]+|[,.]+$/g, "");
   if (!text) return null;
+  let multiplier = 1;
+  if (/k$/i.test(text)) {
+    multiplier = 1000;
+    text = text.replace(/k$/i, "").replace(/^[,.]+|[,.]+$/g, "");
+  }
+  text = text.replace(/,/g, "");
+  if (/^-?\d{1,3}\.\d{3}$/.test(text)) {
+    text = text.replace(".", "");
+  }
   const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : null;
+  return Number.isFinite(parsed) ? parsed * multiplier : null;
 }
 
 function sameSaleTypeOrBlank(a, b) {

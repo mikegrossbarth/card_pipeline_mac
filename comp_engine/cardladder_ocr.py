@@ -198,11 +198,18 @@ def salvage_comps(text: str) -> list[dict]:
 def parse_money(value) -> float | None:
     if value is None or value == "":
         return None
-    match = re.search(r"[\d,]+(?:\.\d{1,2})?", str(value))
+    match = re.search(r"-?[\d,.]+\s*[kK]?", str(value))
     if not match:
         return None
+    text = match.group(0).strip().strip(".,").replace(",", "")
+    multiplier = 1
+    if text.lower().endswith("k"):
+        multiplier = 1000
+        text = text[:-1].strip().strip(".,")
+    if re.fullmatch(r"-?\d{1,3}\.\d{3}", text):
+        text = text.replace(".", "")
     try:
-        return float(match.group(0).replace(",", ""))
+        return float(text) * multiplier
     except ValueError:
         return None
 

@@ -70,6 +70,14 @@ import multi_card_extraction
 
 
 class SharedStateTests(unittest.TestCase):
+    def test_card_ladder_money_parsers_treat_three_digit_decimal_as_thousands(self) -> None:
+        self.assertEqual(bridge_server.parse_value("$15.920"), 15920.0)
+        self.assertEqual(cardladder_ocr.parse_money("$15.920"), 15920.0)
+        self.assertEqual(bridge_server.parse_value("$15.92k"), 15920.0)
+        self.assertEqual(cardladder_ocr.parse_money("$15.92k"), 15920.0)
+        self.assertEqual(bridge_server.parse_value("$15.92"), 15.92)
+        self.assertEqual(cardladder_ocr.parse_money("$15.92"), 15.92)
+
     def test_card_ladder_profile_title_strips_trailing_close_ui_text(self) -> None:
         raw_titles = [
             "2024 Panini Prizm Silver Caitlin Clark Close",
@@ -549,7 +557,7 @@ class CYLookupTests(unittest.TestCase):
 
         self.assertEqual(row.category, "baseball")
 
-    def test_cardladder_result_triggers_cy_lookup_on_mac(self) -> None:
+    def test_cardladder_only_result_does_not_trigger_cy_lookup_on_mac(self) -> None:
         state = bridge_server.BridgeState()
         row = WorkbookRow(
             excel_row=2,
@@ -558,6 +566,36 @@ class CYLookupTests(unittest.TestCase):
             card_title="Card One PSA 10",
         )
         state.set_rows([row])
+
+        with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
+                patch.object(bridge_server, "lookup_cy_buy_price", return_value=(87.5, 4, "ok")) as lookup:
+            state.post_cardladder_result(
+                {
+                    "excelRow": 2,
+                    "certNumber": "11111111",
+                    "value": "$100",
+                    "status": "ok",
+                    "ocr": {"comps": [{"price": "$90", "date_sold": "2026-06-01"}]},
+                }
+            )
+            lookup.assert_not_called()
+
+        self.assertEqual(row.card_ladder_value, 100)
+        self.assertIsNone(row.cy_value)
+        self.assertIsNone(row.cy_confidence)
+        self.assertEqual(row.status, "Card Ladder OK")
+        self.assertNotIn("CY value:", row.notes)
+
+    def test_cardladder_result_triggers_cy_lookup_when_cy_is_requested(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="11111111",
+            grader="PSA",
+            card_title="Card One PSA 10",
+        )
+        state.set_rows([row])
+        state.cardladder_allows_cy = True
 
         with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
                 patch.object(bridge_server, "lookup_cy_buy_price", return_value=(87.5, 4, "ok")):
@@ -622,6 +660,7 @@ class CYLookupTests(unittest.TestCase):
         )
         state.set_rows([row])
         state.cardladder_running = True
+        state.cardladder_allows_cy = True
 
         with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
                 patch.object(bridge_server, "lookup_cy_buy_price", return_value=(87.5, "ok")) as lookup:
@@ -644,6 +683,29 @@ class CYLookupTests(unittest.TestCase):
                 time.sleep(0.01)
 
         self.assertEqual(row.cy_value, 87.5)
+
+    def test_stop_run_clears_pending_cy_lookup_after_cardladder(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="11111111",
+            grader="PSA",
+            card_title="Card One PSA 10",
+        )
+        state.set_rows([row])
+        state.cardladder_running = True
+        state.cardladder_allows_cy = True
+        state.cy_lookup_generation += 1
+        state.cy_lookup_pending.add(row.excel_row)
+        row.status = "CY queued"
+
+        state.request_cancel()
+        state.finish_cardladder({})
+
+        self.assertFalse(state.cy_lookup_pending)
+        self.assertFalse(state.cy_lookup_inflight)
+        self.assertIsNone(row.cy_value)
+        self.assertEqual(row.status, "CY cancelled")
 
     def test_cy_only_batch_closes_app_after_last_lookup(self) -> None:
         state = bridge_server.BridgeState()
