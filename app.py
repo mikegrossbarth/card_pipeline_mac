@@ -4622,6 +4622,8 @@ class CardPipelineApp(tk.Tk):
             menu.add_separator()
             menu.add_command(label="Edit Row", command=self.edit_selected_inventory_row)
             menu.add_command(label="Explain Assignment", command=self.explain_selected_inventory_assignment)
+        if len(active_records) == 1 and len(records) == 1:
+            menu.add_command(label="Attach Photo...", command=self.attach_photo_to_selected_inventory_row)
         if len(records) == 1 and self._inventory_photo_paths_for_record(records[0]):
             menu.add_separator()
             menu.add_command(label="Open Photo", command=self.open_selected_inventory_photo)
@@ -4688,6 +4690,103 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("No photo", "This inventory row does not have an existing linked photo.")
             return
         self._open_local_path(paths[0].parent)
+
+    def _copy_inventory_photo_attachment(self, source_path: Path, record: dict[str, object]) -> Path:
+        source_path = source_path.expanduser()
+        if not source_path.exists() or not source_path.is_file():
+            raise FileNotFoundError(str(source_path))
+        shared = self._inventory_photo_shared_folder()
+        shared.mkdir(parents=True, exist_ok=True)
+        try:
+            source_resolved = source_path.resolve()
+            shared_resolved = shared.resolve()
+            if source_resolved == shared_resolved or shared_resolved in source_resolved.parents:
+                return source_resolved
+        except Exception:
+            pass
+
+        identifier = str(record.get("item_id") or record.get("cert_number") or record.get("inventory_key") or "inventory").strip()
+        identifier = re.sub(r"[^A-Za-z0-9._-]+", "-", identifier).strip("-") or "inventory"
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "-", source_path.stem).strip("-") or "photo"
+        suffix = source_path.suffix.lower() or ".jpg"
+        destination_dir = shared / "manual-attachments"
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        destination = destination_dir / f"{identifier}-{stem}{suffix}"
+        counter = 2
+        while destination.exists():
+            try:
+                if destination.stat().st_size == source_path.stat().st_size:
+                    return destination
+            except Exception:
+                pass
+            destination = destination_dir / f"{identifier}-{stem}-{counter}{suffix}"
+            counter += 1
+        shutil.copy2(source_path, destination)
+        return destination
+
+    def attach_photo_to_selected_inventory_row(self) -> None:
+        if not hasattr(self, "inventory_tree"):
+            return
+        records = [self.inventory_tree_records.get(iid) for iid in self.inventory_tree.selection()]
+        selected = [(iid, record) for iid, record in zip(self.inventory_tree.selection(), records) if record]
+        active_selected = [(iid, record) for iid, record in selected if str(record.get("status") or "").lower() == "active"]
+        if len(active_selected) != 1:
+            messagebox.showinfo("Choose one card", "Select one active inventory row to attach photo(s).")
+            return
+        iid, record = active_selected[0]
+        paths = filedialog.askopenfilenames(
+            title="Attach Inventory Photo",
+            filetypes=[
+                ("Image files", "*.jpg *.jpeg *.png *.webp *.heic *.heif"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not paths:
+            return
+        copied_paths: list[Path] = []
+        errors: list[str] = []
+        for raw_path in paths:
+            try:
+                copied_paths.append(self._copy_inventory_photo_attachment(Path(raw_path), record))
+            except Exception as error:
+                errors.append(f"{Path(raw_path).name}: {error}")
+        if not copied_paths:
+            self._show_copyable_error("Attach photo failed", "\n".join(errors) or "No photo files were attached.")
+            return
+        existing_paths = list(record.get("photo_paths") or [])
+        existing_set = set(existing_paths)
+        added = 0
+        for copied_path in copied_paths:
+            path_text = self._inventory_photo_storage_value(copied_path)
+            if path_text not in existing_set:
+                existing_paths.append(path_text)
+                existing_set.add(path_text)
+                added += 1
+        if not added:
+            self.inventory_status_var.set("Selected photo(s) were already attached to this inventory row.")
+            return
+        updates = {"photo_paths": existing_paths, "photo_count": len(existing_paths)}
+        changed = self._update_inventory_record_by_key(str(record.get("inventory_key") or ""), updates)
+        if changed:
+            updated_record = dict(record)
+            updated_record.update(updates)
+            normalized = self._normalize_inventory_record(updated_record)
+            self.inventory_tree_records[iid] = normalized
+            self._refresh_inventory_tree_row(iid, normalized)
+            self.inventory_status_var.set(f"Attached {added} photo(s) to inventory row.")
+            self.status_var.set(f"Attached {added} inventory photo(s).")
+            self._append_activity(
+                "Inventory Photo Attach",
+                f"Attached {added} photo(s) to inventory row.",
+                {
+                    "inventory_key": normalized.get("inventory_key") or "",
+                    "item_id": normalized.get("item_id") or "",
+                    "cert_number": normalized.get("cert_number") or "",
+                    "paths": [str(path) for path in copied_paths[:10]],
+                },
+            )
+        if errors:
+            self._show_copyable_error("Attach photo warning", "\n".join(errors[:10]))
 
     def refresh_inventory_tab(self, reconcile: bool = False, enrich: bool = False, filtered_only: bool = False) -> None:
         perf_start = time.perf_counter()
