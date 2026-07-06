@@ -132,6 +132,7 @@ PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
 PERFORMANCE_LOG_PATH = CARD_PIPELINE_DIR / "lucas_performance.log"
 DELETED_ARCHIVE_RETENTION_DAYS = 14
+MAX_INVENTORY_PHOTOS_PER_CARD = 4
 try:
     PHOTO_OCR_REQUEST_TIMEOUT_MS = int(os.environ.get("LUCAS_PHOTO_OCR_TIMEOUT_MS") or "120000")
 except ValueError:
@@ -4719,7 +4720,12 @@ class CardPipelineApp(tk.Tk):
         if not paths:
             messagebox.showinfo("No photo", "This inventory row does not have an existing linked photo.")
             return
-        self._open_local_path(paths[0])
+        if len(paths) == 1:
+            self._open_local_path(paths[0])
+            return
+        path = self._choose_inventory_photo_to_open(paths)
+        if path:
+            self._open_local_path(path)
 
     def open_selected_inventory_photo_folder(self) -> None:
         if not hasattr(self, "inventory_tree"):
@@ -4731,6 +4737,60 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("No photo", "This inventory row does not have an existing linked photo.")
             return
         self._open_local_path(paths[0].parent)
+
+    def _choose_inventory_photo_to_open(self, paths: list[Path]) -> Path | None:
+        popup = tk.Toplevel(self)
+        popup.title("Open Inventory Photo")
+        popup.configure(bg="#121212")
+        popup.geometry("760x420")
+        popup.transient(self)
+        popup.grab_set()
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(16, 14))
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+        ttk.Label(frame, text="Open Photo", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        tree = ttk.Treeview(frame, columns=("file", "folder"), show="headings", selectmode="browse")
+        tree.heading("file", text="File")
+        tree.heading("folder", text="Folder")
+        tree.column("file", width=260, anchor="w")
+        tree.column("folder", width=420, anchor="w", stretch=True)
+        tree.grid(row=1, column=0, sticky="nsew")
+        y_scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        y_scroll.grid(row=1, column=1, sticky="ns")
+        tree.configure(yscrollcommand=y_scroll.set)
+        path_by_iid: dict[str, Path] = {}
+        for index, path in enumerate(paths):
+            iid = f"photo-{index}"
+            path_by_iid[iid] = path
+            tree.insert("", tk.END, iid=iid, values=(path.name, str(path.parent)))
+        result: list[Path] = []
+
+        def choose() -> None:
+            selected = tree.selection()
+            if not selected:
+                messagebox.showinfo("Choose photo", "Select a photo to open.")
+                return
+            result[:] = [path_by_iid[selected[0]]]
+            popup.destroy()
+
+        def close() -> None:
+            result.clear()
+            popup.destroy()
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        buttons.columnconfigure(0, weight=1)
+        ttk.Button(buttons, text="Cancel", command=close, style="Soft.TButton").grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(buttons, text="Open Selected", command=choose, style="Primary.TButton").grid(row=0, column=2)
+        tree.bind("<Double-1>", lambda _event: choose())
+        popup.protocol("WM_DELETE_WINDOW", close)
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(70, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(70, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        self.wait_window(popup)
+        return result[0] if result else None
 
     def _copy_inventory_photo_attachment(self, source_path: Path, record: dict[str, object]) -> Path:
         source_path = source_path.expanduser()
@@ -4811,7 +4871,7 @@ class CardPipelineApp(tk.Tk):
                 paths.append(path)
         return sorted(paths, key=lambda item: str(item).lower())
 
-    def _choose_unattached_inventory_photos(self) -> list[Path]:
+    def _choose_unattached_inventory_photos(self, max_count: int = MAX_INVENTORY_PHOTOS_PER_CARD) -> list[Path]:
         available = self._inventory_unattached_photo_paths()
         if not available:
             messagebox.showinfo("No unattached photos", "No unattached inventory photos were found in the configured photo bucket.")
@@ -4826,7 +4886,8 @@ class CardPipelineApp(tk.Tk):
         frame.pack(fill=tk.BOTH, expand=True)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(2, weight=1)
-        ttk.Label(frame, text="Unattached Photos", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        title_text = "Unattached Photos" if max_count >= MAX_INVENTORY_PHOTOS_PER_CARD else f"Unattached Photos ({max_count} slot(s) left)"
+        ttk.Label(frame, text=title_text, style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         search_var = tk.StringVar()
         search = ttk.Entry(frame, textvariable=search_var)
         search.grid(row=1, column=0, sticky="ew", pady=(0, 10))
@@ -4883,6 +4944,9 @@ class CardPipelineApp(tk.Tk):
             if not selected_paths:
                 messagebox.showinfo("Choose photo", "Select one or more unattached photos to attach.")
                 return
+            if len(selected_paths) > max_count:
+                messagebox.showinfo("Too many photos", f"Select up to {max_count} photo(s) for this card.")
+                return
             popup.destroy()
 
         def close() -> None:
@@ -4916,7 +4980,12 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("Choose one card", "Select one active inventory row to attach photo(s).")
             return
         iid, record = active_selected[0]
-        paths = self._choose_unattached_inventory_photos()
+        existing_paths = [str(value or "").strip() for value in (record.get("photo_paths") or []) if str(value or "").strip()]
+        remaining_slots = MAX_INVENTORY_PHOTOS_PER_CARD - len(existing_paths)
+        if remaining_slots <= 0:
+            messagebox.showinfo("Photo limit reached", f"This inventory row already has {MAX_INVENTORY_PHOTOS_PER_CARD} photo(s). Detach one before adding another.")
+            return
+        paths = self._choose_unattached_inventory_photos(max_count=remaining_slots)
         if not paths:
             return
         copied_paths: list[Path] = []
@@ -4929,10 +4998,11 @@ class CardPipelineApp(tk.Tk):
         if not copied_paths:
             self._show_copyable_error("Attach photo failed", "\n".join(errors) or "No photo files were attached.")
             return
-        existing_paths = list(record.get("photo_paths") or [])
         existing_set = set(existing_paths)
         added = 0
         for copied_path in copied_paths:
+            if len(existing_paths) >= MAX_INVENTORY_PHOTOS_PER_CARD:
+                break
             path_text = self._inventory_photo_storage_value(copied_path)
             if path_text not in existing_set:
                 existing_paths.append(path_text)
