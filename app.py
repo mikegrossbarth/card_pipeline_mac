@@ -133,6 +133,7 @@ SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
 PERFORMANCE_LOG_PATH = CARD_PIPELINE_DIR / "lucas_performance.log"
 DELETED_ARCHIVE_RETENTION_DAYS = 14
 MAX_INVENTORY_PHOTOS_PER_CARD = 4
+INVENTORY_PHOTO_GROUP_WINDOW_SECONDS = 75
 try:
     PHOTO_OCR_REQUEST_TIMEOUT_MS = int(os.environ.get("LUCAS_PHOTO_OCR_TIMEOUT_MS") or "120000")
 except ValueError:
@@ -10159,6 +10160,8 @@ class CardPipelineApp(tk.Tk):
                     continue
                 photo_paths = list(record.get("photo_paths") or [])
                 if path_text not in photo_paths:
+                    if len(photo_paths) >= MAX_INVENTORY_PHOTOS_PER_CARD:
+                        continue
                     photo_paths.append(path_text)
                     record["photo_paths"] = photo_paths
                     record["photo_count"] = len(photo_paths)
@@ -10243,6 +10246,79 @@ class CardPipelineApp(tk.Tk):
                 return True
         return False
 
+    def _inventory_photo_scan_group_nearby_unmatched(
+        self,
+        images: list[dict[str, object]],
+        photos: dict[str, object],
+    ) -> int:
+        ordered = sorted(
+            [image for image in images if str(image.get("sha256") or "")],
+            key=lambda image: (int(image.get("modified") or 0), str(image.get("relative_path") or image.get("filename") or "")),
+        )
+        if not ordered:
+            return 0
+        linked_count = 0
+        grouped_hashes: set[str] = set()
+        for index, image in enumerate(ordered):
+            sha = str(image.get("sha256") or "")
+            entry = photos.get(sha)
+            if not isinstance(entry, dict) or str(entry.get("status") or "") != "linked":
+                continue
+            anchor_keys = {str(key) for key in (entry.get("linked_keys") or []) if str(key).strip()}
+            if not anchor_keys:
+                continue
+            latest_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+            records_by_key = {str(record.get("inventory_key") or ""): record for record in latest_rows if str(record.get("status") or "").lower() == "active"}
+            remaining = MAX_INVENTORY_PHOTOS_PER_CARD
+            for key in anchor_keys:
+                record = records_by_key.get(key)
+                if record:
+                    remaining = min(remaining, max(0, MAX_INVENTORY_PHOTOS_PER_CARD - len(record.get("photo_paths") or [])))
+            if remaining <= 0:
+                continue
+            anchor_modified = int(image.get("modified") or 0)
+            candidates: list[tuple[int, int, dict[str, object]]] = []
+            for candidate_index, candidate in enumerate(ordered):
+                if candidate_index == index:
+                    continue
+                candidate_sha = str(candidate.get("sha256") or "")
+                if not candidate_sha or candidate_sha in grouped_hashes:
+                    continue
+                candidate_entry = photos.get(candidate_sha)
+                if not isinstance(candidate_entry, dict):
+                    continue
+                if candidate_entry.get("linked_keys") or str(candidate_entry.get("status") or "") == "linked":
+                    continue
+                candidate_certs = {scan_to_cert(cert) for cert in (candidate_entry.get("certs") or []) if scan_to_cert(cert)}
+                if candidate_certs:
+                    continue
+                distance = abs(int(candidate.get("modified") or 0) - anchor_modified)
+                if distance > INVENTORY_PHOTO_GROUP_WINDOW_SECONDS:
+                    continue
+                candidates.append((distance, abs(candidate_index - index), candidate))
+            candidates.sort(key=lambda item: (item[0], item[1]))
+            for _distance, _position_distance, candidate in candidates[:remaining]:
+                candidate_sha = str(candidate.get("sha256") or "")
+                candidate_path = Path(str(candidate.get("path") or ""))
+                changed = self._link_inventory_photo_to_keys(anchor_keys, candidate_path)
+                if not changed:
+                    continue
+                candidate_entry = photos.get(candidate_sha)
+                if not isinstance(candidate_entry, dict):
+                    candidate_entry = {}
+                photos[candidate_sha] = {
+                    **candidate,
+                    **candidate_entry,
+                    "linked_keys": sorted(anchor_keys),
+                    "status": "linked",
+                    "auto_grouped_from": str(image.get("relative_path") or image.get("filename") or sha),
+                    "auto_grouped_at": datetime.now().isoformat(timespec="seconds"),
+                    "last_seen": datetime.now().isoformat(timespec="seconds"),
+                }
+                grouped_hashes.add(candidate_sha)
+                linked_count += changed
+        return linked_count
+
     def scan_inventory_photos(self, manual: bool = False, folder: Path | None = None) -> None:
         if self.inventory_photo_worker and self.inventory_photo_worker.is_alive():
             if manual:
@@ -10277,6 +10353,7 @@ class CardPipelineApp(tk.Tk):
         scanned = 0
         errors: list[str] = []
         skipped = 0
+        grouped = 0
         state = self._load_inventory_photo_state()
         photos = state.setdefault("photos", {})
         try:
@@ -10334,8 +10411,13 @@ class CardPipelineApp(tk.Tk):
                     "last_seen": datetime.now().isoformat(timespec="seconds"),
                 }
                 self._save_inventory_photo_state(state)
+            if isinstance(photos, dict):
+                grouped = self._inventory_photo_scan_group_nearby_unmatched(images, photos)
+                if grouped:
+                    linked += grouped
             self._save_inventory_photo_state(state)
-            self.events.put(("inventory_photo_status", f"Inventory photo scan complete: {len(images)} file(s), skipped {skipped}, OCR scanned {scanned}, linked {linked}."))
+            grouped_text = f", grouped {grouped}" if grouped else ""
+            self.events.put(("inventory_photo_status", f"Inventory photo scan complete: {len(images)} file(s), skipped {skipped}, OCR scanned {scanned}, linked {linked}{grouped_text}."))
             if linked:
                 self.events.put(("inventory_refresh", None))
         except Exception as error:
