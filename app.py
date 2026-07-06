@@ -436,6 +436,7 @@ INVENTORY_TABLE_COLUMNS = (
     "grader",
     "card",
     "purchase",
+    "paid_with",
     "card_ladder",
     "comps",
     "cy_estimate",
@@ -516,6 +517,7 @@ INVENTORY_HEADINGS = {
     "grader": "Grader",
     "card": "Card",
     "purchase": "Purchase",
+    "paid_with": "Paid With",
     "card_ladder": "Card Ladder",
     "comps": "Comps",
     "cy_estimate": "CY Estimate",
@@ -538,6 +540,7 @@ INVENTORY_COLUMN_WIDTHS = {
     "grader": 80,
     "card": 320,
     "purchase": 100,
+    "paid_with": 115,
     "card_ladder": 100,
     "comps": 100,
     "cy_estimate": 100,
@@ -558,6 +561,7 @@ INVENTORY_EDIT_COLUMN_FIELDS = {
     "grader": "grader",
     "card": "card_title",
     "purchase": "purchase_price",
+    "paid_with": "paid_with",
     "card_ladder": "card_ladder_value",
     "comps": "card_ladder_comps_average",
     "cy_estimate": "cy_value",
@@ -2286,6 +2290,7 @@ class CardPipelineApp(tk.Tk):
         if not normalized["sport"] and normalized["card_title"]:
             normalized["sport"] = CardPipelineApp._inventory_sport_from_value(self, "", normalized["card_title"])
         normalized["purchase_price"] = self._money_value(normalized.get("purchase_price"))
+        normalized["paid_with"] = str(normalized.get("paid_with") or normalized.get("payment_method") or "").strip()
         normalized["card_ladder_value"] = self._money_value(normalized.get("card_ladder_value"))
         normalized["card_ladder_comps_average"] = self._money_value(normalized.get("card_ladder_comps_average") or normalized.get("comps"))
         normalized["cy_value"] = self._money_value(normalized.get("cy_value") or normalized.get("cy_estimate"))
@@ -3304,6 +3309,7 @@ class CardPipelineApp(tk.Tk):
         grader_var = tk.StringVar()
         title_var = tk.StringVar()
         purchase_var = tk.StringVar()
+        paid_with_var = tk.StringVar()
         card_ladder_var = tk.StringVar()
         comps_var = tk.StringVar()
         cy_var = tk.StringVar()
@@ -3330,6 +3336,7 @@ class CardPipelineApp(tk.Tk):
             ("Grader", grader_var, 18),
             ("Card description", title_var, 52),
             ("Purchase", purchase_var, 18),
+            ("Paid With", paid_with_var, 28),
             ("Card Ladder", card_ladder_var, 18),
             ("Comps", comps_var, 18),
             ("CY Estimate", cy_var, 18),
@@ -3384,6 +3391,7 @@ class CardPipelineApp(tk.Tk):
                     "grader": grader_var.get().strip(),
                     "card_title": title,
                     "purchase_price": float(purchase),
+                    "paid_with": paid_with_var.get().strip(),
                     "card_ladder_value": card_ladder,
                     "card_ladder_comps_average": comps,
                     "cy_value": cy_value,
@@ -3882,6 +3890,7 @@ class CardPipelineApp(tk.Tk):
             ("grader", "Grader"),
             ("card_title", "Card"),
             ("purchase_price", "Purchase"),
+            ("paid_with", "Paid With"),
             ("card_ladder_value", "Card Ladder"),
             ("card_ladder_comps_average", "Comps"),
             ("cy_value", "CY Estimate"),
@@ -4894,6 +4903,7 @@ class CardPipelineApp(tk.Tk):
                     record.get("grader") or "",
                     record.get("card_title") or "",
                     format_money(purchase),
+                    record.get("paid_with") or "",
                     format_money(card_ladder),
                     format_money(comps),
                     format_money(cy_value),
@@ -5267,7 +5277,7 @@ class CardPipelineApp(tk.Tk):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Inventory"
-        headers = ["Date Added", "Type", "Item ID", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Source Sheet", "Source", "Status", "Photos", "Photo Paths", "Notes"]
+        headers = ["Date Added", "Type", "Item ID", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Paid With", "Card Ladder", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Source Sheet", "Source", "Status", "Photos", "Photo Paths", "Notes"]
         sheet.append(headers)
         for record in rows:
             sheet.append([
@@ -5280,6 +5290,7 @@ class CardPipelineApp(tk.Tk):
                 record.get("grader") or "",
                 record.get("card_title") or "",
                 record.get("purchase_price"),
+                record.get("paid_with") or "",
                 record.get("card_ladder_value"),
                 record.get("card_ladder_comps_average"),
                 record.get("cy_value"),
@@ -5295,7 +5306,7 @@ class CardPipelineApp(tk.Tk):
             ])
         sheet.auto_filter.ref = sheet.dimensions
         sheet.freeze_panes = "A2"
-        for index, width in enumerate([14, 12, 22, 18, 14, 22, 12, 60, 16, 16, 16, 16, 14, 20, 16, 28, 24, 14, 10, 45, 36], start=1):
+        for index, width in enumerate([14, 12, 22, 18, 14, 22, 12, 60, 16, 18, 16, 16, 16, 14, 20, 16, 28, 24, 14, 10, 45, 36], start=1):
             sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
         workbook.save(path)
         self.status_var.set(f"Exported inventory: {path}")
