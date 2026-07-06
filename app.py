@@ -131,6 +131,10 @@ PLAYER_OVERRIDES_PATH = CARD_PIPELINE_DIR / "assignment_player_overrides.json"
 SELLER_TERMS_PATH = CARD_PIPELINE_DIR / "ASSIGNMENT RULES" / "seller_terms.csv"
 PERFORMANCE_LOG_PATH = CARD_PIPELINE_DIR / "lucas_performance.log"
 DELETED_ARCHIVE_RETENTION_DAYS = 14
+try:
+    PHOTO_OCR_REQUEST_TIMEOUT_MS = int(os.environ.get("LUCAS_PHOTO_OCR_TIMEOUT_MS") or "120000")
+except ValueError:
+    PHOTO_OCR_REQUEST_TIMEOUT_MS = 120000
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
 APP_TITLE = "L.U.C.A.S"
@@ -257,6 +261,20 @@ def mobile_app_host(settings: dict[str, object] | None = None) -> str:
     if configured:
         return configured
     return macos_local_mobile_host() or lan_mobile_host()
+
+
+def make_photo_ocr_client(api_key: str):
+    if genai is None:
+        return None
+    if genai_types is None or not hasattr(genai_types, "HttpOptions"):
+        return genai.Client(api_key=api_key)
+    try:
+        return genai.Client(
+            api_key=api_key,
+            http_options=genai_types.HttpOptions(timeout=PHOTO_OCR_REQUEST_TIMEOUT_MS),
+        )
+    except TypeError:
+        return genai.Client(api_key=api_key)
 
 
 def app_debug_log(message: str) -> None:
@@ -2984,7 +3002,7 @@ class CardPipelineApp(tk.Tk):
         except Exception as error:
             return {"ok": False, "error": f"Could not read that photo: {error}"}
         try:
-            client = genai.Client(api_key=api_key)
+            client = make_photo_ocr_client(api_key)
             row = self._mobile_single_card_quick_read(client, mime_type, image_bytes)
             if row is None:
                 cards = identify_cards_sync(client, image_b64)
@@ -9407,7 +9425,7 @@ class CardPipelineApp(tk.Tk):
         if not api_key:
             messagebox.showerror("Missing GOOGLE_API_KEY", "Create .env in the L.U.C.A.S project folder or set GOOGLE_API_KEY.")
             return
-        self.photo_client = genai.Client(api_key=api_key)
+        self.photo_client = make_photo_ocr_client(api_key)
         self.photo_status.set(f"Scanning 0/{len(self.photo_paths)} photo(s)...")
         self.photo_worker = threading.Thread(target=self._photo_scan_worker, daemon=True)
         self.photo_worker.start()
@@ -9806,7 +9824,7 @@ class CardPipelineApp(tk.Tk):
             if manual:
                 messagebox.showerror("Missing GOOGLE_API_KEY", "Create .env in the L.U.C.A.S project folder or set GOOGLE_API_KEY.")
             return
-        self.inventory_photo_client = genai.Client(api_key=api_key)
+        self.inventory_photo_client = make_photo_ocr_client(api_key)
         self.inventory_status_var.set(f"Scanning inventory photos in {folder}...")
         self.inventory_photo_worker = threading.Thread(target=self._inventory_photo_scan_worker, args=(folder,), daemon=True)
         self.inventory_photo_worker.start()
@@ -9836,7 +9854,10 @@ class CardPipelineApp(tk.Tk):
             keys_by_cert = self._active_inventory_keys_by_cert(rows)
             records_by_key = {str(record.get("inventory_key") or ""): record for record in rows if str(record.get("status") or "").lower() == "active"}
             for index, image in enumerate(images, start=1):
-                self.events.put(("inventory_photo_status", f"Inventory photo scan: {index}/{total} {image.get('relative_path') or image.get('filename') or 'photo'}"))
+                image_label = str(image.get("relative_path") or image.get("filename") or "photo")
+                status_message = f"Inventory photo scan: {index}/{total} {image_label}"
+                self.events.put(("inventory_photo_status", status_message))
+                app_debug_log(status_message)
                 sha = str(image.get("sha256") or "")
                 if not sha:
                     continue
@@ -9847,6 +9868,7 @@ class CardPipelineApp(tk.Tk):
                     skipped += 1
                     existing["last_seen"] = datetime.now().isoformat(timespec="seconds")
                     photos[sha] = existing
+                    self._save_inventory_photo_state(state)
                     continue
                 certs = {scan_to_cert(cert) for cert in (existing.get("certs") or []) if scan_to_cert(cert)}
                 if not certs:
@@ -9858,6 +9880,8 @@ class CardPipelineApp(tk.Tk):
                     except Exception as error:
                         errors.append(f"{image.get('relative_path')}: {error}")
                         photos[sha] = {**image, "certs": [], "linked_keys": [], "status": "ocr_error", "error": str(error), "last_seen": datetime.now().isoformat(timespec="seconds")}
+                        self._save_inventory_photo_state(state)
+                        app_debug_log(f"Inventory photo scan OCR error: {image_label}: {error}")
                         continue
                 matched_keys = {key for cert in certs for key in keys_by_cert.get(cert, [])}
                 if matched_keys:
@@ -9869,6 +9893,7 @@ class CardPipelineApp(tk.Tk):
                     "status": "linked" if matched_keys else "no_matching_inventory",
                     "last_seen": datetime.now().isoformat(timespec="seconds"),
                 }
+                self._save_inventory_photo_state(state)
             self._save_inventory_photo_state(state)
             self.events.put(("inventory_photo_status", f"Inventory photo scan complete: {len(images)} file(s), skipped {skipped}, OCR scanned {scanned}, linked {linked}."))
             if linked:
@@ -10094,7 +10119,7 @@ class CardPipelineApp(tk.Tk):
         if not api_key:
             messagebox.showerror("Missing GOOGLE_API_KEY", "Create .env in the L.U.C.A.S project folder or set GOOGLE_API_KEY.")
             return
-        self.photo_client = genai.Client(api_key=api_key)
+        self.photo_client = make_photo_ocr_client(api_key)
         self.review_photo_status.set(f"Scanning 0/{len(self.review_photo_paths)} receive photo(s)...")
         self.review_photo_worker = threading.Thread(target=self._review_photo_scan_worker, daemon=True)
         self.review_photo_worker.start()
