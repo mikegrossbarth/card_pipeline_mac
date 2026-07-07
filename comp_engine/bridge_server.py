@@ -117,6 +117,8 @@ class BridgeState:
         self.mobile_expense_add: Callable[[dict], dict] | None = None
         self.mobile_payouts: Callable[[dict], dict] | None = None
         self.mobile_queue_sync: Callable[[dict], dict] | None = None
+        self.instagram_media_token = uuid.uuid4().hex
+        self.instagram_media_resolver: Callable[[str], tuple[bytes, str] | None] | None = None
         self.keep_note_sources: list[dict[str, str]] = []
         self.last_keep_sync: dict[str, str] = {}
         self.cy_lookup_inflight: set[int] = set()
@@ -247,6 +249,19 @@ class BridgeState:
         if not self.mobile_queue_sync:
             return {"ok": False, "error": "Mobile queue sync is not available."}
         return self.mobile_queue_sync(payload)
+
+    def instagram_media_path(self, photo_id: str, filename: str = "photo.jpg") -> str:
+        token = self.instagram_media_token
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", str(filename or "photo.jpg")).strip("-") or "photo.jpg"
+        return f"/instagram/media/{token}/{photo_id}/{safe_name}"
+
+    def get_instagram_media(self, token: str, photo_id: str) -> tuple[bytes, str] | None:
+        if not token or token != self.instagram_media_token:
+            return None
+        resolver = self.instagram_media_resolver
+        if resolver is None:
+            return None
+        return resolver(photo_id)
 
     def start_all_comps(self, requery_all: bool = False, allow_deferred_cy: bool = False) -> int:
         with self.lock:
@@ -1170,6 +1185,15 @@ class BridgeServer:
                 if not self._request_allowed(parsed.path):
                     self._send_json({"ok": False, "error": "local bridge access only"}, status=403)
                     return
+                media_match = re.match(r"^/instagram/media/([^/]+)/([^/]+)(?:/[^/]*)?$", parsed.path)
+                if media_match:
+                    media = state.get_instagram_media(media_match.group(1), media_match.group(2))
+                    if media is None:
+                        self._send_json({"ok": False, "error": "not found"}, status=404)
+                        return
+                    body, content_type = media
+                    self._send_bytes(body, content_type, cache_control="public, max-age=3600")
+                    return
                 mobile_profile = self._mobile_profile(parsed.path)
                 if mobile_profile:
                     profile_prefix = f"/mobile/{mobile_profile}"
@@ -1332,10 +1356,10 @@ class BridgeServer:
                 }
                 self._send_json(payload)
 
-            def _send_bytes(self, body: bytes, content_type: str) -> None:
+            def _send_bytes(self, body: bytes, content_type: str, cache_control: str = "no-cache") -> None:
                 self.send_response(200)
                 self.send_header("content-type", content_type)
-                self.send_header("cache-control", "no-cache")
+                self.send_header("cache-control", cache_control)
                 self.send_header("content-length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)

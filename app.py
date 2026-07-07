@@ -7,6 +7,7 @@ import queue
 import base64
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -17,15 +18,17 @@ import sys
 import threading
 import time
 import tkinter as tk
+import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parent
@@ -122,6 +125,7 @@ PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
 INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
 INVENTORY_PHOTOS_DIR = CARD_PIPELINE_DIR / "INVENTORY PHOTOS"
 INVENTORY_PHOTO_STATE_PATH = CARD_PIPELINE_DIR / "inventory_photo_state.json"
+INSTAGRAM_INVENTORY_STATE_PATH = CARD_PIPELINE_DIR / "instagram_inventory_state.json"
 DELETED_ARCHIVE_DIR = CARD_PIPELINE_DIR / "DELETED ARCHIVE"
 DELETED_INVENTORY_PHOTOS_DIR = DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
 DELETED_SHEETS_DIR = DELETED_ARCHIVE_DIR / "SHEETS"
@@ -156,9 +160,21 @@ COMP_SOURCE_CARD_LADDER = "Card Ladder"
 COMP_SOURCE_CY = "CY"
 NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
 PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Month", "Year", "YTD", "Total")
-PROFIT_GRAPH_OPTIONS = ("Daily Trend", "Overall Profit")
+PROFIT_GRAPH_OPTIONS = ("Overall Profit", "Profit to Sales Ratio", "Daily Trend")
+PROFIT_PLOT_OPTIONS = ("Overall", "By Sport")
 DEFAULT_PROFIT_PERIOD = "Year"
 DEFAULT_PROFIT_GRAPH = "Overall Profit"
+DEFAULT_PROFIT_PLOT = "Overall"
+PROFIT_SPORT_COLORS = {
+    "Football": "#3b82f6",
+    "Baseball": "#ef4444",
+    "Basketball": "#f4b400",
+    "Golf": "#22c55e",
+    "Hockey": "#a855f7",
+    "Soccer": "#14b8a6",
+    "TCG": "#f97316",
+    "Other": "#94a3b8",
+}
 EXPENSE_CATEGORY_OPTIONS = ("Travel", "Supplies", "Travel Meal", "Fees", "Shipping")
 EXPENSE_LINK_OPTIONS = ("General", "Card", "Sheet")
 ASSIGNMENT_CATEGORY_OPTIONS = (
@@ -320,7 +336,7 @@ def is_google_sheet_url(value: object) -> bool:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, INVENTORY_PHOTOS_DIR, INVENTORY_PHOTO_STATE_PATH, DELETED_ARCHIVE_DIR, DELETED_INVENTORY_PHOTOS_DIR, DELETED_SHEETS_DIR, ACTIVITY_LOG_PATH, MOBILE_ACTION_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, INVENTORY_PHOTOS_DIR, INVENTORY_PHOTO_STATE_PATH, INSTAGRAM_INVENTORY_STATE_PATH, DELETED_ARCHIVE_DIR, DELETED_INVENTORY_PHOTOS_DIR, DELETED_SHEETS_DIR, ACTIVITY_LOG_PATH, MOBILE_ACTION_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -333,6 +349,7 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
     INVENTORY_PHOTOS_DIR = CARD_PIPELINE_DIR / "INVENTORY PHOTOS"
     INVENTORY_PHOTO_STATE_PATH = CARD_PIPELINE_DIR / "inventory_photo_state.json"
+    INSTAGRAM_INVENTORY_STATE_PATH = CARD_PIPELINE_DIR / "instagram_inventory_state.json"
     DELETED_ARCHIVE_DIR = CARD_PIPELINE_DIR / "DELETED ARCHIVE"
     DELETED_INVENTORY_PHOTOS_DIR = DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
     DELETED_SHEETS_DIR = DELETED_ARCHIVE_DIR / "SHEETS"
@@ -602,6 +619,7 @@ AUTO_INVENTORY_NOTES = {
 
 BUTTON_TOOLTIPS = {
     "lucas settings": "Open LUCAS tools like Activity Log, System Health, Working Folder, and Mobile Help.",
+    "instagram inventory sync": "Preview or run your personal Instagram inventory page sync.",
     "delete selected": "Remove the selected row or rows from this table. Right-click table rows for this action where available.",
     "clear rows": "Clear the current Create table rows from the screen.",
     "save as working sheet": "Save the Create rows as a new Working Sheet.",
@@ -713,6 +731,7 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_expense_add = self.mobile_expense_add
         self.state.mobile_payouts = self.mobile_payouts
         self.state.mobile_queue_sync = self.mobile_queue_sync
+        self.state.instagram_media_resolver = self.instagram_inventory_media_response
         self.bridge = BridgeServer(self.state)
         self.bridge.start()
         self._refresh_keep_source_registry()
@@ -828,12 +847,14 @@ class CardPipelineApp(tk.Tk):
         self.profit_person_var = tk.StringVar()
         self.profit_period_var = tk.StringVar(value=DEFAULT_PROFIT_PERIOD)
         self.profit_graph_var = tk.StringVar(value=DEFAULT_PROFIT_GRAPH)
+        self.profit_plot_var = tk.StringVar(value=DEFAULT_PROFIT_PLOT)
         self.profit_search_var = tk.StringVar()
         self.profit_chart_title_var = tk.StringVar(value=self._profit_chart_title())
         self.profit_view_mode = tk.StringVar(value="Sold Cards")
         self.profit_rows: list[dict[str, object]] = []
         self.filtered_profit_rows: list[dict[str, object]] = []
         self.profit_tree_records: dict[str, dict[str, object]] = {}
+        self.profit_sport_cache: dict[str, str] = {}
         self.profit_sort_column = "date"
         self.profit_sort_descending = True
 
@@ -2065,22 +2086,32 @@ class CardPipelineApp(tk.Tk):
         )
         self.profit_period_combo.grid(row=0, column=4, sticky="w")
         self.profit_period_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_profit_tab(), add="+")
-        ttk.Label(controls, text="Graph", style="Muted.TLabel").grid(row=0, column=5, sticky="e", padx=(18, 6))
+        ttk.Label(controls, text="Metric", style="Muted.TLabel").grid(row=0, column=5, sticky="e", padx=(18, 6))
         self.profit_graph_combo = ttk.Combobox(
             controls,
             textvariable=self.profit_graph_var,
             values=PROFIT_GRAPH_OPTIONS,
-            width=14,
+            width=20,
             state="readonly",
         )
         self.profit_graph_combo.grid(row=0, column=6, sticky="w")
         self.profit_graph_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
-        ttk.Button(controls, text="Refresh View", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=7, sticky="w", padx=(10, 0))
-        ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=8, sticky="w", padx=(8, 0))
-        controls.columnconfigure(10, weight=1)
+        ttk.Label(controls, text="Plot", style="Muted.TLabel").grid(row=0, column=7, sticky="e", padx=(18, 6))
+        self.profit_plot_combo = ttk.Combobox(
+            controls,
+            textvariable=self.profit_plot_var,
+            values=PROFIT_PLOT_OPTIONS,
+            width=10,
+            state="readonly",
+        )
+        self.profit_plot_combo.grid(row=0, column=8, sticky="w")
+        self.profit_plot_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
+        ttk.Button(controls, text="Refresh View", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=9, sticky="w", padx=(10, 0))
+        ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=10, sticky="w", padx=(8, 0))
+        controls.columnconfigure(11, weight=1)
         self.profit_search_var.trace_add("write", lambda *_args: self.refresh_profit_tab())
-        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=10, sticky="w", pady=(8, 0))
-        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=10, sticky="w", pady=(4, 0))
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=12, sticky="w", pady=(8, 0))
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=12, sticky="w", pady=(4, 0))
 
         profit_split = tk.PanedWindow(
             self.profit_tab,
@@ -2996,7 +3027,8 @@ class CardPipelineApp(tk.Tk):
             return {"ok": False, "error": "Take or choose a card photo first."}
         if genai is None or identify_cards_sync is None:
             return {"ok": False, "error": "Photo OCR dependencies are not available."}
-        self._load_photo_env()
+        if hasattr(self, "_load_photo_env"):
+            self._load_photo_env()
         api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
         if not api_key:
             return {"ok": False, "error": "Missing GOOGLE_API_KEY for photo card search."}
@@ -3475,6 +3507,635 @@ class CardPipelineApp(tk.Tk):
     def _is_personal_lucas(self) -> bool:
         root_text = str(CARD_PIPELINE_DIR).lower()
         return "lucas_personal" in root_text or "personal lucas" in root_text
+
+    def _personal_instagram_sync_enabled(self) -> bool:
+        return str(os.environ.get("LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _instagram_env_config(self) -> dict[str, str]:
+        if load_dotenv:
+            load_dotenv(ROOT / ".env", override=False)
+        return {
+            "user_id": str(os.environ.get("LUCAS_INSTAGRAM_USER_ID") or os.environ.get("LUCAS_INSTAGRAM_ACCOUNT_ID") or "").strip(),
+            "access_token": str(os.environ.get("LUCAS_INSTAGRAM_ACCESS_TOKEN") or "").strip(),
+            "public_photo_base_url": str(os.environ.get("LUCAS_INSTAGRAM_PUBLIC_PHOTO_BASE_URL") or "").strip().rstrip("/"),
+            "public_bridge_url": str(os.environ.get("LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL") or os.environ.get("LUCAS_PUBLIC_BRIDGE_URL") or "").strip().rstrip("/"),
+        }
+
+    def _load_instagram_inventory_state(self) -> dict[str, object]:
+        if not INSTAGRAM_INVENTORY_STATE_PATH.exists():
+            return {"version": 1, "posts": {}}
+        try:
+            raw = json.loads(INSTAGRAM_INVENTORY_STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {"version": 1, "posts": {}}
+        if not isinstance(raw, dict):
+            return {"version": 1, "posts": {}}
+        if not isinstance(raw.get("posts"), dict):
+            raw["posts"] = {}
+        raw.setdefault("version", 1)
+        return raw
+
+    def _save_instagram_inventory_state(self, state: dict[str, object]) -> None:
+        INSTAGRAM_INVENTORY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(INSTAGRAM_INVENTORY_STATE_PATH, state)
+
+    def _instagram_inventory_photo_id(self, path: Path) -> str:
+        try:
+            storage_value = self._inventory_photo_storage_value(path)
+        except Exception:
+            storage_value = str(path)
+        raw = storage_value.encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    def _instagram_inventory_photo_url(self, path: Path, config: dict[str, str]) -> str:
+        bridge_url = config.get("public_bridge_url", "").strip().rstrip("/")
+        bridge_state = getattr(self, "state", None)
+        if bridge_url and bridge_state is not None and hasattr(bridge_state, "instagram_media_path"):
+            photo_id = self._instagram_inventory_photo_id(path)
+            media_path = bridge_state.instagram_media_path(photo_id, path.name)
+            return f"{bridge_url}{media_path}"
+        base_url = config.get("public_photo_base_url", "").strip().rstrip("/")
+        if not base_url:
+            return ""
+        try:
+            relative = self._inventory_photo_relative_path(path)
+        except Exception:
+            relative = None
+        if relative is None:
+            relative = Path(path.name)
+        return f"{base_url}/{urllib.parse.quote(relative.as_posix())}"
+
+    def instagram_inventory_media_response(self, photo_id: str) -> tuple[bytes, str] | None:
+        if not self._personal_instagram_sync_enabled():
+            return None
+        padding = "=" * (-len(str(photo_id or "")) % 4)
+        try:
+            path_value = base64.urlsafe_b64decode(f"{photo_id}{padding}".encode("ascii")).decode("utf-8")
+        except Exception:
+            return None
+        path = self._safe_inventory_photo_path(path_value)
+        if path is None or not path.is_file():
+            return None
+        content_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        if not content_type.startswith("image/"):
+            return None
+        try:
+            return path.read_bytes(), content_type
+        except OSError:
+            return None
+
+    def _instagram_inventory_active_records(self) -> list[dict[str, object]]:
+        rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        active = []
+        for record in rows:
+            if str(record.get("status") or "Active").strip().lower() != "active":
+                continue
+            if not str(record.get("card_title") or "").strip():
+                continue
+            active.append(record)
+        return active
+
+    def _instagram_inventory_plan(self) -> dict[str, object]:
+        state = self._load_instagram_inventory_state()
+        posts = state.get("posts") if isinstance(state.get("posts"), dict) else {}
+        config = self._instagram_env_config()
+        active_records = self._instagram_inventory_active_records()
+        active_by_key = {str(record.get("inventory_key") or ""): record for record in active_records if str(record.get("inventory_key") or "")}
+        to_post: list[dict[str, object]] = []
+        already_posted: list[dict[str, object]] = []
+        missing_photos: list[dict[str, object]] = []
+        missing_public_urls: list[dict[str, object]] = []
+
+        for key, record in active_by_key.items():
+            post_entry = posts.get(key) if isinstance(posts.get(key), dict) else {}
+            if str(post_entry.get("media_id") or "").strip() and str(post_entry.get("status") or "").strip().lower() == "posted":
+                already_posted.append(record)
+                continue
+            paths = self._inventory_photo_paths_for_record(record)
+            if not paths:
+                missing_photos.append(record)
+                continue
+            first_photo = paths[0]
+            photo_url = self._instagram_inventory_photo_url(first_photo, config)
+            item = {
+                "inventory_key": key,
+                "record": record,
+                "photo_path": first_photo,
+                "photo_count": len(paths),
+                "photo_url": photo_url,
+                "caption": str(record.get("card_title") or "").strip(),
+            }
+            if not photo_url:
+                missing_public_urls.append(item)
+            to_post.append(item)
+
+        to_remove: list[dict[str, object]] = []
+        for key, post_entry in posts.items():
+            if not isinstance(post_entry, dict):
+                continue
+            if key in active_by_key:
+                continue
+            media_id = str(post_entry.get("media_id") or "").strip()
+            if media_id:
+                to_remove.append({"inventory_key": key, **post_entry})
+
+        return {
+            "config": config,
+            "active_count": len(active_records),
+            "posted_count": len(already_posted),
+            "to_post": to_post,
+            "to_remove": to_remove,
+            "missing_photos": missing_photos,
+            "missing_public_urls": missing_public_urls,
+        }
+
+    def _instagram_existing_media_posts(self, config: dict[str, str], limit: int = 500) -> list[dict[str, object]]:
+        user_id = str(config.get("user_id") or "").strip()
+        if not user_id:
+            raise RuntimeError("Missing Instagram user ID.")
+        posts: list[dict[str, object]] = []
+        after = ""
+        while len(posts) < limit:
+            params: dict[str, object] = {
+                "fields": "id,caption,media_type,media_url,permalink,timestamp",
+                "limit": min(100, limit - len(posts)),
+            }
+            if after:
+                params["after"] = after
+            response = self._instagram_api_json(f"{user_id}/media", params)
+            data = response.get("data") if isinstance(response.get("data"), list) else []
+            posts.extend(item for item in data if isinstance(item, dict))
+            paging = response.get("paging") if isinstance(response.get("paging"), dict) else {}
+            cursors = paging.get("cursors") if isinstance(paging.get("cursors"), dict) else {}
+            next_after = str(cursors.get("after") or "").strip()
+            if not next_after or next_after == after or not data:
+                break
+            after = next_after
+        return posts
+
+    def _instagram_match_text_tokens(self, value: object) -> set[str]:
+        text = str(value or "").lower()
+        tokens = set(re.findall(r"[a-z0-9]+", text))
+        stop_words = {
+            "the", "and", "with", "for", "card", "cards", "auto", "rc", "rookie", "psa", "bgs",
+            "cgc", "sgc", "gem", "mint", "auto", "autograph", "number", "serial", "refractor",
+        }
+        return {token for token in tokens if len(token) >= 3 and token not in stop_words}
+
+    def _instagram_find_inventory_match_for_post(
+        self,
+        post: dict[str, object],
+        active_records: list[dict[str, object]],
+        used_keys: set[str],
+    ) -> tuple[dict[str, object] | None, str, float]:
+        text = " ".join(str(post.get(field) or "") for field in ("caption", "ocr_text", "permalink"))
+        compact_text = re.sub(r"\D+", "", text)
+        lowered_text = text.lower()
+        post_tokens = self._instagram_match_text_tokens(text)
+        best_record: dict[str, object] | None = None
+        best_method = ""
+        best_score = 0.0
+
+        for record in active_records:
+            key = str(record.get("inventory_key") or "")
+            if not key or key in used_keys:
+                continue
+            cert = scan_to_cert(record.get("cert_number"))
+            item_id = str(record.get("item_id") or "").strip().lower()
+            if cert and len(cert) >= 5 and cert in compact_text:
+                return record, "cert_number", 1.0
+            if item_id and item_id in lowered_text:
+                return record, "item_id", 1.0
+
+            title = str(record.get("card_title") or "").strip()
+            title_tokens = self._instagram_match_text_tokens(title)
+            if not title_tokens or not post_tokens:
+                continue
+            overlap = title_tokens & post_tokens
+            ratio = len(overlap) / max(1, len(title_tokens))
+            if len(overlap) >= 6 and ratio >= 0.55:
+                score = 0.70 + min(0.25, ratio / 4)
+            elif len(overlap) >= 4 and ratio >= 0.75:
+                score = 0.65 + min(0.25, ratio / 4)
+            else:
+                continue
+            if score > best_score:
+                best_record = record
+                best_method = "title_tokens"
+                best_score = score
+
+        return best_record, best_method, best_score
+
+    def _instagram_ocr_post_text(self, post: dict[str, object], client=None) -> str:
+        media_type = str(post.get("media_type") or "").upper()
+        media_url = str(post.get("media_url") or "").strip()
+        if not media_url or media_type == "VIDEO":
+            return ""
+        if genai is None or genai_types is None:
+            return ""
+        self._load_photo_env()
+        api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+        if not api_key:
+            return ""
+        try:
+            with urllib.request.urlopen(media_url, timeout=45) as response:
+                image_bytes = response.read()
+                content_type = response.headers.get("content-type") or "image/jpeg"
+        except Exception:
+            return ""
+        if not content_type.startswith("image/"):
+            content_type = "image/jpeg"
+        try:
+            ocr_client = client or make_photo_ocr_client(api_key)
+            prompt = (
+                "Read this trading card inventory Instagram post image. Extract visible card-identifying text only. "
+                "Prioritize grading company, cert number, player, year, set, parallel, card number, grade, and any slab label text. "
+                "Return plain text only. Do not describe the background or invent missing details."
+            )
+            response = ocr_client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[
+                    prompt,
+                    genai_types.Part.from_bytes(data=image_bytes, mime_type=content_type),
+                ],
+                config=genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+                    max_output_tokens=450,
+                    temperature=0,
+                ),
+            )
+            return str(response.text or "").strip()
+        except Exception:
+            return ""
+
+    def _instagram_import_existing_posts(self, limit: int = 500, use_ocr: bool = True) -> dict[str, object]:
+        state = self._load_instagram_inventory_state()
+        posts = state.setdefault("posts", {})
+        if not isinstance(posts, dict):
+            posts = {}
+            state["posts"] = posts
+        config = self._instagram_env_config()
+        active_records = self._instagram_inventory_active_records()
+        known_media_ids = {
+            str(entry.get("media_id") or "").strip()
+            for entry in posts.values()
+            if isinstance(entry, dict) and str(entry.get("media_id") or "").strip()
+        }
+        used_keys = {
+            str(key)
+            for key, entry in posts.items()
+            if isinstance(entry, dict) and str(entry.get("status") or "").strip().lower() == "posted"
+        }
+        media_items = self._instagram_existing_media_posts(config, limit=limit)
+        imported = 0
+        already_known = 0
+        ocr_attempted = 0
+        ocr_matched = 0
+        unmatched: list[dict[str, object]] = []
+        ocr_client = None
+
+        for post in media_items:
+            media_id = str(post.get("id") or "").strip()
+            if not media_id:
+                continue
+            if media_id in known_media_ids:
+                already_known += 1
+                continue
+            record, method, score = self._instagram_find_inventory_match_for_post(post, active_records, used_keys)
+            if not record and use_ocr:
+                if ocr_client is None and genai is not None and genai_types is not None:
+                    if hasattr(self, "_load_photo_env"):
+                        self._load_photo_env()
+                    api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+                    if api_key:
+                        try:
+                            ocr_client = make_photo_ocr_client(api_key)
+                        except Exception:
+                            ocr_client = False
+                if ocr_client:
+                    ocr_attempted += 1
+                    events = getattr(self, "events", None)
+                    if events is not None:
+                        events.put(("status", f"OCR reading Instagram post {ocr_attempted}: {str(post.get('permalink') or media_id)}"))
+                    ocr_text = self._instagram_ocr_post_text(post, client=ocr_client)
+                    if ocr_text:
+                        post = {**post, "ocr_text": ocr_text}
+                        record, method, score = self._instagram_find_inventory_match_for_post(post, active_records, used_keys)
+                        if record:
+                            method = f"ocr_{method}"
+                            ocr_matched += 1
+            if not record:
+                unmatched.append(
+                    {
+                        "media_id": media_id,
+                        "caption": str(post.get("caption") or "")[:240],
+                        "ocr_text": str(post.get("ocr_text") or "")[:240],
+                        "permalink": str(post.get("permalink") or ""),
+                    }
+                )
+                continue
+            key = str(record.get("inventory_key") or "")
+            caption = str(post.get("caption") or record.get("card_title") or "").strip()
+            posts[key] = {
+                "status": "posted",
+                "media_id": media_id,
+                "caption": caption,
+                "photo_url": str(post.get("media_url") or ""),
+                "permalink": str(post.get("permalink") or ""),
+                "posted_at": str(post.get("timestamp") or ""),
+                "imported_at": datetime.now().isoformat(timespec="seconds"),
+                "imported_from": "instagram_existing_posts",
+                "matched_by": method,
+                "match_score": round(float(score), 3),
+            }
+            known_media_ids.add(media_id)
+            used_keys.add(key)
+            imported += 1
+
+        self._save_instagram_inventory_state(state)
+        self._append_activity(
+            "Instagram Inventory Import",
+            f"Imported {imported} existing Instagram post(s); {len(unmatched)} unmatched.",
+            {
+                "imported": imported,
+                "already_known": already_known,
+                "ocr_attempted": ocr_attempted,
+                "ocr_matched": ocr_matched,
+                "unmatched": unmatched[:12],
+            },
+        )
+        return {
+            "imported": imported,
+            "already_known": already_known,
+            "ocr_attempted": ocr_attempted,
+            "ocr_matched": ocr_matched,
+            "unmatched": unmatched,
+            "total_seen": len(media_items),
+        }
+
+    def open_instagram_inventory_sync(self) -> None:
+        if not self._personal_instagram_sync_enabled():
+            messagebox.showinfo("Instagram Sync", "Personal Instagram sync is disabled on this LUCAS install.")
+            return
+        plan = self._instagram_inventory_plan()
+        popup = tk.Toplevel(self)
+        popup.title("Instagram Inventory Sync")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.geometry("980x620")
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(14, 12))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Instagram Inventory Sync", style="Panel.TLabel", font=("Segoe UI Semibold", 14)).pack(anchor="w")
+
+        summary_var = tk.StringVar()
+        ttk.Label(frame, textvariable=summary_var, style="Muted.TLabel").pack(anchor="w", pady=(6, 10))
+
+        columns = ("action", "card", "id", "photo", "detail")
+        table_frame = ttk.Frame(frame, style="Panel.TFrame")
+        table_frame.pack(fill=tk.BOTH, expand=True)
+        table_frame.rowconfigure(0, weight=1)
+        table_frame.columnconfigure(0, weight=1)
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=17)
+        headings = {
+            "action": "Action",
+            "card": "Card",
+            "id": "Cert / Item",
+            "photo": "Photo",
+            "detail": "Detail",
+        }
+        widths = {"action": 120, "card": 320, "id": 120, "photo": 180, "detail": 220}
+        for column in columns:
+            tree.heading(column, text=headings[column])
+            tree.column(column, width=widths[column], anchor="w", stretch=column in {"card", "detail"})
+        y_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
+        x_scroll = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=tree.xview)
+        tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        tree_items: dict[str, dict[str, object]] = {}
+
+        def reload_plan() -> None:
+            nonlocal plan
+            plan = self._instagram_inventory_plan()
+            tree_items.clear()
+            tree.delete(*tree.get_children())
+            for index, item in enumerate(plan["to_post"]):
+                record = item["record"]
+                iid = f"post:{index}"
+                tree.insert(
+                    "",
+                    tk.END,
+                    iid=iid,
+                    values=(
+                        "Post",
+                        record.get("card_title") or "",
+                        record.get("cert_number") or record.get("item_id") or "",
+                        Path(str(item["photo_path"])).name,
+                        "Needs public photo URL" if not item.get("photo_url") else "Ready",
+                    ),
+                )
+                tree_items[iid] = item
+            for item in plan["to_remove"]:
+                tree.insert("", tk.END, values=("Remove", item.get("caption") or item.get("title") or "", item.get("media_id") or "", "", "No longer active in inventory"))
+            for record in plan["missing_photos"]:
+                tree.insert(
+                    "",
+                    tk.END,
+                    values=(
+                        "Missing Photo",
+                        record.get("card_title") or "",
+                        record.get("cert_number") or record.get("item_id") or "",
+                        "",
+                        "Active inventory row has no attached photo",
+                    ),
+                )
+            summary_var.set(
+                f"Active inventory: {plan['active_count']} | Posted: {plan['posted_count']} | "
+                f"To post: {len(plan['to_post'])} | To remove: {len(plan['to_remove'])} | "
+                f"Missing photos: {len(plan['missing_photos'])}"
+            )
+
+        def post_one_test_item() -> None:
+            selected = [iid for iid in tree.selection() if iid in tree_items]
+            item = tree_items[selected[0]] if selected else next((candidate for candidate in plan.get("to_post") or [] if isinstance(candidate, dict) and candidate.get("photo_url")), None)
+            if not item:
+                messagebox.showinfo("Instagram Sync", "No ready item with a public photo URL is available to test.")
+                return
+            if not item.get("photo_url"):
+                messagebox.showinfo("Instagram Sync", "Choose a row marked Ready before posting a test item.")
+                return
+            test_plan = {**plan, "to_post": [item], "to_remove": [], "missing_public_urls": []}
+            record = item.get("record") if isinstance(item.get("record"), dict) else {}
+            title = str(record.get("card_title") or item.get("caption") or "selected card")
+            if not messagebox.askyesno("Instagram Sync", f"Post one test item to Instagram?\n\n{title}"):
+                return
+            worker = threading.Thread(target=self._instagram_inventory_sync_worker, args=(test_plan,), daemon=True)
+            worker.start()
+            popup.after(1000, reload_plan)
+
+        def import_existing_posts() -> None:
+            config = self._instagram_env_config()
+            if not str(config.get("user_id") or "").strip() or not str(config.get("access_token") or "").strip():
+                messagebox.showerror("Instagram Import", "Missing Instagram user ID or access token in .env.")
+                return
+            if not messagebox.askyesno("Instagram Import", "Scan existing Instagram posts and match them to active LUCAS inventory?\n\nBlank-caption posts will be OCR-read from the image, so this can take a few minutes. LUCAS will only record confident matches and leave unclear posts alone."):
+                return
+
+            def worker() -> None:
+                try:
+                    result = self._instagram_import_existing_posts()
+                    message = (
+                        f"Imported: {result['imported']}\n"
+                        f"Already known: {result['already_known']}\n"
+                        f"OCR attempted: {result['ocr_attempted']}\n"
+                        f"OCR matched: {result['ocr_matched']}\n"
+                        f"Unmatched: {len(result['unmatched'])}\n"
+                        f"Posts scanned: {result['total_seen']}"
+                    )
+                    self.events.put(("status", f"Instagram import matched {result['imported']} existing post(s); {len(result['unmatched'])} unmatched."))
+                    popup.after(0, lambda: (reload_plan(), messagebox.showinfo("Instagram Import", message)))
+                except Exception as error:
+                    error_text = str(error)
+                    popup.after(0, lambda: messagebox.showerror("Instagram Import", error_text))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        actions = ttk.Frame(frame, style="Panel.TFrame")
+        actions.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(actions, text="Refresh Preview", command=reload_plan, style="Soft.TButton").pack(side=tk.LEFT)
+        ttk.Button(actions, text="Import Existing Posts", command=import_existing_posts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(actions, text="Post One Test Item", command=post_one_test_item, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(actions, text="Run Live Sync", command=lambda: self._run_instagram_inventory_sync(plan, popup, reload_plan), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
+        reload_plan()
+
+    def _instagram_api_json(self, endpoint: str, params: dict[str, object] | None = None, method: str = "GET") -> dict[str, object]:
+        params = dict(params or {})
+        token = str(params.pop("access_token", "") or self._instagram_env_config().get("access_token") or "").strip()
+        if token:
+            params["access_token"] = token
+        data = urllib.parse.urlencode(params).encode("utf-8")
+        url = f"https://graph.instagram.com/v21.0/{endpoint.lstrip('/')}"
+        request: urllib.request.Request
+        if method.upper() == "GET":
+            request = urllib.request.Request(url + ("?" + data.decode("utf-8") if data else ""))
+        else:
+            request = urllib.request.Request(url, data=data, method=method.upper())
+        try:
+            with urllib.request.urlopen(request, timeout=45) as response:
+                raw = response.read().decode("utf-8")
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(body or str(error)) from error
+        return json.loads(raw) if raw else {}
+
+    def _run_instagram_inventory_sync(self, plan: dict[str, object], popup: tk.Toplevel, refresh_callback) -> None:
+        config = plan.get("config") if isinstance(plan.get("config"), dict) else self._instagram_env_config()
+        if not str(config.get("user_id") or "").strip() or not str(config.get("access_token") or "").strip():
+            messagebox.showerror("Instagram Sync", "Missing Instagram user ID or access token in .env.")
+            return
+        missing_public = plan.get("missing_public_urls") or []
+        if missing_public:
+            messagebox.showinfo(
+                "Instagram Sync",
+                "Preview is ready, but live posting needs public photo URLs.\n\n"
+                "Add LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL or LUCAS_INSTAGRAM_PUBLIC_PHOTO_BASE_URL to .env after we set up a hosted photo URL source.",
+            )
+            return
+        if not messagebox.askyesno("Instagram Sync", f"Run live Instagram sync?\n\nPost {len(plan.get('to_post') or [])} card(s).\nRemove {len(plan.get('to_remove') or [])} old post(s) if Meta allows it."):
+            return
+        worker = threading.Thread(target=self._instagram_inventory_sync_worker, args=(plan,), daemon=True)
+        worker.start()
+        popup.after(1000, refresh_callback)
+
+    def _instagram_publish_media_with_retry(self, user_id: str, creation_id: str, caption: str) -> dict[str, object]:
+        last_error = ""
+        for attempt in range(1, 7):
+            try:
+                return self._instagram_api_json(
+                    f"{user_id}/media_publish",
+                    {"creation_id": creation_id},
+                    method="POST",
+                )
+            except RuntimeError as error:
+                last_error = str(error)
+                lowered = last_error.lower()
+                if "media is not ready" not in lowered and "media id is not available" not in lowered and "cannot publish" not in lowered:
+                    raise
+                if attempt >= 6:
+                    break
+                self.events.put(("status", f"Instagram media not ready yet for {caption[:60]}; retrying publish ({attempt}/6)."))
+                time.sleep(5)
+        raise RuntimeError(last_error or f"Instagram media was not ready for publishing: {caption}")
+
+    def _instagram_inventory_sync_worker(self, plan: dict[str, object]) -> None:
+        started = time.perf_counter()
+        state = self._load_instagram_inventory_state()
+        posts = state.setdefault("posts", {})
+        posted = 0
+        removed = 0
+        queued_removals = 0
+        errors: list[str] = []
+        try:
+            for item in plan.get("to_post") or []:
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("inventory_key") or "")
+                caption = str(item.get("caption") or "").strip()
+                photo_url = str(item.get("photo_url") or "").strip()
+                if not key or not caption or not photo_url:
+                    continue
+                create_response = self._instagram_api_json(
+                    f"{plan['config']['user_id']}/media",
+                    {"image_url": photo_url, "caption": caption},
+                    method="POST",
+                )
+                creation_id = str(create_response.get("id") or "").strip()
+                if not creation_id:
+                    raise RuntimeError(f"Instagram did not return a creation id for {caption}.")
+                publish_response = self._instagram_publish_media_with_retry(str(plan["config"]["user_id"]), creation_id, caption)
+                media_id = str(publish_response.get("id") or "").strip()
+                posts[key] = {
+                    "status": "posted",
+                    "media_id": media_id,
+                    "creation_id": creation_id,
+                    "caption": caption,
+                    "photo_url": photo_url,
+                    "posted_at": datetime.now().isoformat(timespec="seconds"),
+                }
+                posted += 1
+                self._save_instagram_inventory_state(state)
+
+            for item in plan.get("to_remove") or []:
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("inventory_key") or "")
+                media_id = str(item.get("media_id") or "").strip()
+                if not key or not media_id:
+                    continue
+                try:
+                    self._instagram_api_json(media_id, {}, method="DELETE")
+                    posts.pop(key, None)
+                    removed += 1
+                except Exception as error:
+                    entry = posts.get(key) if isinstance(posts.get(key), dict) else {}
+                    entry["status"] = "delete_review_needed"
+                    entry["delete_error"] = str(error)[:500]
+                    entry["delete_queued_at"] = datetime.now().isoformat(timespec="seconds")
+                    posts[key] = entry
+                    queued_removals += 1
+                self._save_instagram_inventory_state(state)
+        except Exception as error:
+            errors.append(str(error))
+        self._append_activity(
+            "Instagram Inventory Sync",
+            f"Instagram inventory sync posted {posted}, removed {removed}, queued {queued_removals}, errors {len(errors)}.",
+            {"posted": posted, "removed": removed, "queued_removals": queued_removals, "errors": errors[:3]},
+        )
+        self.events.put(("status", f"Instagram sync posted {posted}, removed {removed}, queued {queued_removals}, errors {len(errors)}."))
+        record_performance_event("instagram.inventory_sync", started, f"posted={posted} removed={removed} queued={queued_removals} errors={len(errors)}", force=True)
 
     def _mark_inventory_records_moved_to_company(self, moved_keys: set[str]) -> None:
         if not moved_keys:
@@ -5729,6 +6390,330 @@ class CardPipelineApp(tk.Tk):
         workbook.save(path)
         self.status_var.set(f"Exported inventory: {path}")
 
+    def _quarter_label_for_date(self, value: object) -> str:
+        record_date = self._profit_record_date(value)
+        if record_date is None:
+            return ""
+        return f"Q{((record_date.month - 1) // 3) + 1}"
+
+    def _empty_year_end_bucket(self) -> dict[str, object]:
+        return {
+            "sales": 0.0,
+            "purchase": 0.0,
+            "gross_profit": 0.0,
+            "expenses": 0.0,
+            "net_profit": 0.0,
+            "inventory_value": 0.0,
+            "inventory_cost": 0.0,
+            "sold_count": 0,
+            "active_inventory_count": 0,
+            "expense_by_type": defaultdict(float),
+            "quarters": {
+                quarter: {
+                    "sales": 0.0,
+                    "purchase": 0.0,
+                    "gross_profit": 0.0,
+                    "expenses": 0.0,
+                    "net_profit": 0.0,
+                    "sold_count": 0,
+                    "expense_by_type": defaultdict(float),
+                }
+                for quarter in ("Q1", "Q2", "Q3", "Q4")
+            },
+        }
+
+    def _year_end_report_data(self, year: int) -> dict[str, object]:
+        overall = self._empty_year_end_bucket()
+        people: defaultdict[str, dict[str, object]] = defaultdict(self._empty_year_end_bucket)
+        sales_detail: list[dict[str, object]] = []
+        expense_detail: list[dict[str, object]] = []
+        inventory_detail: list[dict[str, object]] = []
+        expense_types: set[str] = set(EXPENSE_CATEGORY_OPTIONS)
+        ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        ledger = [record for record in ledger if not self._is_manual_company_profit_backfill(record)]
+        ledger, _removed = CardPipelineApp._dedupe_profit_records(self, ledger)
+        for record in self._enrich_profit_records_with_people(ledger):
+            record_date = self._profit_record_date(record.get("date_added"))
+            if record_date is None or record_date.year != year:
+                continue
+            person = str(record.get("assigned_person") or "Unassigned").strip() or "Unassigned"
+            quarter = self._quarter_label_for_date(record.get("date_added"))
+            person_bucket = people[person]
+            is_expense = str(record.get("record_type") or "").strip().lower() == "expense"
+            if is_expense:
+                expense_type = str(record.get("expense_type") or "Fees").strip() or "Fees"
+                expense_types.add(expense_type)
+                amount = abs(self._money_value(record.get("expense_amount")) or self._money_value(record.get("profit")) or 0.0)
+                for bucket in (overall, person_bucket):
+                    bucket["expenses"] += amount
+                    bucket["net_profit"] -= amount
+                    bucket["expense_by_type"][expense_type] += amount
+                    if quarter:
+                        bucket["quarters"][quarter]["expenses"] += amount
+                        bucket["quarters"][quarter]["net_profit"] -= amount
+                        bucket["quarters"][quarter]["expense_by_type"][expense_type] += amount
+                expense_detail.append(
+                    {
+                        "date": record_date.isoformat(),
+                        "quarter": quarter,
+                        "person": person,
+                        "expense_type": expense_type,
+                        "amount": amount,
+                        "related": self._expense_related_label(record),
+                        "notes": record.get("notes") or "",
+                    }
+                )
+                continue
+            sale = self._money_value(record.get("sale_price")) or 0.0
+            purchase = self._money_value(record.get("purchase_price")) or 0.0
+            profit = self._money_value(record.get("profit"))
+            if profit is None:
+                profit = sale - purchase
+            for bucket in (overall, person_bucket):
+                bucket["sales"] += sale
+                bucket["purchase"] += purchase
+                bucket["gross_profit"] += profit
+                bucket["net_profit"] += profit
+                bucket["sold_count"] += 1
+                if quarter:
+                    bucket["quarters"][quarter]["sales"] += sale
+                    bucket["quarters"][quarter]["purchase"] += purchase
+                    bucket["quarters"][quarter]["gross_profit"] += profit
+                    bucket["quarters"][quarter]["net_profit"] += profit
+                    bucket["quarters"][quarter]["sold_count"] += 1
+            sales_detail.append(
+                {
+                    "date": record_date.isoformat(),
+                    "quarter": quarter,
+                    "person": person,
+                    "company": record.get("company") or "",
+                    "card": record.get("card_title") or "",
+                    "cert": record.get("cert_number") or record.get("item_id") or "",
+                    "purchase": purchase,
+                    "sale": sale,
+                    "profit": profit,
+                    "source_sheet": record.get("source_sheet") or "",
+                }
+            )
+        inactive_statuses = {"sold", "deleted", "removed", "archived", "company sheet"}
+        for record in [self._normalize_inventory_record(row) for row in self._load_inventory_ledger()]:
+            status = str(record.get("status") or "Active").strip() or "Active"
+            if status.lower() in inactive_statuses:
+                continue
+            person = str(record.get("assigned_person") or "Unassigned").strip() or "Unassigned"
+            person_bucket = people[person]
+            value = self._money_value(record.get("inventory_value") or record.get("estimated_payout") or record.get("purchase_price")) or 0.0
+            cost = self._money_value(record.get("purchase_price")) or 0.0
+            for bucket in (overall, person_bucket):
+                bucket["inventory_value"] += value
+                bucket["inventory_cost"] += cost
+                bucket["active_inventory_count"] += 1
+            inventory_detail.append(
+                {
+                    "person": person,
+                    "type": record.get("item_type") or "",
+                    "cert": record.get("cert_number") or record.get("item_id") or "",
+                    "grader": record.get("grader") or "",
+                    "card": record.get("card_title") or "",
+                    "purchase": cost,
+                    "value": value,
+                    "best_company": record.get("best_company") or "",
+                    "status": status,
+                    "source_sheet": record.get("source_sheet") or "",
+                }
+            )
+        return {
+            "year": year,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "overall": overall,
+            "people": dict(sorted(people.items(), key=lambda item: item[0].lower())),
+            "expense_types": sorted(expense_types, key=str.lower),
+            "sales_detail": sales_detail,
+            "expense_detail": expense_detail,
+            "inventory_detail": sorted(inventory_detail, key=lambda item: (str(item.get("person") or "").lower(), str(item.get("card") or "").lower())),
+        }
+
+    def _style_year_end_sheet(self, sheet, currency_columns: set[int] | None = None, integer_columns: set[int] | None = None) -> None:
+        header_fill = PatternFill("solid", fgColor="1ED760")
+        header_font = Font(bold=True, color="000000")
+        title_font = Font(bold=True, size=14)
+        for row in sheet.iter_rows():
+            for cell in row:
+                cell.alignment = Alignment(vertical="top")
+        if sheet.max_row >= 1:
+            for cell in sheet[1]:
+                cell.font = title_font
+        if sheet.max_row >= 2:
+            for cell in sheet[2]:
+                cell.fill = header_fill
+                cell.font = header_font
+        for column in currency_columns or set():
+            for cell in sheet.iter_cols(min_col=column, max_col=column, min_row=3, max_row=sheet.max_row):
+                for item in cell:
+                    item.number_format = '"$"#,##0.00'
+        for column in integer_columns or set():
+            for cell in sheet.iter_cols(min_col=column, max_col=column, min_row=3, max_row=sheet.max_row):
+                for item in cell:
+                    item.number_format = '#,##0'
+        for column_index in range(1, sheet.max_column + 1):
+            max_length = 10
+            for cell in sheet.iter_cols(min_col=column_index, max_col=column_index, min_row=1, max_row=sheet.max_row):
+                for item in cell:
+                    max_length = max(max_length, min(len(str(item.value or "")), 55))
+            sheet.column_dimensions[get_column_letter(column_index)].width = min(max_length + 2, 60)
+        sheet.freeze_panes = "A3"
+        if sheet.max_row >= 2 and sheet.max_column >= 1:
+            sheet.auto_filter.ref = f"A2:{get_column_letter(sheet.max_column)}{sheet.max_row}"
+
+    def _write_year_end_sheet(self, workbook: Workbook, title: str, headers: list[str], rows: list[list[object]], currency_columns: set[int] | None = None, integer_columns: set[int] | None = None):
+        sheet = workbook.create_sheet(title)
+        sheet.append([title])
+        sheet.append(headers)
+        for row in rows:
+            sheet.append(row)
+        self._style_year_end_sheet(sheet, currency_columns=currency_columns, integer_columns=integer_columns)
+        return sheet
+
+    def _build_year_end_report_workbook(self, data: dict[str, object]) -> Workbook:
+        workbook = Workbook()
+        workbook.remove(workbook.active)
+        year = int(data.get("year") or datetime.now().year)
+        overall = data["overall"]
+        people: dict[str, dict[str, object]] = data["people"]
+        summary_rows = [
+            ["Generated At", data.get("generated_at") or ""],
+            ["Report Year", year],
+            ["Total Sales", overall["sales"]],
+            ["Purchase Cost Sold", overall["purchase"]],
+            ["Gross Profit", overall["gross_profit"]],
+            ["Expenses", overall["expenses"]],
+            ["Net Profit", overall["net_profit"]],
+            ["Remaining Inventory Value", overall["inventory_value"]],
+            ["Remaining Inventory Cost", overall["inventory_cost"]],
+            ["Sold Cards", overall["sold_count"]],
+            ["Active Inventory Items", overall["active_inventory_count"]],
+        ]
+        summary_sheet = self._write_year_end_sheet(workbook, f"{year} Summary", ["Metric", "Overall"], summary_rows)
+        for row_index in range(5, 12):
+            summary_sheet.cell(row_index, 2).number_format = '"$"#,##0.00'
+        for row_index in range(12, 14):
+            summary_sheet.cell(row_index, 2).number_format = '#,##0'
+        quarterly_rows: list[list[object]] = []
+        for scope, bucket in [("Overall", overall), *people.items()]:
+            for quarter in ("Q1", "Q2", "Q3", "Q4"):
+                q = bucket["quarters"][quarter]
+                quarterly_rows.append([scope, quarter, q["sales"], q["purchase"], q["gross_profit"], q["expenses"], q["net_profit"], q["sold_count"]])
+        self._write_year_end_sheet(
+            workbook,
+            "Quarterly",
+            ["Scope", "Quarter", "Sales", "Purchase Cost Sold", "Gross Profit", "Expenses", "Net Profit", "Sold Cards"],
+            quarterly_rows,
+            currency_columns={3, 4, 5, 6, 7},
+            integer_columns={8},
+        )
+        expense_rows: list[list[object]] = []
+        for scope, bucket in [("Overall", overall), *people.items()]:
+            for expense_type in data["expense_types"]:
+                quarters = bucket["quarters"]
+                values = [quarters[quarter]["expense_by_type"].get(expense_type, 0.0) for quarter in ("Q1", "Q2", "Q3", "Q4")]
+                total = bucket["expense_by_type"].get(expense_type, 0.0)
+                if total or scope == "Overall":
+                    expense_rows.append([scope, expense_type, total, *values])
+        self._write_year_end_sheet(
+            workbook,
+            "Expenses by Type",
+            ["Scope", "Expense Type", "Year Total", "Q1", "Q2", "Q3", "Q4"],
+            expense_rows,
+            currency_columns={3, 4, 5, 6, 7},
+        )
+        person_rows = [
+            [
+                person,
+                bucket["sales"],
+                bucket["purchase"],
+                bucket["gross_profit"],
+                bucket["expenses"],
+                bucket["net_profit"],
+                bucket["inventory_value"],
+                bucket["inventory_cost"],
+                bucket["sold_count"],
+                bucket["active_inventory_count"],
+            ]
+            for person, bucket in people.items()
+        ]
+        self._write_year_end_sheet(
+            workbook,
+            "Per Person",
+            ["Person", "Sales", "Purchase Cost Sold", "Gross Profit", "Expenses", "Net Profit", "Remaining Inventory Value", "Remaining Inventory Cost", "Sold Cards", "Active Inventory"],
+            person_rows,
+            currency_columns={2, 3, 4, 5, 6, 7, 8},
+            integer_columns={9, 10},
+        )
+        inventory_rows = [
+            [row["person"], row["type"], row["cert"], row["grader"], row["card"], row["purchase"], row["value"], row["best_company"], row["status"], row["source_sheet"]]
+            for row in data["inventory_detail"]
+        ]
+        self._write_year_end_sheet(
+            workbook,
+            "Inventory Left",
+            ["Person", "Type", "Cert / Item ID", "Grader", "Card", "Purchase Cost", "Inventory Value", "Best Company", "Status", "Source Sheet"],
+            inventory_rows,
+            currency_columns={6, 7},
+        )
+        sales_rows = [
+            [row["date"], row["quarter"], row["person"], row["company"], row["card"], row["cert"], row["purchase"], row["sale"], row["profit"], row["source_sheet"]]
+            for row in data["sales_detail"]
+        ]
+        self._write_year_end_sheet(
+            workbook,
+            "Sales Detail",
+            ["Date", "Quarter", "Person", "Company", "Card", "Cert / Item ID", "Purchase", "Sale", "Profit", "Source Sheet"],
+            sales_rows,
+            currency_columns={7, 8, 9},
+        )
+        expense_detail_rows = [
+            [row["date"], row["quarter"], row["person"], row["expense_type"], row["amount"], row["related"], row["notes"]]
+            for row in data["expense_detail"]
+        ]
+        self._write_year_end_sheet(
+            workbook,
+            "Expense Detail",
+            ["Date", "Quarter", "Person", "Expense Type", "Amount", "Related", "Notes"],
+            expense_detail_rows,
+            currency_columns={5},
+        )
+        return workbook
+
+    def export_year_end_report(self) -> None:
+        current_year = datetime.now().year
+        year = simpledialog.askinteger(
+            "Export Year-End Report",
+            "Report year:",
+            initialvalue=current_year,
+            minvalue=2000,
+            maxvalue=current_year + 1,
+            parent=self,
+        )
+        if not year:
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export year-end report",
+            defaultextension=".xlsx",
+            filetypes=[("Excel workbook", "*.xlsx")],
+            initialfile=f"lucas-year-end-report-{year}-{datetime.now():%Y%m%d-%H%M%S}.xlsx",
+        )
+        if not path:
+            return
+        try:
+            data = self._year_end_report_data(int(year))
+            workbook = self._build_year_end_report_workbook(data)
+            workbook.save(path)
+        except Exception as error:
+            messagebox.showerror("Export failed", str(error))
+            return
+        self.status_var.set(f"Exported year-end report: {path}")
+        messagebox.showinfo("Export complete", f"Year-end report exported:\n\n{path}")
+
     def _profit_record_key(self, record: dict[str, object]) -> str:
         record_type = str(record.get("record_type") or "").strip().lower()
         if record_type == "expense":
@@ -5933,11 +6918,93 @@ class CardPipelineApp(tk.Tk):
         graph = self.profit_graph_var.get().strip() if hasattr(self, "profit_graph_var") else DEFAULT_PROFIT_GRAPH
         return graph if graph in PROFIT_GRAPH_OPTIONS else DEFAULT_PROFIT_GRAPH
 
+    def _profit_plot_label(self) -> str:
+        plot = self.profit_plot_var.get().strip() if hasattr(self, "profit_plot_var") else DEFAULT_PROFIT_PLOT
+        return plot if plot in PROFIT_PLOT_OPTIONS else DEFAULT_PROFIT_PLOT
+
     def _profit_chart_title(self) -> str:
-        return f"{self._profit_graph_label()} ({self._profit_period_label()})"
+        plot_label = self._profit_plot_label() if hasattr(self, "_profit_plot_label") else DEFAULT_PROFIT_PLOT
+        plot_suffix = " by Sport" if plot_label == "By Sport" else ""
+        return f"{self._profit_graph_label()}{plot_suffix} ({self._profit_period_label()})"
+
+    def _profit_sport_label(self, record: dict[str, object]) -> str:
+        def display_sport(value: str) -> str:
+            return value.upper() if value.lower() == "tcg" else value.title()
+        cached = str(record.get("_profit_sport_label") or "").strip()
+        if cached:
+            return cached
+        explicit = str(record.get("sport") or record.get("category") or "").strip()
+        if explicit:
+            label = display_sport(assignment_engine.canonical_sport_label(explicit) or explicit)
+            record["_profit_sport_label"] = label
+            return label
+        title = str(record.get("card_title") or "").strip()
+        if title:
+            cache_key = title.lower()
+            cache = self.profit_sport_cache if hasattr(self, "profit_sport_cache") else {}
+            cached_title_sport = str(cache.get(cache_key) or "").strip()
+            if cached_title_sport:
+                record["_profit_sport_label"] = cached_title_sport
+                return cached_title_sport
+            parsed = assignment_engine.parse_card_for_matching(title)
+            sport = assignment_engine.canonical_sport_label(parsed.get("sport") or "")
+            if sport:
+                label = display_sport(sport)
+                cache[cache_key] = label
+                record["_profit_sport_label"] = label
+                return label
+            cache[cache_key] = "Other"
+        record["_profit_sport_label"] = "Other"
+        return "Other"
+
+    def _profit_chart_bucket_label(self, sold_date) -> str:
+        period = self._profit_period_label()
+        if period in {"Year", "YTD", "Total"}:
+            return sold_date.strftime("%Y-%m")
+        return sold_date.isoformat()
+
+    def _profit_chart_bucket_display(self, bucket: str) -> str:
+        if len(bucket) == 7 and bucket[4] == "-":
+            try:
+                return datetime.strptime(bucket, "%Y-%m").strftime("%b")
+            except ValueError:
+                return bucket
+        return bucket[5:] if len(bucket) >= 10 else bucket
+
+    def _profit_chart_bucket_range(self, rows: list[dict[str, object]], monthly: bool) -> list[str]:
+        period = self._profit_period_label()
+        period_start, period_end = self._profit_period_bounds(period)
+        if monthly and period in {"Year", "YTD"}:
+            year = (period_end or self._profit_today()).year
+            month_end = 12 if period == "Year" else (period_end or self._profit_today()).month
+            return [f"{year}-{month:02d}" for month in range(1, month_end + 1)]
+        if monthly:
+            buckets = {
+                self._profit_chart_bucket_label(sold_date)
+                for record in rows
+                for sold_date in [self._profit_record_date(record.get("date_added"))]
+                if sold_date is not None
+            }
+            return sorted(buckets)
+        if period_start is not None and period_end is not None:
+            labels: list[str] = []
+            cursor = period_start
+            while cursor <= period_end:
+                labels.append(cursor.isoformat())
+                cursor += timedelta(days=1)
+            return labels
+        buckets = {
+            self._profit_chart_bucket_label(sold_date)
+            for record in rows
+            for sold_date in [self._profit_record_date(record.get("date_added"))]
+            if sold_date is not None
+        }
+        return sorted(buckets)
 
     def _profit_chart_series(self, rows: list[dict[str, object]]) -> tuple[list[str], list[float]]:
         daily: dict[str, float] = {}
+        sales: dict[str, float] = {}
+        ratio_mode = self._profit_graph_label() == "Profit to Sales Ratio"
         for record in rows:
             profit = self._money_value(record.get("profit"))
             sold_date = self._profit_record_date(record.get("date_added"))
@@ -5945,13 +7012,19 @@ class CardPipelineApp(tk.Tk):
                 continue
             day = sold_date.isoformat()
             daily[day] = daily.get(day, 0.0) + float(profit)
+            sale = self._money_value(record.get("sale_price"))
+            if sale is not None:
+                sales[day] = sales.get(day, 0.0) + float(sale)
         period_start, period_end = self._profit_period_bounds(self._profit_period_label())
         if period_start is not None:
             cursor = period_start
             while cursor <= period_end:
                 daily.setdefault(cursor.isoformat(), 0.0)
+                sales.setdefault(cursor.isoformat(), 0.0)
                 cursor += timedelta(days=1)
         days = sorted(daily)
+        if ratio_mode:
+            return days, [daily[day] / sales[day] if sales.get(day) else 0.0 for day in days]
         daily_values = [daily[day] for day in days]
         if self._profit_graph_label() != "Overall Profit":
             return days, daily_values
@@ -5961,6 +7034,51 @@ class CardPipelineApp(tk.Tk):
             running += value
             cumulative_values.append(running)
         return days, cumulative_values
+
+    def _profit_chart_lines(self, rows: list[dict[str, object]]) -> tuple[list[str], list[dict[str, object]], bool]:
+        if self._profit_plot_label() != "By Sport":
+            labels, values = self._profit_chart_series(rows)
+            return labels, [{"label": self._profit_graph_label(), "values": values, "color": "#22c55e"}], self._profit_graph_label() == "Profit to Sales Ratio"
+        monthly = self._profit_period_label() in {"Year", "YTD", "Total"}
+        buckets = self._profit_chart_bucket_range(rows, monthly)
+        profit_by_sport: dict[str, dict[str, float]] = {}
+        sales_by_sport: dict[str, dict[str, float]] = {}
+        for record in rows:
+            if str(record.get("record_type") or "").strip().lower() == "expense":
+                continue
+            profit = self._money_value(record.get("profit"))
+            sold_date = self._profit_record_date(record.get("date_added"))
+            if profit is None or sold_date is None:
+                continue
+            sport = self._profit_sport_label(record)
+            bucket = self._profit_chart_bucket_label(sold_date)
+            profit_by_sport.setdefault(sport, {})[bucket] = profit_by_sport.setdefault(sport, {}).get(bucket, 0.0) + float(profit)
+            sale = self._money_value(record.get("sale_price"))
+            if sale is not None:
+                sales_by_sport.setdefault(sport, {})[bucket] = sales_by_sport.setdefault(sport, {}).get(bucket, 0.0) + float(sale)
+        if not buckets:
+            buckets = sorted({bucket for sport_values in profit_by_sport.values() for bucket in sport_values})
+        sport_totals = {
+            sport: sum(abs(value) for value in profit_by_sport.get(sport, {}).values()) + sum(abs(value) for value in sales_by_sport.get(sport, {}).values()) * 0.01
+            for sport in set(profit_by_sport) | set(sales_by_sport)
+        }
+        preferred = [sport for sport in ("Football", "Baseball", "Basketball") if sport in sport_totals]
+        remaining = [sport for sport, _total in sorted(sport_totals.items(), key=lambda item: item[1], reverse=True) if sport not in preferred]
+        sports = (preferred + remaining)[:6]
+        ratio_mode = self._profit_graph_label() == "Profit to Sales Ratio"
+        lines: list[dict[str, object]] = []
+        for index, sport in enumerate(sports):
+            values = []
+            for bucket in buckets:
+                profit = profit_by_sport.get(sport, {}).get(bucket, 0.0)
+                if ratio_mode:
+                    sale = sales_by_sport.get(sport, {}).get(bucket, 0.0)
+                    values.append(profit / sale if sale else 0.0)
+                else:
+                    values.append(profit)
+            color = PROFIT_SPORT_COLORS.get(sport) or ["#22c55e", "#eab308", "#38bdf8", "#fb7185", "#c084fc", "#f97316"][index % 6]
+            lines.append({"label": sport, "values": values, "color": color})
+        return buckets, lines, ratio_mode
 
     def _set_profit_view_mode(self, mode: str) -> None:
         self.profit_view_mode.set(mode)
@@ -6743,48 +7861,61 @@ class CardPipelineApp(tk.Tk):
         plot_w = max(width - pad_left - pad_right, 10)
         plot_h = max(height - pad_top - pad_bottom, 10)
         chart_rows = self.filtered_profit_rows if hasattr(self, "filtered_profit_rows") else self.profit_rows
-        days, chart_values = self._profit_chart_series(chart_rows)
+        labels, chart_lines, percent_mode = self._profit_chart_lines(chart_rows)
         chart_title = self._profit_chart_title()
         if hasattr(self, "profit_chart_title_var"):
             self.profit_chart_title_var.set(chart_title)
-        if not days:
+        if not labels or not chart_lines:
             canvas.create_text(width / 2, height / 2, text="No profit data yet", fill="#b3b3b3", font=("Segoe UI", 12, "bold"))
             return
-        values = chart_values + [0.0]
+        values = [float(value) for line in chart_lines for value in line.get("values", [])] + [0.0]
         min_y = min(values)
         max_y = max(values)
         if min_y == max_y:
             min_y -= 1
             max_y += 1
         def x_at(index: int) -> float:
-            if len(days) == 1:
+            if len(labels) == 1:
                 return pad_left + plot_w / 2
-            return pad_left + (plot_w * index / (len(days) - 1))
+            return pad_left + (plot_w * index / (len(labels) - 1))
         def y_at(value: float) -> float:
             return pad_top + (max_y - value) / (max_y - min_y) * plot_h
+        def value_label(value: float) -> str:
+            return f"{value * 100:.2f}%" if percent_mode else format_money(value)
         zero_y = y_at(0.0)
         grid_lines = 4
         for line_index in range(grid_lines + 1):
             y = pad_top + (plot_h * line_index / grid_lines)
             value = max_y - ((max_y - min_y) * line_index / grid_lines)
             canvas.create_line(pad_left, y, pad_left + plot_w, y, fill="#2f2f2f")
-            canvas.create_text(8, y - 6, anchor="nw", text=format_money(value), fill="#8f8f8f", font=("Segoe UI", 8))
-        vertical_lines = min(max(len(days), 2), 8)
+            canvas.create_text(8, y - 6, anchor="nw", text=value_label(value), fill="#8f8f8f", font=("Segoe UI", 8))
+        vertical_lines = min(max(len(labels), 2), 8)
         for line_index in range(vertical_lines):
             x = pad_left + (plot_w * line_index / max(vertical_lines - 1, 1))
             canvas.create_line(x, pad_top, x, pad_top + plot_h, fill="#2a2a2a")
         canvas.create_line(pad_left, pad_top, pad_left, pad_top + plot_h, fill="#555555")
         canvas.create_line(pad_left, zero_y, pad_left + plot_w, zero_y, fill="#555555")
-        points = [(x_at(index), y_at(value)) for index, value in enumerate(chart_values)]
-        for first, second in zip(points, points[1:]):
-            canvas.create_line(*first, *second, fill="#22c55e", width=3)
-        for index, (x, y) in enumerate(points):
-            value = chart_values[index]
-            color = "#22c55e" if value >= 0 else "#ef4444"
-            canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=color, outline="")
-            if len(days) <= 14 or index % max(1, len(days) // 8) == 0:
-                canvas.create_text(x, height - max(18, pad_bottom - 20), text=days[index][5:], fill="#b3b3b3", font=("Segoe UI", 8))
-        canvas.create_text(pad_left, 8, anchor="nw", text=f"Line: {chart_title.lower()}", fill="#22c55e", font=("Segoe UI", 9, "bold"))
+        for line in chart_lines:
+            line_values = [float(value) for value in line.get("values", [])]
+            color = str(line.get("color") or "#22c55e")
+            points = [(x_at(index), y_at(value)) for index, value in enumerate(line_values)]
+            for first, second in zip(points, points[1:]):
+                canvas.create_line(*first, *second, fill=color, width=3)
+            for index, (x, y) in enumerate(points):
+                value = line_values[index]
+                point_color = "#ef4444" if value < 0 and not percent_mode else color
+                canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=point_color, outline="")
+        for index, label in enumerate(labels):
+            if len(labels) <= 14 or index % max(1, len(labels) // 8) == 0:
+                canvas.create_text(x_at(index), height - max(18, pad_bottom - 20), text=self._profit_chart_bucket_display(label), fill="#b3b3b3", font=("Segoe UI", 8))
+        legend_x = pad_left
+        legend_y = 8
+        for line in chart_lines[:6]:
+            color = str(line.get("color") or "#22c55e")
+            label = str(line.get("label") or "")
+            canvas.create_oval(legend_x, legend_y + 4, legend_x + 8, legend_y + 12, fill=color, outline="")
+            canvas.create_text(legend_x + 12, legend_y, anchor="nw", text=label, fill=color, font=("Segoe UI", 9, "bold"))
+            legend_x += max(88, len(label) * 8 + 34)
 
     def choose_working_folder(self) -> None:
         selected = filedialog.askdirectory(
@@ -6916,6 +8047,10 @@ class CardPipelineApp(tk.Tk):
         menu.add_command(label="Working Folder", command=self.choose_working_folder)
         menu.add_separator()
         menu.add_command(label="Recover Sold Ledger", command=self.recover_sold_ledger)
+        menu.add_command(label="Export Year-End Report", command=self.export_year_end_report)
+        if self._personal_instagram_sync_enabled():
+            menu.add_separator()
+            menu.add_command(label="Instagram Inventory Sync", command=self.open_instagram_inventory_sync)
         menu.add_separator()
         menu.add_command(label="Mobile Help", command=self.open_mobile_connection_helper)
         try:

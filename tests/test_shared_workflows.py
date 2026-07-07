@@ -6097,9 +6097,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
             _profit_period_label = app.CardPipelineApp._profit_period_label
             _profit_graph_label = app.CardPipelineApp._profit_graph_label
+            _profit_plot_label = app.CardPipelineApp._profit_plot_label
             _profit_chart_title = app.CardPipelineApp._profit_chart_title
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
+            _profit_chart_lines = app.CardPipelineApp._profit_chart_lines
+            _profit_sport_label = app.CardPipelineApp._profit_sport_label
+            _profit_chart_bucket_label = app.CardPipelineApp._profit_chart_bucket_label
+            _profit_chart_bucket_display = app.CardPipelineApp._profit_chart_bucket_display
+            _profit_chart_bucket_range = app.CardPipelineApp._profit_chart_bucket_range
 
         rows = [
             {"assigned_person": "Lucas", "date_added": "2026-06-17", "profit": 30},
@@ -6147,6 +6153,22 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(ytd_values[ytd_days.index("2026-01-05")], 40)
         self.assertEqual(ytd_values[ytd_days.index("2026-06-17")], 30)
 
+        sport_rows = [
+            {"assigned_person": "Lucas", "date_added": "2026-01-05", "sport": "football", "card_title": "2024 Panini Prizm Jayden Daniels", "profit": 20, "sale_price": 100},
+            {"assigned_person": "Lucas", "date_added": "2026-01-09", "sport": "baseball", "card_title": "2024 Topps Chrome Shohei Ohtani", "profit": 30, "sale_price": 150},
+            {"assigned_person": "Lucas", "date_added": "2026-02-02", "sport": "basketball", "card_title": "Victor Wembanyama", "profit": 25, "sale_price": 100},
+        ]
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Year")
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Profit to Sales Ratio")
+        dummy.profit_plot_var = types.SimpleNamespace(get=lambda: "By Sport")
+        labels, lines, percent_mode = dummy._profit_chart_lines(sport_rows)
+        self.assertTrue(percent_mode)
+        self.assertEqual(labels[:2], ["2026-01", "2026-02"])
+        line_lookup = {line["label"]: line["values"] for line in lines}
+        self.assertAlmostEqual(line_lookup["Football"][0], 0.20)
+        self.assertAlmostEqual(line_lookup["Baseball"][0], 0.20)
+        self.assertAlmostEqual(line_lookup["Basketball"][1], 0.25)
+
     def test_profit_month_period_uses_rolling_thirty_days(self) -> None:
         class ProfitDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -6172,6 +6194,317 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(period_start.isoformat(), "2026-06-06")
         self.assertEqual(period_end.isoformat(), "2026-07-05")
         self.assertEqual([record["date_added"] for record in filtered], ["2026-06-06", "2026-07-05"])
+
+    def test_personal_instagram_inventory_plan_separates_post_remove_and_missing_photo(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_plan = app.CardPipelineApp._instagram_inventory_plan
+            _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
+
+            def _load_instagram_inventory_state(self):
+                return {
+                    "version": 1,
+                    "posts": {
+                        "old-key": {
+                            "status": "posted",
+                            "media_id": "179000",
+                            "caption": "Sold Card",
+                        }
+                    },
+                }
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token", "public_photo_base_url": "https://example.test/photos"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {"inventory_key": "new-key", "status": "Active", "card_title": "New Card", "cert_number": "111", "photo_paths": ["front.jpg"]},
+                    {"inventory_key": "missing-key", "status": "Active", "card_title": "No Photo", "cert_number": "222", "photo_paths": []},
+                ]
+
+            def _inventory_photo_paths_for_record(self, record):
+                return [Path("/tmp") / value for value in record.get("photo_paths") or []]
+
+            def _inventory_photo_relative_path(self, path):
+                return Path(path.name)
+
+        plan = InstagramDummy()._instagram_inventory_plan()
+
+        self.assertEqual(plan["active_count"], 2)
+        self.assertEqual(len(plan["to_post"]), 1)
+        self.assertEqual(plan["to_post"][0]["caption"], "New Card")
+        self.assertEqual(plan["to_post"][0]["photo_url"], "https://example.test/photos/front.jpg")
+        self.assertEqual(len(plan["to_remove"]), 1)
+        self.assertEqual(plan["to_remove"][0]["media_id"], "179000")
+        self.assertEqual(len(plan["missing_photos"]), 1)
+
+    def test_personal_instagram_inventory_photo_url_can_use_bridge_media_route(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
+            _instagram_inventory_photo_id = app.CardPipelineApp._instagram_inventory_photo_id
+
+            def __init__(self):
+                self.state = app.BridgeState()
+
+            def _inventory_photo_storage_value(self, path):
+                return path.name
+
+        dummy = InstagramDummy()
+        url = dummy._instagram_inventory_photo_url(
+            Path("/tmp/front photo.jpg"),
+            {"public_bridge_url": "https://lucas-example.trycloudflare.com", "public_photo_base_url": ""},
+        )
+
+        self.assertTrue(url.startswith(f"https://lucas-example.trycloudflare.com/instagram/media/{dummy.state.instagram_media_token}/"))
+        self.assertTrue(url.endswith("/front-photo.jpg"))
+
+    def test_instagram_bridge_media_requires_token(self) -> None:
+        state = app.BridgeState()
+        state.instagram_media_resolver = lambda photo_id: (b"jpg-bytes", "image/jpeg") if photo_id == "abc" else None
+
+        self.assertIsNone(state.get_instagram_media("bad-token", "abc"))
+        self.assertEqual(state.get_instagram_media(state.instagram_media_token, "abc"), (b"jpg-bytes", "image/jpeg"))
+
+    def test_instagram_publish_retries_until_media_ready(self) -> None:
+        class InstagramDummy:
+            _instagram_publish_media_with_retry = app.CardPipelineApp._instagram_publish_media_with_retry
+
+            def __init__(self):
+                self.calls = 0
+                self.events = queue.Queue()
+
+            def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("Media ID is not available: media is not ready for publishing")
+                return {"id": "179123"}
+
+        dummy = InstagramDummy()
+        with patch.object(app.time, "sleep", lambda _seconds: None):
+            result = dummy._instagram_publish_media_with_retry("178", "creation", "Test Card")
+
+        self.assertEqual(result["id"], "179123")
+        self.assertEqual(dummy.calls, 2)
+
+    def test_instagram_import_existing_posts_matches_cert_and_leaves_unclear_unmatched(self) -> None:
+        class InstagramDummy:
+            _instagram_import_existing_posts = app.CardPipelineApp._instagram_import_existing_posts
+            _instagram_find_inventory_match_for_post = app.CardPipelineApp._instagram_find_inventory_match_for_post
+            _instagram_match_text_tokens = app.CardPipelineApp._instagram_match_text_tokens
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.activities = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "cert-key",
+                        "status": "Active",
+                        "card_title": "2023 Panini Prizm Victor Wembanyama Silver PSA 10",
+                        "cert_number": "0019267453",
+                    },
+                    {
+                        "inventory_key": "raw-key",
+                        "status": "Active",
+                        "card_title": "Kobe Bryant Purple Wave",
+                        "item_id": "RAW-20260706-0001",
+                    },
+                ]
+
+            def _instagram_existing_media_posts(self, config, limit=500):
+                return [
+                    {
+                        "id": "179-cert",
+                        "caption": "2023 Panini Prizm Victor Wembanyama Silver PSA 10 cert 0019267453",
+                        "permalink": "https://instagram.test/p/cert",
+                        "timestamp": "2026-07-01T00:00:00+0000",
+                    },
+                    {
+                        "id": "179-unclear",
+                        "caption": "fresh raw card available",
+                        "permalink": "https://instagram.test/p/raw",
+                    },
+                ]
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+        dummy = InstagramDummy()
+        result = dummy._instagram_import_existing_posts(use_ocr=False)
+
+        self.assertEqual(result["imported"], 1)
+        self.assertEqual(len(result["unmatched"]), 1)
+        self.assertIn("cert-key", dummy.state["posts"])
+        self.assertEqual(dummy.state["posts"]["cert-key"]["media_id"], "179-cert")
+        self.assertEqual(dummy.state["posts"]["cert-key"]["matched_by"], "cert_number")
+        self.assertNotIn("raw-key", dummy.state["posts"])
+
+    def test_instagram_import_existing_posts_can_match_strong_title_overlap(self) -> None:
+        class InstagramDummy:
+            _instagram_import_existing_posts = app.CardPipelineApp._instagram_import_existing_posts
+            _instagram_find_inventory_match_for_post = app.CardPipelineApp._instagram_find_inventory_match_for_post
+            _instagram_match_text_tokens = app.CardPipelineApp._instagram_match_text_tokens
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "title-key",
+                        "status": "Active",
+                        "card_title": "2024 Topps Chrome Caitlin Clark Blue Refractor PSA 9",
+                        "cert_number": "",
+                    }
+                ]
+
+            def _instagram_existing_media_posts(self, config, limit=500):
+                return [
+                    {
+                        "id": "179-title",
+                        "caption": "2024 Topps Chrome Caitlin Clark Blue Refractor PSA 9",
+                        "permalink": "https://instagram.test/p/title",
+                    }
+                ]
+
+            def _append_activity(self, action, summary, details):
+                pass
+
+        dummy = InstagramDummy()
+        result = dummy._instagram_import_existing_posts()
+
+        self.assertEqual(result["imported"], 1)
+        self.assertEqual(dummy.state["posts"]["title-key"]["matched_by"], "title_tokens")
+
+    def test_instagram_import_existing_posts_can_match_ocr_cert_text(self) -> None:
+        class InstagramDummy:
+            _instagram_import_existing_posts = app.CardPipelineApp._instagram_import_existing_posts
+            _instagram_find_inventory_match_for_post = app.CardPipelineApp._instagram_find_inventory_match_for_post
+            _instagram_match_text_tokens = app.CardPipelineApp._instagram_match_text_tokens
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.events = queue.Queue()
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "ocr-key",
+                        "status": "Active",
+                        "card_title": "2018 Panini Prizm Luka Doncic Silver PSA 10",
+                        "cert_number": "1234567890",
+                    }
+                ]
+
+            def _instagram_existing_media_posts(self, config, limit=500):
+                return [
+                    {
+                        "id": "179-ocr",
+                        "caption": "",
+                        "media_type": "IMAGE",
+                        "media_url": "https://instagram.test/media.jpg",
+                        "permalink": "https://instagram.test/p/ocr",
+                    }
+                ]
+
+            def _instagram_ocr_post_text(self, post, client=None):
+                return "PSA Cert 1234567890 Luka Doncic Silver"
+
+            def _append_activity(self, action, summary, details):
+                pass
+
+        dummy = InstagramDummy()
+        with patch.object(app, "genai", object()), patch.object(app, "genai_types", object()), patch.dict(os.environ, {"GOOGLE_API_KEY": "key"}), patch.object(app, "make_photo_ocr_client", lambda _api_key: object()):
+            result = dummy._instagram_import_existing_posts(use_ocr=True)
+
+        self.assertEqual(result["imported"], 1)
+        self.assertEqual(result["ocr_attempted"], 1)
+        self.assertEqual(result["ocr_matched"], 1)
+        self.assertEqual(dummy.state["posts"]["ocr-key"]["matched_by"], "ocr_cert_number")
+
+    def test_year_end_report_data_rolls_up_overall_quarterly_and_people(self) -> None:
+        class ReportDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _quarter_label_for_date = app.CardPipelineApp._quarter_label_for_date
+            _empty_year_end_bucket = app.CardPipelineApp._empty_year_end_bucket
+            _year_end_report_data = app.CardPipelineApp._year_end_report_data
+            _build_year_end_report_workbook = app.CardPipelineApp._build_year_end_report_workbook
+            _write_year_end_sheet = app.CardPipelineApp._write_year_end_sheet
+            _style_year_end_sheet = app.CardPipelineApp._style_year_end_sheet
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _expense_related_label = app.CardPipelineApp._expense_related_label
+            _is_manual_company_profit_backfill = lambda self, _record: False
+            _dedupe_profit_records = lambda self, rows: (rows, 0)
+            _enrich_profit_records_with_people = lambda self, rows: rows
+
+            def __init__(self):
+                self.profit = [
+                    {"assigned_person": "Kevin", "date_added": "2026-02-15", "purchase_price": 100, "sale_price": 150, "card_title": "Card A", "cert_number": "111"},
+                    {"assigned_person": "Kevin", "record_type": "expense", "date_added": "2026-03-01", "expense_type": "Shipping", "expense_amount": 25, "related_type": "General", "notes": "Supplies"},
+                    {"assigned_person": "Mikey", "date_added": "2026-04-02", "purchase_price": 120, "sale_price": 200, "card_title": "Card B", "cert_number": "222"},
+                    {"assigned_person": "Kevin", "date_added": "2025-12-31", "purchase_price": 10, "sale_price": 20, "card_title": "Prior Year"},
+                ]
+                self.inventory = [
+                    {"assigned_person": "Kevin", "status": "Active", "card_title": "Inventory A", "purchase_price": 100, "inventory_value": 300, "cert_number": "333"},
+                    {"assigned_person": "Mikey", "status": "Sold", "card_title": "Inventory Sold", "purchase_price": 10, "inventory_value": 50, "cert_number": "444"},
+                ]
+
+            def _load_profit_ledger(self):
+                return self.profit
+
+            def _load_inventory_ledger(self):
+                return self.inventory
+
+        dummy = ReportDummy()
+        data = dummy._year_end_report_data(2026)
+
+        self.assertEqual(data["overall"]["sales"], 350)
+        self.assertEqual(data["overall"]["purchase"], 220)
+        self.assertEqual(data["overall"]["gross_profit"], 130)
+        self.assertEqual(data["overall"]["expenses"], 25)
+        self.assertEqual(data["overall"]["net_profit"], 105)
+        self.assertEqual(data["overall"]["inventory_value"], 300)
+        self.assertEqual(data["overall"]["quarters"]["Q1"]["sales"], 150)
+        self.assertEqual(data["overall"]["quarters"]["Q1"]["expenses"], 25)
+        self.assertEqual(data["overall"]["quarters"]["Q2"]["sales"], 200)
+        self.assertEqual(data["people"]["Kevin"]["net_profit"], 25)
+        self.assertEqual(data["people"]["Kevin"]["inventory_value"], 300)
+        self.assertEqual(data["people"]["Mikey"]["gross_profit"], 80)
+        workbook = dummy._build_year_end_report_workbook(data)
+        self.assertIn("Expenses by Type", workbook.sheetnames)
+        self.assertIn("Per Person", workbook.sheetnames)
 
     def test_profit_sheet_rows_group_by_person_and_source_sheet(self) -> None:
         class ProfitDummy:
