@@ -6475,6 +6475,59 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIsNone(state.get_instagram_media("bad-token", "abc"))
         self.assertEqual(state.get_instagram_media(state.instagram_media_token, "abc"), (b"jpg-bytes", "image/jpeg"))
 
+    def test_mobile_inventory_photo_payload_and_media_response(self) -> None:
+        class MobilePhotoDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            _mobile_inventory_photo_items = app.CardPipelineApp._mobile_inventory_photo_items
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_encoded_id = app.CardPipelineApp._inventory_photo_encoded_id
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
+            _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
+            mobile_inventory_photo_response = app.CardPipelineApp.mobile_inventory_photo_response
+            _inventory_photo_media_response = app.CardPipelineApp._inventory_photo_media_response
+
+        with TemporaryDirectory() as tmp:
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "source"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            photo = app.INVENTORY_PHOTOS_DIR / "front photo.jpg"
+            photo.write_bytes(b"jpg-bytes")
+            try:
+                dummy = MobilePhotoDummy()
+                dummy.state = app.BridgeState()
+                dummy.mobile_pin = "123456"
+                record = dummy._mobile_inventory_json_record(
+                    {
+                        "assigned_person": "Kevin",
+                        "cert_number": "123",
+                        "card_title": "Test Card",
+                        "status": "Active",
+                        "photo_paths": [str(photo)],
+                    }
+                )
+
+                self.assertEqual(record["photo_count"], 1)
+                self.assertIn("/mobile/api/inventory/photo/", record["photos"][0]["url"])
+                self.assertIn("pin=123456", record["photos"][0]["url"])
+                self.assertEqual(dummy.mobile_inventory_photo_response(record["photos"][0]["id"]), (b"jpg-bytes", "image/jpeg"))
+            finally:
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+
+    def test_mobile_inventory_photo_requires_pin(self) -> None:
+        state = app.BridgeState()
+        state.mobile_pin_provider = lambda: "123456"
+        state.mobile_inventory_photo_resolver = lambda photo_id: (b"jpg-bytes", "image/jpeg") if photo_id == "abc" else None
+
+        self.assertIsNone(state.get_mobile_inventory_photo(None, {"pin": ["bad"]}, "abc"))
+        self.assertEqual(state.get_mobile_inventory_photo(None, {"pin": ["123456"]}, "abc"), (b"jpg-bytes", "image/jpeg"))
+
     def test_instagram_publish_retries_until_media_ready(self) -> None:
         class InstagramDummy:
             _instagram_publish_media_with_retry = app.CardPipelineApp._instagram_publish_media_with_retry

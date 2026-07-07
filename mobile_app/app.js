@@ -199,6 +199,63 @@ function syncPersonInputs(person) {
   if (value && !$("expensePerson").value) $("expensePerson").value = value;
 }
 
+function photoFileName(photo, record) {
+  const fallback = `${record.cert_number || record.item_id || "lucas-card"}.jpg`;
+  return String(photo.name || fallback).replace(/[^\w.\-()[\] ]+/g, "-") || fallback;
+}
+
+async function shareInventoryPhoto(record, photo) {
+  const status = $("scanSearchStatus");
+  const url = photo && photo.url;
+  if (!url) {
+    status.textContent = "No attached photo is available for that card.";
+    return;
+  }
+  status.textContent = "Preparing photo...";
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Photo request failed with ${response.status}`);
+    const blob = await response.blob();
+    const file = new File([blob], photoFileName(photo, record), { type: blob.type || "image/jpeg" });
+    const title = record.card_title || record.cert_number || "LUCAS inventory photo";
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ title, text: title, files: [file] });
+      status.textContent = "Photo shared.";
+      return;
+    }
+    const objectUrl = URL.createObjectURL(blob);
+    window.open(objectUrl, "_blank");
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    status.textContent = "Opened photo. Use Share from Safari if needed.";
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      status.textContent = "Share cancelled.";
+      return;
+    }
+    window.open(url, "_blank");
+    status.textContent = `Opened photo fallback. ${error.message || error}`;
+  }
+}
+
+function renderPhotoStrip(item, itemIndex) {
+  const photos = Array.isArray(item.photos) ? item.photos : [];
+  if (!photos.length) {
+    return '<div class="photoHint">No photo attached</div>';
+  }
+  return `
+    <div class="photoStrip" aria-label="Attached inventory photos">
+      ${photos.map((photo, photoIndex) => `
+        <div class="photoTile">
+          <a href="${escapeHtml(photo.url || "#")}" target="_blank" rel="noopener" aria-label="Open attached photo ${photoIndex + 1}">
+            <img src="${escapeHtml(photo.url || "")}" alt="${escapeHtml(item.card_title || item.cert_number || "Inventory photo")}" loading="lazy">
+          </a>
+          <button class="secondary sharePhotoButton" data-index="${itemIndex}" data-photo-index="${photoIndex}" type="button">Share Photo</button>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderResults(items) {
   const host = $("results");
   if (!items.length) {
@@ -219,11 +276,19 @@ function renderResults(items) {
         <div><strong>Person</strong>${escapeHtml(item.assigned_person || "-")}</div>
         <div><strong>Source</strong>${escapeHtml(item.source || item.source_sheet || "-")}</div>
       </div>
+      ${renderPhotoStrip(item, index)}
       ${String(item.status || "").toLowerCase() === "active" ? `<div class="resultActions"><button class="secondary sellButton" data-index="${index}" type="button">Mark Sold</button></div>` : ""}
     </article>
   `).join("");
   document.querySelectorAll(".sellButton").forEach((button) => {
     button.addEventListener("click", () => startSell(items[Number(button.dataset.index)]));
+  });
+  document.querySelectorAll(".sharePhotoButton").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = items[Number(button.dataset.index)];
+      const photos = Array.isArray(item && item.photos) ? item.photos : [];
+      shareInventoryPhoto(item, photos[Number(button.dataset.photoIndex)]);
+    });
   });
 }
 

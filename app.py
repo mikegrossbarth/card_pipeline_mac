@@ -763,6 +763,7 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_expense_add = self.mobile_expense_add
         self.state.mobile_payouts = self.mobile_payouts
         self.state.mobile_queue_sync = self.mobile_queue_sync
+        self.state.mobile_inventory_photo_resolver = self.mobile_inventory_photo_response
         self.state.instagram_media_resolver = self.instagram_inventory_media_response
         self.bridge = BridgeServer(self.state)
         self.bridge.start()
@@ -2523,6 +2524,8 @@ class CardPipelineApp(tk.Tk):
 
     def _mobile_inventory_json_record(self, record: dict[str, object]) -> dict[str, object]:
         normalized = self._normalize_inventory_record(record)
+        photo_items = getattr(self, "_mobile_inventory_photo_items", None)
+        photos = photo_items(normalized) if callable(photo_items) else []
         return {
             "inventory_key": normalized.get("inventory_key"),
             "item_type": normalized.get("item_type"),
@@ -2544,7 +2547,28 @@ class CardPipelineApp(tk.Tk):
             "source": normalized.get("source"),
             "status": normalized.get("status"),
             "notes": normalized.get("notes"),
+            "photo_count": len(photos),
+            "photos": photos,
         }
+
+    def _mobile_inventory_photo_items(self, record: dict[str, object]) -> list[dict[str, object]]:
+        bridge_state = getattr(self, "state", None)
+        mobile_path = getattr(bridge_state, "mobile_inventory_photo_path", None)
+        items: list[dict[str, object]] = []
+        for value in list(record.get("photo_paths") or [])[:MAX_INVENTORY_PHOTOS_PER_CARD]:
+            path = self._safe_inventory_photo_path(value)
+            if path is None or not path.is_file():
+                continue
+            photo_id = self._inventory_photo_encoded_id(path)
+            url_path = mobile_path(photo_id, path.name) if callable(mobile_path) else f"/mobile/api/inventory/photo/{photo_id}/{path.name}"
+            items.append(
+                {
+                    "id": photo_id,
+                    "name": path.name,
+                    "url": f"{url_path}?pin={urllib.parse.quote(str(self.mobile_pin or ''))}",
+                }
+            )
+        return items
 
     def mobile_inventory_search(self, payload: dict) -> dict:
         query = str(payload.get("query") or payload.get("q") or "").strip().lower()
@@ -3663,13 +3687,16 @@ class CardPipelineApp(tk.Tk):
         INSTAGRAM_INVENTORY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(INSTAGRAM_INVENTORY_STATE_PATH, state)
 
-    def _instagram_inventory_photo_id(self, path: Path) -> str:
+    def _inventory_photo_encoded_id(self, path: Path) -> str:
         try:
             storage_value = self._inventory_photo_storage_value(path)
         except Exception:
             storage_value = str(path)
         raw = storage_value.encode("utf-8")
         return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    def _instagram_inventory_photo_id(self, path: Path) -> str:
+        return self._inventory_photo_encoded_id(path)
 
     def _instagram_inventory_photo_url(self, path: Path, config: dict[str, str]) -> str:
         bridge_url = config.get("public_bridge_url", "").strip().rstrip("/")
@@ -3692,6 +3719,12 @@ class CardPipelineApp(tk.Tk):
     def instagram_inventory_media_response(self, photo_id: str) -> tuple[bytes, str] | None:
         if not self._personal_instagram_sync_enabled():
             return None
+        return self._inventory_photo_media_response(photo_id)
+
+    def mobile_inventory_photo_response(self, photo_id: str) -> tuple[bytes, str] | None:
+        return self._inventory_photo_media_response(photo_id)
+
+    def _inventory_photo_media_response(self, photo_id: str) -> tuple[bytes, str] | None:
         padding = "=" * (-len(str(photo_id or "")) % 4)
         try:
             path_value = base64.urlsafe_b64decode(f"{photo_id}{padding}".encode("ascii")).decode("utf-8")

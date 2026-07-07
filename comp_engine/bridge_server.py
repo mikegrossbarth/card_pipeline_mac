@@ -117,6 +117,7 @@ class BridgeState:
         self.mobile_expense_add: Callable[[dict], dict] | None = None
         self.mobile_payouts: Callable[[dict], dict] | None = None
         self.mobile_queue_sync: Callable[[dict], dict] | None = None
+        self.mobile_inventory_photo_resolver: Callable[[str], tuple[bytes, str] | None] | None = None
         self.instagram_media_token = uuid.uuid4().hex
         self.instagram_media_resolver: Callable[[str], tuple[bytes, str] | None] | None = None
         self.keep_note_sources: list[dict[str, str]] = []
@@ -249,6 +250,18 @@ class BridgeState:
         if not self.mobile_queue_sync:
             return {"ok": False, "error": "Mobile queue sync is not available."}
         return self.mobile_queue_sync(payload)
+
+    def mobile_inventory_photo_path(self, photo_id: str, filename: str = "photo.jpg") -> str:
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", str(filename or "photo.jpg")).strip("-") or "photo.jpg"
+        return f"/mobile/api/inventory/photo/{photo_id}/{safe_name}"
+
+    def get_mobile_inventory_photo(self, payload: dict | None, query: dict[str, list[str]], photo_id: str) -> tuple[bytes, str] | None:
+        if not self.mobile_auth_ok(payload, query):
+            return None
+        resolver = self.mobile_inventory_photo_resolver
+        if resolver is None:
+            return None
+        return resolver(photo_id)
 
     def instagram_media_path(self, photo_id: str, filename: str = "photo.jpg") -> str:
         token = self.instagram_media_token
@@ -1193,6 +1206,16 @@ class BridgeServer:
                         return
                     body, content_type = media
                     self._send_bytes(body, content_type, cache_control="public, max-age=3600")
+                    return
+                mobile_photo_match = re.match(r"^/mobile/api/inventory/photo/([^/]+)(?:/[^/]*)?$", parsed.path)
+                if mobile_photo_match:
+                    query = parse_qs(parsed.query)
+                    media = state.get_mobile_inventory_photo(None, query, mobile_photo_match.group(1))
+                    if media is None:
+                        self._send_json({"ok": False, "error": "not found"}, status=404)
+                        return
+                    body, content_type = media
+                    self._send_bytes(body, content_type, cache_control="private, max-age=300")
                     return
                 mobile_profile = self._mobile_profile(parsed.path)
                 if mobile_profile:

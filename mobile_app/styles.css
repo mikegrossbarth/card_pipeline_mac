@@ -272,6 +272,45 @@ textarea {
   margin-top: 10px;
 }
 
+.photoHint {
+  margin-top: 10px;
+  color: #78909b;
+  font-size: 12px;
+}
+
+.photoStrip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.photoTile {
+  min-width: 0;
+}
+
+.photoTile a {
+  display: block;
+  overflow: hidden;
+  aspect-ratio: 3 / 4;
+  border: 1px solid #2b3e4d;
+  border-radius: 8px;
+  background: #0f171d;
+}
+
+.photoTile img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photoTile .secondary {
+  min-height: 38px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
 .queueType {
   display: inline-flex;
   align-items: center;
@@ -338,5 +377,9 @@ textarea {
   .grid label:nth-last-child(1),
   .grid label:nth-child(3) {
     grid-column: 1 / -1;
+  }
+
+  .photoStrip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
