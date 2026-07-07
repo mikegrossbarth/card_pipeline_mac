@@ -8,6 +8,7 @@ const state = {
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
 const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
+const API_BASE = `${APP_BASE}/api`;
 if (!state.clientId) {
   state.clientId = `mobile-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   localStorage.setItem("lucasMobileClientId", state.clientId);
@@ -22,7 +23,7 @@ function setUnlocked(unlocked) {
 }
 
 async function api(path, body) {
-  const response = await fetch(path, {
+  const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ...body, pin: state.pin }),
@@ -150,7 +151,7 @@ async function syncQueuedActions() {
   }
   $("syncStatus").textContent = "Syncing queued actions...";
   try {
-    const result = await api("/mobile/api/sync/queue", {
+    const result = await api("/sync/queue", {
       client_id: state.clientId,
       actions: state.queue,
     });
@@ -305,7 +306,7 @@ function escapeHtml(value) {
 async function searchInventory() {
   let result;
   try {
-    result = await api("/mobile/api/inventory/search", {
+    result = await api("/inventory/search", {
       query: $("searchInput").value,
       person: $("personFilter").value,
       include_sold: $("includeSold").checked,
@@ -340,7 +341,7 @@ function addPayload(updateExisting = false) {
 async function addInventory(updateExisting = false) {
   $("addStatus").textContent = "Saving...";
   $("updateDuplicate").classList.add("hidden");
-  const result = await mutationApi("inventory.add", "/mobile/api/inventory/add", addPayload(updateExisting));
+  const result = await mutationApi("inventory.add", "/inventory/add", addPayload(updateExisting));
   if (result.queued) {
     $("addStatus").textContent = `Desktop not reachable. Queued inventory add ${result.action_id}.`;
     return;
@@ -383,7 +384,7 @@ function cancelSell() {
 async function confirmSell() {
   if (!state.sellRecord) return;
   $("sellStatus").textContent = "Saving sale...";
-  const result = await mutationApi("inventory.sold", "/mobile/api/inventory/sold", {
+  const result = await mutationApi("inventory.sold", "/inventory/sold", {
     inventory_key: state.sellRecord.inventory_key,
     sale_price: $("sellPrice").value,
     sale_date: $("sellDate").value,
@@ -423,7 +424,7 @@ function expensePayload() {
 
 async function addExpense() {
   $("expenseStatus").textContent = "Saving...";
-  const result = await mutationApi("expense.add", "/mobile/api/expenses/add", expensePayload());
+  const result = await mutationApi("expense.add", "/expenses/add", expensePayload());
   if (result.queued) {
     $("expenseStatus").textContent = `Desktop not reachable. Queued expense ${result.action_id}.`;
     $("expenseAmount").value = "";
@@ -486,7 +487,7 @@ function drawChart(chart) {
 async function loadProfit() {
   let result;
   try {
-    result = await api("/mobile/api/profit/summary", {
+    result = await api("/profit/summary", {
       person: $("profitPerson").value,
       period: $("profitPeriod").value,
       graph: $("profitGraph").value,
@@ -528,7 +529,7 @@ async function loadProfit() {
 async function loadPayouts() {
   let result;
   try {
-    result = await api("/mobile/api/payouts", { person: $("payoutPerson").value });
+    result = await api("/payouts", { person: $("payoutPerson").value });
   } catch (error) {
     $("payoutSummary").innerHTML = `<div class="hint">Desktop not reachable. ${escapeHtml(error.message || error)}</div>`;
     return;
@@ -585,7 +586,7 @@ async function identifyPhoto(file, target) {
   status.textContent = "Reading card photo...";
   try {
     const image = await fileToDataUrl(file);
-    const result = await api("/mobile/api/card/identify", { image });
+    const result = await api("/card/identify", { image });
     if (!result.ok) {
       status.textContent = result.error || "Could not read that card.";
       return;

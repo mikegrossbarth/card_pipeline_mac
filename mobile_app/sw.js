@@ -1,7 +1,7 @@
 const swPath = new URL(self.location.href).pathname;
 const profileMatch = swPath.match(/^\/mobile\/(team|personal)\//);
 const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
-const CACHE_NAME = `lucas-mobile-shell-v2-${profileMatch ? profileMatch[1] : "default"}`;
+const CACHE_NAME = `lucas-mobile-shell-v3-${profileMatch ? profileMatch[1] : "default"}`;
 const APP_SHELL = [
   APP_BASE,
   `${APP_BASE}/`,
@@ -31,16 +31,14 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET" || !url.pathname.startsWith(APP_BASE)) {
     return;
   }
-  if (url.pathname.startsWith("/mobile/api/")) {
+  if (url.pathname.startsWith("/mobile/api/") || url.pathname.startsWith(`${APP_BASE}/api/`)) {
     return;
   }
   event.respondWith(
-    caches.match(request).then((cached) => (
-      cached || fetch(request).then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-        return response;
-      })
-    ))
+    fetch(request).then((response) => {
+      const copy = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+      return response;
+    }).catch(() => caches.match(request))
   );
 });

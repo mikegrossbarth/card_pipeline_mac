@@ -1999,6 +1999,20 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(bridge.port, 8765)
         self.assertFalse(bridge.allow_port_fallback)
 
+    def test_mobile_bridge_port_uses_profile_specific_defaults(self) -> None:
+        self.assertEqual(app.mobile_bridge_port({}, Path("lucas_settings.json")), 8765)
+        self.assertEqual(
+            app.mobile_bridge_port(
+                {"pipeline_root": "/Users/test/Library/CloudStorage/Drive/LUCAS_PERSONAL"},
+                Path("lucas_settings.michael.json"),
+            ),
+            8766,
+        )
+
+    def test_mobile_bridge_port_can_be_overridden(self) -> None:
+        with patch.dict(app.os.environ, {"LUCAS_MOBILE_PORT": "8777"}):
+            self.assertEqual(app.mobile_bridge_port({}, Path("lucas_settings.json")), 8777)
+
     def test_bridge_rejects_untrusted_browser_origin(self) -> None:
         self.assertFalse(bridge_server.request_origin_allowed("https://example.com", "127.0.0.1:8765"))
         self.assertFalse(bridge_server.request_origin_allowed("file://local", "127.0.0.1:8765"))

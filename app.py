@@ -285,6 +285,31 @@ def mobile_app_host(settings: dict[str, object] | None = None) -> str:
     return macos_local_mobile_host() or lan_mobile_host()
 
 
+def is_personal_lucas_profile(settings: dict[str, object] | None = None, settings_path: Path | None = None) -> bool:
+    settings = settings or {}
+    path = settings_path or SETTINGS_PATH
+    path_text = str(path).lower()
+    pipeline_text = str(settings.get("pipeline_root") or CARD_PIPELINE_DIR).lower()
+    folder_text = str(settings.get("working_sheets_dir") or "").lower()
+    return any(
+        marker in text
+        for text in (path_text, pipeline_text, folder_text)
+        for marker in ("lucas_personal", "personal lucas", "lucas_settings.michael")
+    )
+
+
+def mobile_bridge_port(settings: dict[str, object] | None = None, settings_path: Path | None = None) -> int:
+    raw_port = str(os.environ.get("LUCAS_MOBILE_PORT") or (settings or {}).get("mobile_port") or "").strip()
+    if raw_port:
+        try:
+            port = int(raw_port)
+        except ValueError:
+            port = 0
+        if 1024 <= port <= 65535:
+            return port
+    return 8766 if is_personal_lucas_profile(settings, settings_path) else 8765
+
+
 def make_photo_ocr_client(api_key: str):
     if genai is None:
         return None
@@ -765,7 +790,7 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_queue_sync = self.mobile_queue_sync
         self.state.mobile_inventory_photo_resolver = self.mobile_inventory_photo_response
         self.state.instagram_media_resolver = self.instagram_inventory_media_response
-        self.bridge = BridgeServer(self.state)
+        self.bridge = BridgeServer(self.state, port=mobile_bridge_port(self.app_settings, SETTINGS_PATH))
         self.bridge.start()
         self._refresh_keep_source_registry()
         app_debug_log(f"bridge_started started={self.bridge.started} port={self.bridge.port} error={self.bridge.error}")
@@ -3568,8 +3593,7 @@ class CardPipelineApp(tk.Tk):
         self._append_activity("Inventory Add", f"Added inventory card {card_id}.", {"item_id": record.get("item_id"), "cert_number": record.get("cert_number"), "person": record.get("assigned_person"), "card": record.get("card_title")})
 
     def _is_personal_lucas(self) -> bool:
-        root_text = str(CARD_PIPELINE_DIR).lower()
-        return "lucas_personal" in root_text or "personal lucas" in root_text
+        return is_personal_lucas_profile(getattr(self, "app_settings", {}), SETTINGS_PATH)
 
     def _personal_instagram_sync_enabled(self) -> bool:
         return str(os.environ.get("LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC") or "").strip().lower() in {"1", "true", "yes", "on"}

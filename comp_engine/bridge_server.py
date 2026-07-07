@@ -1230,6 +1230,12 @@ class BridgeServer:
                     if relative == "manifest.webmanifest":
                         self._send_mobile_manifest(mobile_profile)
                         return
+                    if relative.startswith("api/"):
+                        if relative == "api/config":
+                            self._send_json(state.mobile_config())
+                            return
+                        self._send_json({"ok": False, "error": "unknown endpoint"}, status=404)
+                        return
                     self._send_static(MOBILE_APP_DIR / relative)
                     return
                 if parsed.path in {"/mobile", "/mobile/"}:
@@ -1266,28 +1272,29 @@ class BridgeServer:
                     self._send_json({"ok": False, "error": "local bridge access only"}, status=403)
                     return
                 payload = self._read_json()
-                if parsed.path.startswith("/mobile/api/inventory/search"):
+                mobile_api_path = self._mobile_api_path(parsed.path)
+                if mobile_api_path.startswith("/mobile/api/inventory/search"):
                     self._send_json(state.search_mobile_inventory(payload))
                     return
-                if parsed.path.startswith("/mobile/api/inventory/add"):
+                if mobile_api_path.startswith("/mobile/api/inventory/add"):
                     self._send_json(state.add_mobile_inventory(payload))
                     return
-                if parsed.path.startswith("/mobile/api/inventory/sold"):
+                if mobile_api_path.startswith("/mobile/api/inventory/sold"):
                     self._send_json(state.mark_mobile_inventory_sold(payload))
                     return
-                if parsed.path.startswith("/mobile/api/card/identify"):
+                if mobile_api_path.startswith("/mobile/api/card/identify"):
                     self._send_json(state.identify_mobile_card(payload))
                     return
-                if parsed.path.startswith("/mobile/api/profit/summary"):
+                if mobile_api_path.startswith("/mobile/api/profit/summary"):
                     self._send_json(state.get_mobile_profit_summary(payload))
                     return
-                if parsed.path.startswith("/mobile/api/expenses/add"):
+                if mobile_api_path.startswith("/mobile/api/expenses/add"):
                     self._send_json(state.add_mobile_expense(payload))
                     return
-                if parsed.path.startswith("/mobile/api/payouts"):
+                if mobile_api_path.startswith("/mobile/api/payouts"):
                     self._send_json(state.get_mobile_payouts(payload))
                     return
-                if parsed.path.startswith("/mobile/api/sync/queue"):
+                if mobile_api_path.startswith("/mobile/api/sync/queue"):
                     self._send_json(state.sync_mobile_queue(payload))
                     return
                 if parsed.path.startswith("/ack"):
@@ -1348,6 +1355,12 @@ class BridgeServer:
             def _mobile_profile(self, path: str) -> str:
                 match = re.match(r"^/mobile/(team|personal)(?:/|$)", path)
                 return match.group(1) if match else ""
+
+            def _mobile_api_path(self, path: str) -> str:
+                match = re.match(r"^/mobile/(?:team|personal)/(api/.*)$", path)
+                if match:
+                    return f"/mobile/{match.group(1)}"
+                return path
 
             def _send_mobile_index(self, profile: str) -> None:
                 label = MOBILE_PROFILE_LABELS.get(profile, "LUCAS")
