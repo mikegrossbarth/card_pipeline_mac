@@ -5209,6 +5209,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
             _mark_inventory_records_moved_to_company = app.CardPipelineApp._mark_inventory_records_moved_to_company
             _inventory_record_can_move_to_company_sheet = app.CardPipelineApp._inventory_record_can_move_to_company_sheet
+            _company_sheet_reset_schedules = app.CardPipelineApp._company_sheet_reset_schedules
+            _company_sheet_schedule_for_company = app.CardPipelineApp._company_sheet_schedule_for_company
+            _company_sheet_week_start_for_company = app.CardPipelineApp._company_sheet_week_start_for_company
+            _company_sheet_name_lookup_for_rows = app.CardPipelineApp._company_sheet_name_lookup_for_rows
             move_selected_inventory_to_company_sheets = app.CardPipelineApp.move_selected_inventory_to_company_sheets
             _move_inventory_records_to_company_sheets = app.CardPipelineApp._move_inventory_records_to_company_sheets
             _profit_record_key = app.CardPipelineApp._profit_record_key
@@ -5289,6 +5293,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
             _mark_inventory_records_moved_to_company = app.CardPipelineApp._mark_inventory_records_moved_to_company
+            _company_sheet_reset_schedules = app.CardPipelineApp._company_sheet_reset_schedules
+            _company_sheet_schedule_for_company = app.CardPipelineApp._company_sheet_schedule_for_company
+            _company_sheet_week_start_for_company = app.CardPipelineApp._company_sheet_week_start_for_company
+            _company_sheet_name_lookup_for_rows = app.CardPipelineApp._company_sheet_name_lookup_for_rows
             _move_inventory_records_to_company_sheets = app.CardPipelineApp._move_inventory_records_to_company_sheets
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
@@ -6481,6 +6489,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class InstagramDummy:
             _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
             _instagram_inventory_photo_id = app.CardPipelineApp._instagram_inventory_photo_id
+            _inventory_photo_encoded_id = app.CardPipelineApp._inventory_photo_encoded_id
 
             def __init__(self):
                 self.state = app.BridgeState()
