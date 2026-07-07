@@ -2064,15 +2064,33 @@ class CardPipelineApp(tk.Tk):
         popup.title("Inventory Filters")
         popup.configure(bg=self.colors["bg"])
         popup.transient(self)
-        popup.geometry("520x385")
-        popup.minsize(500, 365)
+        popup.geometry("600x500")
+        popup.minsize(560, 455)
         frame = ttk.Frame(popup, style="App.TFrame", padding=18)
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text="Inventory Filters", style="AppTitle.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 12))
 
         ttk.Label(frame, text="Sport", style="AppMuted.TLabel").grid(row=1, column=0, sticky="w", pady=(0, 10))
-        sport_combo = ttk.Combobox(frame, textvariable=self.inventory_sport_var, values=("", *ASSIGNMENT_CATEGORY_OPTIONS), width=22)
-        sport_combo.grid(row=1, column=1, columnspan=3, sticky="w", pady=(0, 10))
+        sport_frame = ttk.Frame(frame, style="App.TFrame")
+        sport_frame.grid(row=1, column=1, columnspan=3, sticky="ew", pady=(0, 10))
+        selected_sports = self._inventory_sport_filter_values()
+        sport_vars: dict[str, tk.BooleanVar] = {}
+
+        def sync_sport_filter() -> None:
+            values = [sport for sport in ASSIGNMENT_CATEGORY_OPTIONS if sport_vars[sport].get()]
+            self.inventory_sport_var.set(", ".join(values))
+
+        for index, sport in enumerate(ASSIGNMENT_CATEGORY_OPTIONS):
+            sport_key = (assignment_engine.canonical_sport_label(sport) or sport).strip().lower()
+            var = tk.BooleanVar(value=sport_key in selected_sports)
+            sport_vars[sport] = var
+            ttk.Checkbutton(
+                sport_frame,
+                text=sport.title(),
+                variable=var,
+                command=sync_sport_filter,
+                style="Panel.TCheckbutton",
+            ).grid(row=index // 3, column=index % 3, sticky="w", padx=(0, 14), pady=(0, 4))
 
         ttk.Label(frame, text="Grader", style="AppMuted.TLabel").grid(row=2, column=0, sticky="w", pady=(0, 10))
         grader_combo = ttk.Combobox(frame, textvariable=self.inventory_grader_var, values=("", "PSA", "BGS", "CGC", "SGC"), width=22)
@@ -6477,7 +6495,7 @@ class CardPipelineApp(tk.Tk):
 
     def _filtered_inventory_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         person = self.inventory_person_var.get().strip().lower() if hasattr(self, "inventory_person_var") else ""
-        sport = self.inventory_sport_var.get().strip().lower() if hasattr(self, "inventory_sport_var") else ""
+        sport_filters = self._inventory_sport_filter_values()
         grader = self.inventory_grader_var.get().strip().lower() if hasattr(self, "inventory_grader_var") else ""
         card_year = re.sub(r"\D", "", self.inventory_year_var.get()) if hasattr(self, "inventory_year_var") else ""
         search = self.inventory_search_var.get().strip().lower() if hasattr(self, "inventory_search_var") else ""
@@ -6492,8 +6510,11 @@ class CardPipelineApp(tk.Tk):
                 continue
             if person and person not in str(record.get("assigned_person") or "Unassigned").lower():
                 continue
-            if sport and sport not in str(record.get("sport") or "").lower():
-                continue
+            if sport_filters:
+                record_sport_text = str(record.get("sport") or "").strip().lower()
+                record_sport = (assignment_engine.canonical_sport_label(record_sport_text) or record_sport_text).strip().lower()
+                if record_sport not in sport_filters and not any(sport in record_sport_text for sport in sport_filters):
+                    continue
             if grader and grader not in str(record.get("grader") or "").lower():
                 continue
             if card_year and card_year not in self._inventory_record_card_years(record):
@@ -6517,6 +6538,18 @@ class CardPipelineApp(tk.Tk):
                 continue
             filtered.append(record)
         return filtered
+
+    def _inventory_sport_filter_values(self) -> set[str]:
+        if not hasattr(self, "inventory_sport_var"):
+            return set()
+        raw = str(self.inventory_sport_var.get() or "")
+        values: set[str] = set()
+        for part in re.split(r"[,;/|]", raw):
+            text = part.strip().lower()
+            if not text:
+                continue
+            values.add((assignment_engine.canonical_sport_label(text) or text).strip().lower())
+        return values
 
     def _inventory_record_card_years(self, record: dict[str, object]) -> set[str]:
         values = (

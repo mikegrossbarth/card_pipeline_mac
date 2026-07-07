@@ -628,6 +628,7 @@ class CYLookupTests(unittest.TestCase):
             card_title="Card One PSA 10",
         )
         state.set_rows([row])
+        state.cardladder_allows_cy = True
 
         with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
                 patch.object(bridge_server, "lookup_cy_buy_price", return_value=(None, "not found")):
@@ -3934,6 +3935,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
 
         dummy = InventoryDummy()
@@ -3956,6 +3958,37 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.inventory_search_var = FieldVar("hidden sold")
         self.assertEqual(dummy._filtered_inventory_records(rows), [])
 
+    def test_inventory_sport_filter_accepts_multiple_checked_sports(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+
+        dummy = InventoryDummy()
+        dummy.inventory_person_var = FieldVar("")
+        dummy.inventory_sport_var = FieldVar("football, basketball, baseball")
+        dummy.inventory_search_var = FieldVar("")
+        dummy.inventory_min_var = FieldVar("")
+        dummy.inventory_max_var = FieldVar("")
+        rows = [
+            {"status": "Active", "cert_number": "1", "sport": "football", "card_title": "Football Card", "inventory_value": 100},
+            {"status": "Active", "cert_number": "2", "sport": "basketball", "card_title": "Basketball Card", "inventory_value": 100},
+            {"status": "Active", "cert_number": "3", "sport": "baseball", "card_title": "Baseball Card", "inventory_value": 100},
+            {"status": "Active", "cert_number": "4", "sport": "pokemon", "card_title": "Pokemon Card", "inventory_value": 100},
+        ]
+
+        filtered = dummy._filtered_inventory_records(rows)
+
+        self.assertEqual([record["cert_number"] for record in filtered], ["1", "2", "3"])
+
     def test_inventory_filter_applies_date_min_and_max(self) -> None:
         class FieldVar:
             def __init__(self, value=""):
@@ -3967,6 +4000,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
             _profit_record_date = app.CardPipelineApp._profit_record_date
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
 
         dummy = InventoryDummy()
@@ -3995,6 +4029,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
 
         dummy = InventoryDummy()
@@ -4022,6 +4057,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
             _inventory_record_card_years = app.CardPipelineApp._inventory_record_card_years
 
@@ -4073,6 +4109,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
             refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
 
@@ -4174,6 +4211,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
             refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
 
@@ -4271,6 +4309,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
             _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
             refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
             update_inventory_payouts = app.CardPipelineApp.update_inventory_payouts
