@@ -1368,6 +1368,31 @@ class AssignmentEngineTests(unittest.TestCase):
             self.assertEqual(engine.recommend(row, person="Lucas").payout, 95)
             self.assertEqual(engine.recommend(row, person="Other").payout, 80)
 
+    def test_assignment_engine_loads_company_sheet_reset_schedule(self) -> None:
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "assignment_companies.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "companies": [
+                            {
+                                "name": "Arena Club",
+                                "accept_all": True,
+                                "rate": "80%",
+                                "reset_weekday": "Wednesday",
+                                "reset_time": "12:30",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            engine = assignment_engine.AssignmentEngine.load(config_path)
+
+        self.assertEqual(engine.companies[0].reset_weekday, "Wednesday")
+        self.assertEqual(engine.companies[0].reset_time, "12:30")
+
     def test_company_can_prefer_card_ladder_value_over_comps(self) -> None:
         row = WorkbookRow(
             excel_row=2,
@@ -6337,6 +6362,68 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(plan["to_remove"][0]["media_id"], "179000")
         self.assertEqual(len(plan["missing_photos"]), 1)
 
+    def test_company_sheet_week_start_uses_configured_reset_day_and_time(self) -> None:
+        before_reset = datetime(2026, 7, 8, 11, 30)
+        after_reset = datetime(2026, 7, 8, 12, 30)
+
+        self.assertEqual(
+            app.company_sheet_week_start_for_schedule(before_reset, "Wednesday", "12:00").isoformat(),
+            "2026-07-01",
+        )
+        self.assertEqual(
+            app.company_sheet_week_start_for_schedule(after_reset, "Wednesday", "12:00").isoformat(),
+            "2026-07-08",
+        )
+        self.assertEqual(
+            app.company_sheet_week_start_for_schedule(datetime(2026, 7, 6, 19, 59), "Monday", "8:00 PM").isoformat(),
+            "2026-06-29",
+        )
+
+    def test_company_sheet_reset_schedules_prefer_assignment_rules(self) -> None:
+        class Dummy:
+            _company_sheet_reset_schedules = app.CardPipelineApp._company_sheet_reset_schedules
+
+        dummy = Dummy()
+        dummy.app_settings = {
+            "company_sheet_reset_schedules": {
+                "Arena Club": {"weekday": "Monday", "time": "20:00"},
+            }
+        }
+        dummy.assignment_engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Arena Club",
+                    assignment_engine.CompanyRules(accept_all=True),
+                    [assignment_engine.PayoutTier(rate=0.8)],
+                    reset_weekday="Wednesday",
+                    reset_time="12:30",
+                )
+            ]
+        )
+
+        schedules = dummy._company_sheet_reset_schedules()
+
+        self.assertEqual(schedules["Arena Club"], {"weekday": "Wednesday", "time": "12:30"})
+
+    def test_append_company_sheet_rows_uses_company_sheet_name_lookup(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="1234567890",
+            card_title="Test Card",
+            grader="PSA",
+            existing_value=10,
+            best_company="Fanatics",
+            estimated_payout=15,
+        )
+        with TemporaryDirectory() as tmpdir:
+            result = append_company_sheet_rows(
+                Path(tmpdir),
+                [row],
+                sheet_name_lookup={"Fanatics": "Week of 2026-07-08"},
+            )
+            self.assertEqual(result["rows_added"], 1)
+            self.assertIn("Week of 2026-07-08", result["added_records"][0]["weekly_sheet_name"])
+
     def test_personal_instagram_inventory_photo_url_can_use_bridge_media_route(self) -> None:
         class InstagramDummy:
             _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
@@ -6356,6 +6443,30 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertTrue(url.startswith(f"https://lucas-example.trycloudflare.com/instagram/media/{dummy.state.instagram_media_token}/"))
         self.assertTrue(url.endswith("/front-photo.jpg"))
+
+    def test_instagram_env_config_prefers_background_tunnel_url(self) -> None:
+        class InstagramDummy:
+            _instagram_env_config = app.CardPipelineApp._instagram_env_config
+
+            def _instagram_background_tunnel_enabled(self):
+                return True
+
+            def _ensure_instagram_background_tunnel(self):
+                return "https://hidden-background.trycloudflare.com"
+
+        dummy = InstagramDummy()
+        with patch.dict(
+            os.environ,
+            {
+                "LUCAS_INSTAGRAM_USER_ID": "178",
+                "LUCAS_INSTAGRAM_ACCESS_TOKEN": "token",
+                "LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL": "https://manual-url.trycloudflare.com",
+            },
+            clear=False,
+        ):
+            config = dummy._instagram_env_config()
+
+        self.assertEqual(config["public_bridge_url"], "https://hidden-background.trycloudflare.com")
 
     def test_instagram_bridge_media_requires_token(self) -> None:
         state = app.BridgeState()

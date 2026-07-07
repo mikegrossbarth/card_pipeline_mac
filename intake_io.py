@@ -376,7 +376,13 @@ def write_pipeline_output(path: Path, rows: list[Any], source_lookup: dict[int, 
     return path
 
 
-def append_company_sheet_rows(directory: Path, rows: list[Any], source_lookup: dict[int, str] | None = None, sheet_source_lookup: dict[int, str] | None = None) -> dict[str, Any]:
+def append_company_sheet_rows(
+    directory: Path,
+    rows: list[Any],
+    source_lookup: dict[int, str] | None = None,
+    sheet_source_lookup: dict[int, str] | None = None,
+    sheet_name_lookup: dict[str, str] | None = None,
+) -> dict[str, Any]:
     result = {"files_updated": 0, "rows_added": 0, "skipped": 0, "errors": [], "added_records": []}
     grouped: dict[str, list[Any]] = {}
     for row in rows:
@@ -390,7 +396,7 @@ def append_company_sheet_rows(directory: Path, rows: list[Any], source_lookup: d
     directory.mkdir(parents=True, exist_ok=True)
     for company, company_rows in grouped.items():
         path = company_workbook_path(directory, company)
-        sheet_name = company_weekly_sheet_name()
+        sheet_name = (sheet_name_lookup or {}).get(company) or company_weekly_sheet_name()
         try:
             append_result = append_rows_to_company_sheet(path, company_rows, source_lookup, sheet_source_lookup, sheet_name=sheet_name)
             added = int(append_result.get("added") or 0)
@@ -441,7 +447,12 @@ def company_weekly_sheet_path(directory: Path, company: str, today: date | datet
     return company_dir / f"{safe_company} WEEK OF {start:%Y-%m-%d}.xlsx"
 
 
-def ensure_company_weekly_sheets(directory: Path, companies: list[str], week_start_date: date | None = None) -> dict[str, Any]:
+def ensure_company_weekly_sheets(
+    directory: Path,
+    companies: list[str],
+    week_start_date: date | None = None,
+    week_start_lookup: dict[str, date] | None = None,
+) -> dict[str, Any]:
     result = {"created": [], "existing": [], "errors": []}
     for company in companies:
         company = clean_part(company)
@@ -449,7 +460,8 @@ def ensure_company_weekly_sheets(directory: Path, companies: list[str], week_sta
             continue
         try:
             path = company_workbook_path(directory, company)
-            sheet_name = company_weekly_sheet_name(week_start_date or date.today())
+            company_week_start = (week_start_lookup or {}).get(company) or week_start_date or date.today()
+            sheet_name = company_weekly_sheet_name(company_week_start)
             created = ensure_company_workbook_sheet(path, sheet_name)
             sheet_ref = f"{path}:{sheet_name}"
             if created:

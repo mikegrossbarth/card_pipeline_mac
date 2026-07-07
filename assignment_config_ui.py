@@ -57,6 +57,9 @@ VALUE_SOURCE_LABELS = {
     "card_ladder": "Card Ladder value",
     "cy_estimate": "CY Estimate",
 }
+COMPANY_RESET_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+DEFAULT_COMPANY_RESET_WEEKDAY = "Monday"
+DEFAULT_COMPANY_RESET_TIME = "20:00"
 SELLER_TERMS_FIELDS = ("Seller", "Sheet Type", "Seller Rate", "Deduction")
 SELLER_TERMS_FIELD_LABELS = {
     "Seller Rate": "Seller Rate %",
@@ -169,6 +172,25 @@ def seller_terms_rate(value: object) -> float | None:
         return None
     rate = numeric / 100 if "%" in raw or numeric > 1 else numeric
     return rate if rate >= 0 else None
+
+
+def normalize_company_reset_weekday(value: object) -> str:
+    text = str(value or DEFAULT_COMPANY_RESET_WEEKDAY).strip().title()
+    return text if text in COMPANY_RESET_WEEKDAYS else DEFAULT_COMPANY_RESET_WEEKDAY
+
+
+def normalize_company_reset_time(value: object) -> str:
+    text = str(value or DEFAULT_COMPANY_RESET_TIME).strip()
+    if not text:
+        text = DEFAULT_COMPANY_RESET_TIME
+    for pattern in ("%H:%M", "%H%M", "%I:%M %p", "%I %p", "%I:%M%p", "%I%p"):
+        try:
+            from datetime import datetime
+
+            return datetime.strptime(text.upper(), pattern).time().strftime("%H:%M")
+        except ValueError:
+            continue
+    raise ValueError("Use a time like 20:00 or 8:00 PM.")
 
 
 def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str, Any]]) -> list[str]:
@@ -304,6 +326,8 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.link_payouts_to_rule_source = tk.BooleanVar(value=False)
         self.payout_source_mode = tk.StringVar(value="manual")
         self.payout_source_path = tk.StringVar()
+        self.reset_weekday = tk.StringVar(value=DEFAULT_COMPANY_RESET_WEEKDAY)
+        self.reset_time = tk.StringVar(value=DEFAULT_COMPANY_RESET_TIME)
         self.status = tk.StringVar(value="Create or edit a company, then save.")
         self.preview_status = tk.StringVar(value="No source file selected.")
         self.google_status = tk.StringVar(value="")
@@ -413,6 +437,23 @@ class AssignmentRulesDialog(tk.Toplevel):
                 variable=self.value_source,
                 style="Assign.TRadiobutton",
             ).grid(row=0, column=index, sticky=tk.W, padx=(0, 16))
+        ttk.Label(details, text="Company Sheet Reset", style="Assign.TLabel").grid(row=2, column=0, sticky=tk.W, padx=(0, 10), pady=(8, 0))
+        reset_frame = ttk.Frame(details, style="AssignPanel.TFrame")
+        reset_frame.grid(row=2, column=1, sticky=tk.W, pady=(8, 0))
+        ttk.Combobox(
+            reset_frame,
+            textvariable=self.reset_weekday,
+            values=COMPANY_RESET_WEEKDAYS,
+            width=14,
+            state="readonly",
+            style="Assign.TCombobox",
+        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
+        ttk.Entry(reset_frame, textvariable=self.reset_time, width=12, style="Assign.TEntry").grid(row=0, column=1, sticky=tk.W)
+        ttk.Label(
+            reset_frame,
+            text="Starts the next weekly company sheet at this weekday/time.",
+            style="AssignMuted.TLabel",
+        ).grid(row=0, column=2, sticky=tk.W, padx=(10, 0))
 
         sources = ttk.Frame(main, style="AssignPanel.TFrame", padding=12)
         sources.grid(row=1, column=0, sticky="ew", pady=(12, 0))
@@ -696,6 +737,11 @@ class AssignmentRulesDialog(tk.Toplevel):
         company = self.companies[index]
         self.company_name.set(str(company.get("name") or ""))
         self.value_source.set(normalize_value_source(company.get("value_source") or company.get("valueSource")))
+        self.reset_weekday.set(normalize_company_reset_weekday(company.get("reset_weekday") or company.get("resetWeekday")))
+        try:
+            self.reset_time.set(normalize_company_reset_time(company.get("reset_time") or company.get("resetTime")))
+        except ValueError:
+            self.reset_time.set(DEFAULT_COMPANY_RESET_TIME)
         self.rule_source_mode.set(str(company.get("rules_source_kind") or source_kind_for_path(company.get("rules"))))
         self.rule_source_path.set(display_source_path(company.get("rules")))
         self.rule_materialized_source = company.get("rules") if isinstance(company.get("rules"), dict) else None
@@ -732,6 +778,8 @@ class AssignmentRulesDialog(tk.Toplevel):
         self._refresh_company_list()
         self.company_name.set("")
         self.value_source.set("comps")
+        self.reset_weekday.set(DEFAULT_COMPANY_RESET_WEEKDAY)
+        self.reset_time.set(DEFAULT_COMPANY_RESET_TIME)
         self.rule_source_mode.set("manual")
         self.rule_source_path.set("")
         self.link_payouts_to_rule_source.set(False)
@@ -960,6 +1008,12 @@ class AssignmentRulesDialog(tk.Toplevel):
         if not name:
             messagebox.showinfo("Company name", "Name the company before saving.")
             return False
+        reset_weekday = normalize_company_reset_weekday(self.reset_weekday.get())
+        try:
+            reset_time = normalize_company_reset_time(self.reset_time.get())
+        except ValueError as error:
+            messagebox.showinfo("Company sheet reset", str(error))
+            return False
 
         rule_source = self._save_or_link_rules(name)
         if not rule_source:
@@ -972,6 +1026,8 @@ class AssignmentRulesDialog(tk.Toplevel):
             "name": name,
             "active": self.companies[self.selected_index].get("active", True) if self.selected_index is not None else True,
             "value_source": normalize_value_source(self.value_source.get()),
+            "reset_weekday": reset_weekday,
+            "reset_time": reset_time,
             "rules": rule_source,
             "rules_source_kind": self.rule_source_mode.get(),
             "payout": payout_source,

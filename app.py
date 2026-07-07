@@ -165,6 +165,9 @@ PROFIT_PLOT_OPTIONS = ("Overall", "By Sport")
 DEFAULT_PROFIT_PERIOD = "Year"
 DEFAULT_PROFIT_GRAPH = "Overall Profit"
 DEFAULT_PROFIT_PLOT = "Overall"
+COMPANY_RESET_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+DEFAULT_COMPANY_RESET_WEEKDAY = "Monday"
+DEFAULT_COMPANY_RESET_TIME = "20:00"
 PROFIT_SPORT_COLORS = {
     "Football": "#3b82f6",
     "Baseball": "#ef4444",
@@ -389,6 +392,32 @@ initialize_pipeline_root()
 
 def company_sheet_week_start_for_time(moment: datetime) -> datetime.date:
     return intake_company_week_start_for_time(moment)
+
+
+def parse_company_reset_time(value: object) -> datetime.time:
+    text = str(value or "").strip()
+    if not text:
+        text = DEFAULT_COMPANY_RESET_TIME
+    for pattern in ("%H:%M", "%H%M", "%I:%M %p", "%I %p", "%I:%M%p", "%I%p"):
+        try:
+            return datetime.strptime(text.upper(), pattern).time().replace(second=0, microsecond=0)
+        except ValueError:
+            continue
+    raise ValueError("Use a time like 20:00 or 8:00 PM.")
+
+
+def company_sheet_week_start_for_schedule(moment: datetime, weekday: object = DEFAULT_COMPANY_RESET_WEEKDAY, reset_time: object = DEFAULT_COMPANY_RESET_TIME) -> datetime.date:
+    weekday_text = str(weekday or DEFAULT_COMPANY_RESET_WEEKDAY).strip().title()
+    if weekday_text not in COMPANY_RESET_WEEKDAYS:
+        weekday_text = DEFAULT_COMPANY_RESET_WEEKDAY
+    reset_weekday = COMPANY_RESET_WEEKDAYS.index(weekday_text)
+    reset_clock = parse_company_reset_time(reset_time)
+    days_since_reset_day = (moment.weekday() - reset_weekday) % 7
+    current_reset_date = moment.date() - timedelta(days=days_since_reset_day)
+    current_reset = datetime.combine(current_reset_date, reset_clock)
+    if moment < current_reset:
+        current_reset_date -= timedelta(days=7)
+    return current_reset_date
 
 DISPLAY_COLUMNS = (
     "excel_row",
@@ -705,6 +734,9 @@ class CardPipelineApp(tk.Tk):
         self.tooltip_after_id: str | None = None
         self.tooltip_widget: tk.Widget | None = None
         self._button_tooltip_classes_bound = False
+        self.instagram_tunnel_process: subprocess.Popen | None = None
+        self.instagram_tunnel_public_url = ""
+        self.instagram_tunnel_log_path = ROOT / "work" / "instagram-cloudflared.log"
 
         self.events: queue.Queue[str] = queue.Queue()
         self.intake_rows: list[WorkbookRow] = []
@@ -742,6 +774,8 @@ class CardPipelineApp(tk.Tk):
             if self.bridge.started
             else f"Card Ladder bridge failed to start: {self.bridge.error}"
         )
+        if self.bridge.started and self._personal_instagram_sync_enabled():
+            self._ensure_instagram_background_tunnel()
 
         self.input_mode = tk.StringVar(value="Barcode Scanner")
         self.review_mode = tk.StringVar(value="Automatic Receive")
@@ -3516,14 +3550,99 @@ class CardPipelineApp(tk.Tk):
     def _personal_instagram_sync_enabled(self) -> bool:
         return str(os.environ.get("LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC") or "").strip().lower() in {"1", "true", "yes", "on"}
 
+    def _instagram_background_tunnel_enabled(self) -> bool:
+        value = str(os.environ.get("LUCAS_INSTAGRAM_BACKGROUND_TUNNEL") or "").strip().lower()
+        if value in {"0", "false", "no", "off"}:
+            return False
+        return self._personal_instagram_sync_enabled()
+
+    def _cloudflared_executable(self) -> str:
+        candidates = [
+            os.environ.get("LUCAS_CLOUDFLARED_PATH"),
+            shutil.which("cloudflared"),
+            "/opt/homebrew/bin/cloudflared",
+            "/usr/local/bin/cloudflared",
+        ]
+        for candidate in candidates:
+            path = str(candidate or "").strip()
+            if path and Path(path).exists():
+                return path
+        return ""
+
+    def _ensure_instagram_background_tunnel(self) -> str:
+        if self.instagram_tunnel_public_url:
+            return self.instagram_tunnel_public_url
+        process = self.instagram_tunnel_process
+        if process is not None and process.poll() is None:
+            return ""
+        if not self._instagram_background_tunnel_enabled() or not getattr(self, "bridge", None) or not self.bridge.started:
+            return ""
+        cloudflared = self._cloudflared_executable()
+        if not cloudflared:
+            return ""
+        target = f"http://127.0.0.1:{self.bridge.port}"
+        try:
+            self.instagram_tunnel_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self.instagram_tunnel_process = subprocess.Popen(
+                [cloudflared, "tunnel", "--url", target, "--no-autoupdate"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as error:
+            app_debug_log(f"instagram_tunnel_start_failed error={error}")
+            return ""
+
+        threading.Thread(target=self._watch_instagram_background_tunnel, daemon=True).start()
+        return ""
+
+    def _watch_instagram_background_tunnel(self) -> None:
+        process = self.instagram_tunnel_process
+        if process is None or process.stdout is None:
+            return
+        url_pattern = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.I)
+        try:
+            with self.instagram_tunnel_log_path.open("a", encoding="utf-8") as log:
+                log.write(f"\n--- LUCAS Instagram tunnel started {datetime.now().isoformat(timespec='seconds')} ---\n")
+                for line in process.stdout:
+                    log.write(line)
+                    log.flush()
+                    match = url_pattern.search(line)
+                    if match:
+                        url = match.group(0).rstrip("/")
+                        if url != self.instagram_tunnel_public_url:
+                            self.instagram_tunnel_public_url = url
+                            os.environ["LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL"] = url
+                            self.events.put(("status", f"Instagram photo bridge running in background: {url}"))
+        except Exception as error:
+            app_debug_log(f"instagram_tunnel_watch_failed error={error}")
+
+    def _stop_instagram_background_tunnel(self) -> None:
+        process = self.instagram_tunnel_process
+        self.instagram_tunnel_process = None
+        if process is None or process.poll() is not None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+
     def _instagram_env_config(self) -> dict[str, str]:
         if load_dotenv:
             load_dotenv(ROOT / ".env", override=False)
+        background_enabled = self._instagram_background_tunnel_enabled() if hasattr(self, "_instagram_background_tunnel_enabled") else False
+        background_url = self._ensure_instagram_background_tunnel() if background_enabled and hasattr(self, "_ensure_instagram_background_tunnel") else ""
+        manual_bridge_url = str(os.environ.get("LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL") or os.environ.get("LUCAS_PUBLIC_BRIDGE_URL") or "").strip().rstrip("/")
         return {
             "user_id": str(os.environ.get("LUCAS_INSTAGRAM_USER_ID") or os.environ.get("LUCAS_INSTAGRAM_ACCOUNT_ID") or "").strip(),
             "access_token": str(os.environ.get("LUCAS_INSTAGRAM_ACCESS_TOKEN") or "").strip(),
             "public_photo_base_url": str(os.environ.get("LUCAS_INSTAGRAM_PUBLIC_PHOTO_BASE_URL") or "").strip().rstrip("/"),
-            "public_bridge_url": str(os.environ.get("LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL") or os.environ.get("LUCAS_PUBLIC_BRIDGE_URL") or "").strip().rstrip("/"),
+            "public_bridge_url": str(background_url or ("" if background_enabled else manual_bridge_url)).strip().rstrip("/"),
         }
 
     def _load_instagram_inventory_state(self) -> dict[str, object]:
@@ -5135,7 +5254,13 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("No company match", "No selected inventory cards matched an assignable company.")
             return
         with shared_lock(CARD_PIPELINE_DIR, "inventory-company-sheets", self.lucas_identity):
-            company_result = append_company_sheet_rows(COMPANY_SHEETS_DIR, rows, source_lookup, sheet_source_lookup)
+            company_result = append_company_sheet_rows(
+                COMPANY_SHEETS_DIR,
+                rows,
+                source_lookup,
+                sheet_source_lookup,
+                sheet_name_lookup=self._company_sheet_name_lookup_for_rows(rows),
+            )
             added_records = list(company_result.get("added_records") or [])
             moved_keys: set[str] = set()
             for record in added_records:
@@ -12233,6 +12358,7 @@ class CardPipelineApp(tk.Tk):
                             eligible_company_rows,
                             self.review_sources,
                             self.review_sheet_sources,
+                            sheet_name_lookup=self._company_sheet_name_lookup_for_rows(eligible_company_rows),
                         )
                         company_rows_added = int(company_result.get("rows_added") or 0)
                         self.record_profit_sales(list(company_result.get("added_records") or []))
@@ -12349,10 +12475,62 @@ class CardPipelineApp(tk.Tk):
         self._ensure_weekly_company_sheets_due()
         self.after(5 * 60 * 1000, self._weekly_company_sheet_timer)
 
+    def _company_sheet_reset_schedules(self) -> dict[str, dict[str, str]]:
+        raw = {}
+        if isinstance(getattr(self, "app_settings", None), dict):
+            raw = self.app_settings.get("company_sheet_reset_schedules") or {}
+        schedules: dict[str, dict[str, str]] = {}
+        if isinstance(raw, dict):
+            for company, config in raw.items():
+                company_name = str(company or "").strip()
+                if not company_name or not isinstance(config, dict):
+                    continue
+                weekday = str(config.get("weekday") or DEFAULT_COMPANY_RESET_WEEKDAY).strip().title()
+                if weekday not in COMPANY_RESET_WEEKDAYS:
+                    weekday = DEFAULT_COMPANY_RESET_WEEKDAY
+                time_text = str(config.get("time") or DEFAULT_COMPANY_RESET_TIME).strip()
+                try:
+                    time_text = parse_company_reset_time(time_text).strftime("%H:%M")
+                except ValueError:
+                    time_text = DEFAULT_COMPANY_RESET_TIME
+                schedules[company_name] = {"weekday": weekday, "time": time_text}
+        for company in getattr(getattr(self, "assignment_engine", None), "companies", []) or []:
+            company_name = str(getattr(company, "name", "") or "").strip()
+            if not company_name:
+                continue
+            weekday = str(getattr(company, "reset_weekday", "") or DEFAULT_COMPANY_RESET_WEEKDAY).strip().title()
+            if weekday not in COMPANY_RESET_WEEKDAYS:
+                weekday = DEFAULT_COMPANY_RESET_WEEKDAY
+            time_text = str(getattr(company, "reset_time", "") or DEFAULT_COMPANY_RESET_TIME).strip()
+            try:
+                time_text = parse_company_reset_time(time_text).strftime("%H:%M")
+            except ValueError:
+                time_text = DEFAULT_COMPANY_RESET_TIME
+            schedules[company_name] = {"weekday": weekday, "time": time_text}
+        return schedules
+
+    def _company_sheet_schedule_for_company(self, company: str) -> dict[str, str]:
+        schedules = self._company_sheet_reset_schedules()
+        company_name = str(company or "").strip()
+        return schedules.get(company_name) or {"weekday": DEFAULT_COMPANY_RESET_WEEKDAY, "time": DEFAULT_COMPANY_RESET_TIME}
+
+    def _company_sheet_week_start_for_company(self, company: str, now: datetime | None = None) -> datetime.date:
+        schedule = self._company_sheet_schedule_for_company(company)
+        return company_sheet_week_start_for_schedule(now or datetime.now(), schedule.get("weekday"), schedule.get("time"))
+
+    def _company_week_start_lookup(self, companies: list[str], now: datetime | None = None) -> dict[str, datetime.date]:
+        moment = now or datetime.now()
+        return {company: self._company_sheet_week_start_for_company(company, moment) for company in companies if str(company or "").strip()}
+
+    def _company_sheet_name_lookup_for_rows(self, rows: list[WorkbookRow], now: datetime | None = None) -> dict[str, str]:
+        companies = sorted({clean_part(getattr(row, "best_company", "")) for row in rows if clean_part(getattr(row, "best_company", ""))}, key=str.lower)
+        return {
+            company: f"Week of {self._company_sheet_week_start_for_company(company, now):%Y-%m-%d}"
+            for company in companies
+        }
+
     def _ensure_weekly_company_sheets_due(self, now: datetime | None = None) -> dict[str, object]:
         now = now or datetime.now()
-        week_start_date = company_sheet_week_start_for_time(now)
-        marker_key = week_start_date.isoformat()
         try:
             markers = json.loads(WEEKLY_COMPANY_SHEETS_PATH.read_text(encoding="utf-8")) if WEEKLY_COMPANY_SHEETS_PATH.exists() else {}
         except Exception:
@@ -12362,15 +12540,19 @@ class CardPipelineApp(tk.Tk):
             weeks = {}
         companies = [company.name for company in self.assignment_engine.companies if company.name]
         company_names = sorted(companies, key=str.lower)
+        week_start_lookup = self._company_week_start_lookup(companies, now)
+        marker_key = "|".join(f"{company}:{week_start_lookup[company].isoformat()}" for company in company_names if company in week_start_lookup)
         marker = weeks.get(marker_key) if isinstance(weeks.get(marker_key), dict) else {}
         if marker.get("companies") == company_names:
             return {"created": [], "existing": [], "errors": [], "skipped": True, "week_start": marker_key}
-        result = ensure_company_weekly_sheets(COMPANY_SHEETS_DIR, companies, week_start_date)
+        result = ensure_company_weekly_sheets(COMPANY_SHEETS_DIR, companies, week_start_lookup=week_start_lookup)
         errors = list(result.get("errors") or [])
         if not errors:
             weeks[marker_key] = {
                 "created_at": now.isoformat(timespec="seconds"),
                 "week_start": marker_key,
+                "week_start_by_company": {company: week_start.isoformat() for company, week_start in week_start_lookup.items()},
+                "reset_schedules": self._company_sheet_reset_schedules(),
                 "company_count": len(companies),
                 "companies": company_names,
                 "created_count": len(result.get("created") or []),
@@ -14082,6 +14264,7 @@ class CardPipelineApp(tk.Tk):
             pass
 
     def destroy(self) -> None:
+        self._stop_instagram_background_tunnel()
         self.bridge.stop()
         super().destroy()
 

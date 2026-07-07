@@ -528,6 +528,8 @@ class AssignmentCompany:
     rules: CompanyRules
     payout_tiers: list[PayoutTier]
     value_source: str = "comps"
+    reset_weekday: str = "Monday"
+    reset_time: str = "20:00"
 
 
 @dataclass
@@ -669,6 +671,8 @@ def load_company(entry: dict[str, Any], base_dir: Path) -> AssignmentCompany | N
         rules=rules,
         payout_tiers=payout_tiers,
         value_source=company_value_source(entry),
+        reset_weekday=str(entry.get("reset_weekday") or entry.get("resetWeekday") or "Monday").strip() or "Monday",
+        reset_time=str(entry.get("reset_time") or entry.get("resetTime") or "20:00").strip() or "20:00",
     )
 
 
