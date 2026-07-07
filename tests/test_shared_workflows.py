@@ -2182,6 +2182,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _incoming_match = app.CardPipelineApp._incoming_match
             _match_all_review_rows = app.CardPipelineApp._match_all_review_rows
             _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
 
             def _refresh_table(self, schedule_recommendations=False):
                 self.refreshed = True
@@ -2228,11 +2231,105 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INCOMING_SHEETS_DIR = old_incoming
                 app.WORKING_SHEETS_DIR = old_working
 
+    def test_mark_received_can_target_blank_cert_raw_row_by_workbook_row(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Raw Lot.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Cert #", "Grader", "Card", "Purchase"])
+            sheet.append(["", "", "Raw Test Card", 12])
+            workbook.save(path)
+
+            result = mark_received_in_workbooks([path], set(), {("Raw Lot.xlsx", "Cards", 2)})
+
+            self.assertEqual(result["rows_marked"], 1)
+            self.assertEqual(result["row_refs_marked"], {("raw lot.xlsx", "cards", 2)})
+            saved = load_workbook(path)
+            try:
+                headers = [cell.value for cell in saved["Cards"][1]]
+                received_col = headers.index("RECEIVED") + 1
+                self.assertEqual(saved["Cards"].cell(2, received_col).value, "X")
+            finally:
+                saved.close()
+
+    def test_receive_index_matches_raw_rows_by_unique_title_and_keeps_row_ref(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            refresh_incoming_index = app.CardPipelineApp.refresh_incoming_index
+            _append_review_rows = app.CardPipelineApp._append_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+            _receive_row_ref = app.CardPipelineApp._receive_row_ref
+            _receive_row_was_marked = app.CardPipelineApp._receive_row_was_marked
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _match_all_review_rows = app.CardPipelineApp._match_all_review_rows
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+
+            def _refresh_table(self, schedule_recommendations=False):
+                self.refreshed = True
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            incoming_dir = root / "INCOMING SHEETS"
+            working_dir = root / "WORKING SHEETS"
+            incoming_dir.mkdir(parents=True)
+            working_dir.mkdir(parents=True)
+            write_working_sheet(
+                incoming_dir / "Raw Lot.xlsx",
+                [
+                    WorkbookRow(
+                        excel_row=2,
+                        cert_number="",
+                        card_title="Raw Test Card",
+                        grader="",
+                        existing_value=12,
+                    )
+                ],
+                {2: "Manual"},
+            )
+
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            app.INCOMING_SHEETS_DIR = incoming_dir
+            app.WORKING_SHEETS_DIR = working_dir
+            dummy = Dummy()
+            dummy.assignment_engine = types.SimpleNamespace(
+                recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("", None, None)
+            )
+            dummy.incoming_cert_index = {}
+            dummy.review_rows = []
+            dummy.review_sources = {}
+            dummy.review_sheet_sources = {}
+            dummy.review_status = FieldVar()
+            dummy.refreshed = False
+            try:
+                dummy.refresh_incoming_index()
+                self.assertIn("raw row", dummy.review_status.value)
+                added = dummy._append_review_rows([{"card_title": "Raw Test Card", "source": "Manual"}])
+                self.assertEqual(added, [2])
+                self.assertEqual(dummy.review_rows[0].status, "Received")
+                self.assertEqual(dummy.review_sheet_sources[2], "Raw Lot.xlsx")
+                self.assertEqual(dummy._receive_row_ref(dummy.review_rows[0]), ("Raw Lot.xlsx", "Cards", 2))
+            finally:
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+
     def test_receive_barcode_refreshes_stale_match_without_assignment_values(self) -> None:
         class Dummy:
             _append_review_rows = app.CardPipelineApp._append_review_rows
             _incoming_match = app.CardPipelineApp._incoming_match
             _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
 
             def refresh_incoming_index(self):
                 self.refresh_count += 1
@@ -2279,6 +2376,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _append_review_rows = app.CardPipelineApp._append_review_rows
             _incoming_match = app.CardPipelineApp._incoming_match
             _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
 
             def refresh_incoming_index(self):
                 self.refresh_count += 1

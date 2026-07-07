@@ -225,6 +225,8 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
                     "best_company": best_company,
                     "estimated_payout": estimated_payout,
                     "source": source or f"{path.name}:{row_index}",
+                    "workbook_sheet": sheet.title,
+                    "workbook_row": row_index,
                     "date_added": date_added,
                     "received": received,
                     "status": status,
@@ -909,16 +911,26 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
     return path
 
 
-def mark_received_in_workbooks(paths: list[Path], certs: set[str]) -> dict[str, Any]:
+def mark_received_in_workbooks(
+    paths: list[Path],
+    certs: set[str],
+    row_refs: set[tuple[str, str, int]] | None = None,
+) -> dict[str, Any]:
     target_certs = {normalize_cert(cert) for cert in certs if normalize_cert(cert)}
+    target_row_refs = {
+        (str(sheet_file or "").strip().lower(), str(sheet_name or "").strip().lower(), int(row_index))
+        for sheet_file, sheet_name, row_index in (row_refs or set())
+        if str(sheet_file or "").strip() and str(sheet_name or "").strip() and int(row_index or 0) > 0
+    }
     result = {
         "files_scanned": 0,
         "files_updated": 0,
         "rows_marked": 0,
         "certs_marked": set(),
+        "row_refs_marked": set(),
         "errors": [],
     }
-    if not target_certs:
+    if not target_certs and not target_row_refs:
         return result
 
     for path in paths:
@@ -940,7 +952,8 @@ def mark_received_in_workbooks(paths: list[Path], certs: set[str]) -> dict[str, 
                 first_data_row = 2 if header_row else 1
                 for row_index in range(first_data_row, _sheet_max_row(sheet) + 1):
                     cert = normalize_cert(sheet.cell(row_index, cert_col).value)
-                    if cert not in target_certs:
+                    row_ref = (path.name.strip().lower(), sheet.title.strip().lower(), row_index)
+                    if cert not in target_certs and row_ref not in target_row_refs:
                         continue
                     sheet.cell(row_index, received_col).value = "X"
                     for col_index in range(1, _sheet_max_column(sheet) + 1):
@@ -948,7 +961,10 @@ def mark_received_in_workbooks(paths: list[Path], certs: set[str]) -> dict[str, 
                         cell.fill = RECEIVED_FILL
                         cell.font = RECEIVED_FONT
                     result["rows_marked"] += 1
-                    result["certs_marked"].add(cert)
+                    if cert:
+                        result["certs_marked"].add(cert)
+                    if row_ref in target_row_refs:
+                        result["row_refs_marked"].add(row_ref)
                     changed = True
             if changed:
                 workbook.save(path)

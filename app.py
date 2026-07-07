@@ -2376,14 +2376,15 @@ class CardPipelineApp(tk.Tk):
     def _inventory_record_from_row(self, row: WorkbookRow, person: str, source_sheet: str = "", source: str = "", status: str = "Active", notes: str = "") -> dict[str, object]:
         card_title = str(row.card_title or "")
         sport = CardPipelineApp._inventory_sport_from_value(self, getattr(row, "category", ""), card_title)
+        cert = str(row.cert_number or "").strip()
         return self._normalize_inventory_record(
             {
                 "date_added": datetime.now().strftime("%Y-%m-%d"),
-                "item_type": "Graded",
+                "item_type": "Graded" if cert else "Raw",
                 "item_id": "",
                 "assigned_person": person or "Unassigned",
                 "sport": sport,
-                "cert_number": row.cert_number,
+                "cert_number": cert,
                 "grader": row.grader,
                 "card_title": row.card_title,
                 "purchase_price": row.existing_value,
@@ -2408,6 +2409,10 @@ class CardPipelineApp(tk.Tk):
         by_key = {str(record.get("inventory_key") or ""): record for record in ledger}
         added = 0
         for record in records:
+            if not str(record.get("cert_number") or "").strip() and not str(record.get("item_id") or "").strip():
+                record = dict(record)
+                record["item_type"] = "Raw"
+                record["item_id"] = self._next_raw_item_id([*ledger, *by_key.values()])
             normalized = self._normalize_inventory_record(record)
             normalized = self._enrich_inventory_record_assignment(normalized)
             key = str(normalized.get("inventory_key") or "")
@@ -8624,11 +8629,11 @@ class CardPipelineApp(tk.Tk):
                 continue
             for row in rows:
                 cert = scan_to_cert(row.get("cert_number"))
-                if not cert:
-                    continue
                 candidate = {
                     "sheet": path.name,
                     "path": path,
+                    "workbook_sheet": row.get("workbook_sheet") or "",
+                    "workbook_row": row.get("workbook_row"),
                     "card_title": row.get("card_title") or "",
                     "grader": row.get("grader") or "",
                     "sport": row.get("sport") or row.get("category") or "",
@@ -8642,6 +8647,13 @@ class CardPipelineApp(tk.Tk):
                     "best_company": row.get("best_company") or "",
                     "estimated_payout": row.get("estimated_payout"),
                 }
+                receive_key = self._receive_row_ref_key(candidate)
+                if receive_key:
+                    candidate["receive_key"] = receive_key
+                if not cert:
+                    if receive_key:
+                        index[receive_key] = candidate
+                    continue
                 existing = index.get(cert)
                 if existing:
                     for key, value in candidate.items():
@@ -11691,11 +11703,11 @@ class CardPipelineApp(tk.Tk):
                 continue
             for row in rows:
                 cert = scan_to_cert(row.get("cert_number"))
-                if not cert:
-                    continue
                 candidate = {
                     "sheet": path.name,
                     "path": path,
+                    "workbook_sheet": row.get("workbook_sheet") or "",
+                    "workbook_row": row.get("workbook_row"),
                     "card_title": row.get("card_title") or "",
                     "grader": row.get("grader") or "",
                     "sport": row.get("sport") or row.get("category") or "",
@@ -11709,6 +11721,13 @@ class CardPipelineApp(tk.Tk):
                     "best_company": row.get("best_company") or "",
                     "estimated_payout": row.get("estimated_payout"),
                 }
+                receive_key = self._receive_row_ref_key(candidate)
+                if receive_key:
+                    candidate["receive_key"] = receive_key
+                if not cert:
+                    if receive_key:
+                        index[receive_key] = candidate
+                    continue
                 existing = index.get(cert)
                 if existing:
                     for key, value in candidate.items():
@@ -11719,7 +11738,9 @@ class CardPipelineApp(tk.Tk):
         self.incoming_cert_index = index
         self._match_all_review_rows()
         self._refresh_table()
-        self.review_status.set(f"Indexed {len(index)} cert(s) from {len(paths)} incoming/working sheet(s).")
+        cert_count = sum(1 for key in index if not str(key).startswith("raw:"))
+        raw_count = len(index) - cert_count
+        self.review_status.set(f"Indexed {cert_count} cert(s) and {raw_count} raw row(s) from {len(paths)} incoming/working sheet(s).")
 
     def refresh_received_sheets(self) -> None:
         try:
@@ -11924,7 +11945,7 @@ class CardPipelineApp(tk.Tk):
         refreshed_incoming_index = False
         for offset, row in enumerate(rows):
             cert = scan_to_cert(row.get("cert_number"))
-            match = self._incoming_match(cert)
+            match = self._incoming_match(cert) if cert else self._incoming_raw_match(row)
             stale_assignment_match = (
                 bool(match)
                 and not str(match.get("best_company") or "").strip()
@@ -11945,8 +11966,8 @@ class CardPipelineApp(tk.Tk):
             comp_details = str(row.get("card_ladder_comps") or match.get("card_ladder_comps") or "")
             best_company = str(row.get("best_company") or match.get("best_company") or "").strip()
             estimated_payout = row.get("estimated_payout") if row.get("estimated_payout") is not None else match.get("estimated_payout")
-            sheet_source = str(row.get("sheet_source") or match.get("sheet") or ("NO SHEET FOUND" if cert else ""))
-            status = str(row.get("status") or ("Needs setup" if not cert else ("Received" if match else "Received - no incoming match")))
+            sheet_source = str(row.get("sheet_source") or match.get("sheet") or ("NO SHEET FOUND" if not match else ""))
+            status = str(row.get("status") or ("Received" if match else ("Needs raw match" if not cert else "Received - no incoming match")))
             excel_row = start + offset
             workbook_row = WorkbookRow(
                 excel_row=excel_row,
@@ -11966,6 +11987,8 @@ class CardPipelineApp(tk.Tk):
                 status=status,
                 notes=str(row.get("notes") or ""),
             )
+            if match:
+                self._attach_receive_match_to_row(workbook_row, match)
             self._ensure_receive_row_assignment(workbook_row)
             existing.append(workbook_row)
             self.review_sources[excel_row] = str(row.get("source") or "")
@@ -11978,11 +12001,85 @@ class CardPipelineApp(tk.Tk):
     def _incoming_match(self, cert: str) -> dict[str, object]:
         return self.incoming_cert_index.get(scan_to_cert(cert), {})
 
+    def _receive_row_ref_key(self, match: dict[str, object]) -> str:
+        sheet_name = str(match.get("sheet") or "").strip()
+        workbook_sheet = str(match.get("workbook_sheet") or "").strip()
+        try:
+            workbook_row = int(match.get("workbook_row") or 0)
+        except (TypeError, ValueError):
+            workbook_row = 0
+        if not sheet_name or not workbook_sheet or workbook_row <= 0:
+            return ""
+        return f"raw:{sheet_name.lower()}:{workbook_sheet.lower()}:{workbook_row}"
+
+    def _incoming_raw_match(self, row: dict[str, object]) -> dict[str, object]:
+        explicit_key = str(row.get("receive_key") or "").strip().lower()
+        if explicit_key and explicit_key in self.incoming_cert_index:
+            return self.incoming_cert_index[explicit_key]
+        sheet_source = Path(str(row.get("sheet_source") or "")).name.strip().lower()
+        title = re.sub(r"\s+", " ", str(row.get("card_title") or "").strip().lower())
+        if not title:
+            return {}
+        matches: list[dict[str, object]] = []
+        for key, candidate in self.incoming_cert_index.items():
+            if not str(key).startswith("raw:"):
+                continue
+            if sheet_source and Path(str(candidate.get("sheet") or "")).name.strip().lower() != sheet_source:
+                continue
+            candidate_title = re.sub(r"\s+", " ", str(candidate.get("card_title") or "").strip().lower())
+            if candidate_title == title:
+                matches.append(candidate)
+        return matches[0] if len(matches) == 1 else {}
+
+    def _attach_receive_match_to_row(self, row: WorkbookRow, match: dict[str, object]) -> None:
+        receive_key = str(match.get("receive_key") or self._receive_row_ref_key(match)).strip()
+        if receive_key:
+            setattr(row, "_receive_key", receive_key)
+        setattr(row, "_receive_sheet", str(match.get("sheet") or ""))
+        setattr(row, "_receive_workbook_sheet", str(match.get("workbook_sheet") or ""))
+        try:
+            setattr(row, "_receive_workbook_row", int(match.get("workbook_row") or 0))
+        except (TypeError, ValueError):
+            setattr(row, "_receive_workbook_row", 0)
+
+    def _receive_row_ref(self, row: WorkbookRow) -> tuple[str, str, int] | None:
+        sheet_name = str(getattr(row, "_receive_sheet", "") or self.review_sheet_sources.get(row.excel_row, "") or "").strip()
+        workbook_sheet = str(getattr(row, "_receive_workbook_sheet", "") or "").strip()
+        try:
+            workbook_row = int(getattr(row, "_receive_workbook_row", 0) or 0)
+        except (TypeError, ValueError):
+            workbook_row = 0
+        if not sheet_name or not workbook_sheet or workbook_row <= 0:
+            return None
+        return (Path(sheet_name).name, workbook_sheet, workbook_row)
+
+    def _receive_row_was_marked(
+        self,
+        row: WorkbookRow,
+        marked_certs: set[str],
+        marked_row_refs: set[tuple[str, str, int]],
+    ) -> bool:
+        cert = scan_to_cert(row.cert_number)
+        if cert:
+            return cert in marked_certs
+        row_ref = self._receive_row_ref(row)
+        if not row_ref:
+            return False
+        normalized_ref = (row_ref[0].strip().lower(), row_ref[1].strip().lower(), int(row_ref[2]))
+        return normalized_ref in marked_row_refs
+
     def _match_all_review_rows(self) -> None:
         for row in self.review_rows:
-            match = self._incoming_match(row.cert_number)
+            match = self._incoming_match(row.cert_number) if scan_to_cert(row.cert_number) else self._incoming_raw_match(
+                {
+                    "card_title": row.card_title,
+                    "sheet_source": self.review_sheet_sources.get(row.excel_row, ""),
+                    "receive_key": getattr(row, "_receive_key", ""),
+                }
+            )
             self.review_sheet_sources[row.excel_row] = str(match.get("sheet") or "NO SHEET FOUND")
             if match:
+                self._attach_receive_match_to_row(row, match)
                 if is_placeholder_title(row.card_title, row.grader) and match.get("card_title"):
                     row.card_title = str(match.get("card_title") or "")
                 if not row.category and (match.get("sport") or match.get("category")):
@@ -12029,8 +12126,16 @@ class CardPipelineApp(tk.Tk):
         self._refresh_table()
         self.review_status.set("Receive/assignment rows cleared.")
 
-    def _clear_received_rows_for_certs(self, marked_certs: set[str]) -> int:
-        if not marked_certs:
+    def _clear_received_rows(
+        self,
+        marked_certs: set[str],
+        marked_row_refs: set[tuple[str, str, int]] | None = None,
+    ) -> int:
+        normalized_refs = {
+            (str(sheet_file).strip().lower(), str(sheet_name).strip().lower(), int(row_index))
+            for sheet_file, sheet_name, row_index in (marked_row_refs or set())
+        }
+        if not marked_certs and not normalized_refs:
             return 0
         remaining: list[WorkbookRow] = []
         new_sources: dict[int, str] = {}
@@ -12038,7 +12143,7 @@ class CardPipelineApp(tk.Tk):
         cleared = 0
         for row in self.review_rows:
             old_excel_row = row.excel_row
-            if scan_to_cert(row.cert_number) in marked_certs:
+            if self._receive_row_was_marked(row, marked_certs, normalized_refs):
                 cleared += 1
                 continue
             row.excel_row = len(remaining) + 2
@@ -12054,6 +12159,9 @@ class CardPipelineApp(tk.Tk):
             self._cancel_cell_edit()
             self._refresh_table(schedule_recommendations=False)
         return cleared
+
+    def _clear_received_rows_for_certs(self, marked_certs: set[str]) -> int:
+        return self._clear_received_rows(marked_certs)
 
     def delete_selected_review_rows(self) -> None:
         tree = self.review_tree
@@ -12075,8 +12183,9 @@ class CardPipelineApp(tk.Tk):
 
     def mark_review_received_in_sheets(self) -> None:
         certs = {scan_to_cert(row.cert_number) for row in self.review_rows if scan_to_cert(row.cert_number)}
-        if not certs:
-            messagebox.showinfo("No received certs", "Scan or load received cards in Receive before marking sheets.")
+        row_refs = {row_ref for row in self.review_rows if not scan_to_cert(row.cert_number) for row_ref in [self._receive_row_ref(row)] if row_ref}
+        if not certs and not row_refs:
+            messagebox.showinfo("No received cards", "Scan/load certed cards or load/match raw rows in Receive before marking sheets.")
             return
         paths: list[Path] = []
         errors: list[str] = []
@@ -12090,14 +12199,17 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("No sheets found", "No incoming or working sheets were found to update.")
             return
         marked_certs: set[str] = set()
+        marked_row_refs: set[tuple[str, str, int]] = set()
         try:
             with shared_lock(CARD_PIPELINE_DIR, "receive-company-sheets", self.lucas_identity):
-                result = mark_received_in_workbooks(paths, certs)
+                result = mark_received_in_workbooks(paths, certs, row_refs)
                 errors.extend(result.get("errors") or [])
                 rows_marked = int(result.get("rows_marked") or 0)
                 files_updated = int(result.get("files_updated") or 0)
                 marked_certs = set(result.get("certs_marked") or set())
+                marked_row_refs = set(result.get("row_refs_marked") or set())
                 certs_marked = len(marked_certs)
+                raw_rows_marked = len(marked_row_refs)
                 company_rows_added = 0
                 company_rows_missing_company = 0
                 inventory_rows_added = 0
@@ -12105,12 +12217,12 @@ class CardPipelineApp(tk.Tk):
                     company_rows = [
                         row
                         for row in self.review_rows
-                        if row.company_pile and scan_to_cert(row.cert_number) in marked_certs
+                        if row.company_pile and self._receive_row_was_marked(row, marked_certs, marked_row_refs)
                     ]
                     inventory_rows = [
                         row
                         for row in self.review_rows
-                        if not row.company_pile and scan_to_cert(row.cert_number) in marked_certs
+                        if not row.company_pile and self._receive_row_was_marked(row, marked_certs, marked_row_refs)
                     ]
                     self._apply_recommendations_to_rows(company_rows, force=True)
                     eligible_company_rows = [row for row in company_rows if self._row_has_assignable_company(row)]
@@ -12147,12 +12259,12 @@ class CardPipelineApp(tk.Tk):
         self.refresh_incoming_index()
         self.refresh_working_sheets()
         self.refresh_received_sheets()
-        cleared_receive_rows = self._clear_received_rows_for_certs(marked_certs)
+        cleared_receive_rows = self._clear_received_rows(marked_certs, marked_row_refs)
         if rows_marked:
             self.review_status.set(f"Marked {rows_marked} row(s) received across {files_updated} sheet file(s).")
-            self.status_var.set(f"Marked {certs_marked}/{len(certs)} received cert(s) in sheets; cleared {cleared_receive_rows} receive row(s).")
+            self.status_var.set(f"Marked {certs_marked}/{len(certs)} cert(s) and {raw_rows_marked}/{len(row_refs)} raw row(s); cleared {cleared_receive_rows} receive row(s).")
         else:
-            self.review_status.set("No matching cert rows were found in incoming or working sheets.")
+            self.review_status.set("No matching cert/raw rows were found in incoming or working sheets.")
             self.status_var.set("No sheet rows marked received.")
         if moved_received:
             self.status_var.set(f"Moved {len(moved_received)} fully received sheet(s) to RECEIVED SHEETS.")
@@ -12168,6 +12280,8 @@ class CardPipelineApp(tk.Tk):
             f"Updated sheet files: {files_updated}",
             f"Matched certs: {certs_marked}/{len(certs)}",
         ]
+        if row_refs:
+            summary_lines.append(f"Matched raw rows: {raw_rows_marked}/{len(row_refs)}")
         if moved_received:
             summary_lines.append(f"Moved to received: {len(moved_received)}")
         if company_rows_added:
@@ -12186,6 +12300,8 @@ class CardPipelineApp(tk.Tk):
                 "files_updated": files_updated,
                 "certs_marked": certs_marked,
                 "total_certs": len(certs),
+                "raw_rows_marked": raw_rows_marked,
+                "total_raw_rows": len(row_refs),
                 "company_rows_added": company_rows_added,
                 "inventory_rows_added": inventory_rows_added,
                 "receive_rows_cleared": cleared_receive_rows,
