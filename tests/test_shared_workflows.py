@@ -7502,6 +7502,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _run_instagram_auto_sync_if_due = app.CardPipelineApp._run_instagram_auto_sync_if_due
             _instagram_auto_sync_worker = app.CardPipelineApp._instagram_auto_sync_worker
             _instagram_daily_post_limit = app.CardPipelineApp._instagram_daily_post_limit
+            _instagram_content_publishing_limit = lambda self, config=None: {"limit": 100, "quota_usage": 0, "remaining": 100, "error": ""}
 
             def __init__(self):
                 self.state = {"version": 1, "posts": {}}
@@ -7561,6 +7562,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _run_instagram_auto_sync_if_due = app.CardPipelineApp._run_instagram_auto_sync_if_due
             _instagram_auto_sync_worker = app.CardPipelineApp._instagram_auto_sync_worker
             _instagram_daily_post_limit = app.CardPipelineApp._instagram_daily_post_limit
+            _instagram_content_publishing_limit = lambda self, config=None: {"limit": 100, "quota_usage": 0, "remaining": 100, "error": ""}
 
             def __init__(self):
                 self.state = {"version": 1, "posts": {}}
@@ -7603,6 +7605,63 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.synced_plan["to_post"][-1]["inventory_key"], "ready-74")
         self.assertIn("daily_limit=75", dummy.state["last_auto_sync_summary"])
 
+    def test_instagram_auto_sync_caps_daily_posts_at_meta_remaining_quota(self) -> None:
+        class ImmediateThread:
+            def __init__(self, target, args=(), daemon=None):
+                self.target = target
+                self.args = args
+                self.daemon = daemon
+
+            def start(self):
+                self.target(*self.args)
+
+        class InstagramDummy:
+            _instagram_auto_sync_due = app.CardPipelineApp._instagram_auto_sync_due
+            _mark_instagram_auto_sync_completed = app.CardPipelineApp._mark_instagram_auto_sync_completed
+            _run_instagram_auto_sync_if_due = app.CardPipelineApp._run_instagram_auto_sync_if_due
+            _instagram_auto_sync_worker = app.CardPipelineApp._instagram_auto_sync_worker
+            _instagram_daily_post_limit = app.CardPipelineApp._instagram_daily_post_limit
+            _instagram_content_publishing_limit = lambda self, config=None: {"limit": 100, "quota_usage": 96, "remaining": 4, "error": ""}
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.instagram_auto_sync_running = False
+                self.events = queue.Queue()
+                self.synced_plan = None
+
+            def _personal_instagram_sync_enabled(self):
+                return True
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token", "daily_post_limit": "75"}
+
+            def _instagram_inventory_plan(self):
+                return {
+                    "config": {"user_id": "178", "access_token": "token", "daily_post_limit": "75"},
+                    "to_post": [
+                        {"inventory_key": f"ready-{index}", "caption": f"Ready Card {index}", "photo_url": f"https://example.test/{index}.jpg"}
+                        for index in range(20)
+                    ],
+                    "to_remove": [],
+                    "missing_public_urls": [],
+                }
+
+            def _instagram_inventory_sync_worker(self, plan):
+                self.synced_plan = plan
+
+        dummy = InstagramDummy()
+        with patch.object(app.threading, "Thread", ImmediateThread):
+            self.assertTrue(dummy._run_instagram_auto_sync_if_due())
+
+        self.assertEqual(len(dummy.synced_plan["to_post"]), 4)
+        self.assertEqual(dummy.synced_plan["to_post"][-1]["inventory_key"], "ready-3")
+
     def test_instagram_manual_sync_plan_caps_ready_posts_at_configured_limit(self) -> None:
         class InstagramDummy:
             _instagram_daily_post_limit = app.CardPipelineApp._instagram_daily_post_limit
@@ -7626,6 +7685,28 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual([item["inventory_key"] for item in limited_plan["to_post"]], ["ready-0", "ready-1", "ready-2"])
         self.assertEqual([item["inventory_key"] for item in limited_plan["to_remove"]], ["sold"])
         self.assertEqual(limited_plan["missing_public_urls"], [])
+
+    def test_instagram_manual_sync_plan_caps_ready_posts_at_meta_remaining_quota(self) -> None:
+        class InstagramDummy:
+            _instagram_daily_post_limit = app.CardPipelineApp._instagram_daily_post_limit
+            _instagram_limited_manual_sync_plan = app.CardPipelineApp._instagram_limited_manual_sync_plan
+
+        plan = {
+            "config": {"daily_post_limit": "75"},
+            "to_post": [
+                {"inventory_key": f"ready-{index}", "caption": f"Ready Card {index}", "photo_url": f"https://example.test/{index}.jpg"}
+                for index in range(20)
+            ],
+            "to_remove": [{"inventory_key": "sold", "media_id": "179-sold", "caption": "Sold Card"}],
+            "missing_public_urls": [],
+        }
+
+        limited_plan, ready_total, limit = InstagramDummy()._instagram_limited_manual_sync_plan(plan, meta_remaining=4)
+
+        self.assertEqual(limit, 4)
+        self.assertEqual(ready_total, 20)
+        self.assertEqual([item["inventory_key"] for item in limited_plan["to_post"]], ["ready-0", "ready-1", "ready-2", "ready-3"])
+        self.assertEqual([item["inventory_key"] for item in limited_plan["to_remove"]], ["sold"])
 
     def test_instagram_auto_sync_due_skips_after_daily_completion(self) -> None:
         class InstagramDummy:

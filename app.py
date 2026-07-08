@@ -3977,6 +3977,30 @@ class CardPipelineApp(tk.Tk):
             limit = 75
         return max(1, min(limit, 100))
 
+    def _instagram_meta_publish_limit(self) -> int:
+        value = str(os.environ.get("LUCAS_INSTAGRAM_META_POST_LIMIT") or "100").strip()
+        try:
+            limit = int(value)
+        except (TypeError, ValueError):
+            limit = 100
+        return max(1, limit)
+
+    def _instagram_content_publishing_limit(self, config: dict[str, object] | None = None) -> dict[str, object]:
+        config = config if isinstance(config, dict) else self._instagram_env_config()
+        meta_limit = self._instagram_meta_publish_limit()
+        user_id = str(config.get("user_id") or "").strip()
+        token = str(config.get("access_token") or "").strip()
+        if not user_id or not token:
+            return {"limit": meta_limit, "quota_usage": None, "remaining": None, "error": "Missing Instagram token or user id."}
+        try:
+            response = self._instagram_api_json(f"{user_id}/content_publishing_limit", {"access_token": token})
+            data = response.get("data") if isinstance(response, dict) else []
+            first = data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else {}
+            usage = int(first.get("quota_usage") or 0)
+            return {"limit": meta_limit, "quota_usage": usage, "remaining": max(0, meta_limit - usage), "error": ""}
+        except Exception as error:
+            return {"limit": meta_limit, "quota_usage": None, "remaining": None, "error": str(error)}
+
     def _load_instagram_inventory_state(self) -> dict[str, object]:
         if not INSTAGRAM_INVENTORY_STATE_PATH.exists():
             return {"version": 1, "posts": {}}
@@ -4091,13 +4115,20 @@ class CardPipelineApp(tk.Tk):
             return False
         plan = self._instagram_inventory_plan()
         daily_limit = self._instagram_daily_post_limit(config)
+        quota = self._instagram_content_publishing_limit(config)
+        meta_remaining = quota.get("remaining") if isinstance(quota.get("remaining"), int) else None
         ready_posts = [item for item in plan.get("to_post") or [] if isinstance(item, dict) and str(item.get("photo_url") or "").strip()]
-        ready_posts = ready_posts[:daily_limit]
+        if meta_remaining is None and ready_posts:
+            self.events.put(("status", f"Instagram daily sync skipped: could not verify Meta publishing quota: {quota.get('error') or 'unknown error'}"))
+            return False
+        post_limit = min(daily_limit, meta_remaining if meta_remaining is not None else daily_limit)
+        ready_posts = ready_posts[:post_limit]
         removable = [item for item in plan.get("to_remove") or [] if isinstance(item, dict) and str(item.get("media_id") or "").strip()]
         today = datetime.now().date().isoformat()
         if not ready_posts and not removable:
-            self._mark_instagram_auto_sync_completed(today, "no_changes")
-            self.events.put(("status", "Instagram daily sync checked: no inventory changes to post or remove."))
+            summary = "meta_quota_full" if meta_remaining == 0 else "no_changes"
+            self._mark_instagram_auto_sync_completed(today, summary)
+            self.events.put(("status", "Instagram daily sync checked: Meta publishing quota is full." if meta_remaining == 0 else "Instagram daily sync checked: no inventory changes to post or remove."))
             return False
         auto_plan = {**plan, "to_post": ready_posts, "to_remove": removable, "missing_public_urls": []}
         self.instagram_auto_sync_running = True
@@ -4109,13 +4140,17 @@ class CardPipelineApp(tk.Tk):
         try:
             self._instagram_inventory_sync_worker(plan)
             limit = self._instagram_daily_post_limit(plan.get("config") if isinstance(plan.get("config"), dict) else None)
-            summary = f"posted={len(plan.get('to_post') or [])} remove_candidates={len(plan.get('to_remove') or [])} daily_limit={limit}"
+            quota = self._instagram_content_publishing_limit(plan.get("config") if isinstance(plan.get("config"), dict) else None)
+            remaining = quota.get("remaining")
+            summary = f"posted={len(plan.get('to_post') or [])} remove_candidates={len(plan.get('to_remove') or [])} daily_limit={limit} meta_remaining={remaining if remaining is not None else 'unknown'}"
             self._mark_instagram_auto_sync_completed(day, summary)
         finally:
             self.instagram_auto_sync_running = False
 
-    def _instagram_limited_manual_sync_plan(self, plan: dict[str, object]) -> tuple[dict[str, object], int, int]:
+    def _instagram_limited_manual_sync_plan(self, plan: dict[str, object], meta_remaining: int | None = None) -> tuple[dict[str, object], int, int]:
         limit = self._instagram_daily_post_limit(plan.get("config") if isinstance(plan.get("config"), dict) else None)
+        if meta_remaining is not None:
+            limit = min(limit, max(0, meta_remaining))
         ready_posts = [
             item
             for item in plan.get("to_post") or []
@@ -4806,8 +4841,24 @@ class CardPipelineApp(tk.Tk):
         if not str(config.get("user_id") or "").strip() or not str(config.get("access_token") or "").strip():
             messagebox.showerror("Instagram Sync", "Missing Instagram user ID or access token in .env.")
             return
-        sync_plan, ready_total, post_limit = self._instagram_limited_manual_sync_plan(plan)
+        ready_candidates = [item for item in plan.get("to_post") or [] if isinstance(item, dict) and str(item.get("photo_url") or "").strip()]
+        quota = self._instagram_content_publishing_limit(config)
+        meta_remaining = quota.get("remaining") if isinstance(quota.get("remaining"), int) else None
+        if ready_candidates and meta_remaining is None:
+            messagebox.showerror(
+                "Instagram Sync",
+                "Could not verify Meta publishing quota, so LUCAS will not post new cards.\n\n"
+                f"{quota.get('error') or 'Unknown quota check error.'}",
+            )
+            return
+        sync_plan, ready_total, post_limit = self._instagram_limited_manual_sync_plan(plan, meta_remaining)
         if not sync_plan.get("to_post") and not sync_plan.get("to_remove"):
+            if ready_candidates and meta_remaining == 0:
+                messagebox.showinfo(
+                    "Instagram Sync",
+                    f"Meta publishing quota is full.\n\nQuota usage: {quota.get('quota_usage')}/{quota.get('limit')}\nTry again after the 24-hour rolling window frees up.",
+                )
+                return
             missing_public = plan.get("missing_public_urls") or []
             if missing_public:
                 messagebox.showinfo(
@@ -4828,8 +4879,10 @@ class CardPipelineApp(tk.Tk):
             "Run live Instagram sync?\n\n"
             f"Post {post_count} of {ready_total} ready card(s)."
             f"\nRemove {remove_count} old post(s) if Meta allows it."
-            f"\n\nManual live posting is capped at {post_limit} card(s) per run."
+            f"\n\nManual live posting is capped at {post_limit} card(s) for this run."
         )
+        if meta_remaining is not None:
+            message += f"\nMeta quota usage: {quota.get('quota_usage')}/{quota.get('limit')} used; {meta_remaining} remaining."
         if skipped_count:
             message += f"\n{skipped_count} ready card(s) will remain for the next batch."
         if not messagebox.askyesno("Instagram Sync", message):
