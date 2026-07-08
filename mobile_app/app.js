@@ -784,6 +784,7 @@ function bind() {
   $("updateDuplicate").addEventListener("click", () => addInventory(true));
   $("addExpense").addEventListener("click", () => addExpense());
   $("installHelp").addEventListener("click", () => alert("On iPhone: Share -> Add to Home Screen."));
+  setConnectionStatus(navigator.onLine !== false, navigator.onLine === false ? "" : "Ready. Live data loads when desktop LUCAS is reachable.");
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register(`${APP_BASE}/sw.js`, { scope: `${APP_BASE}/` }).catch(() => {});
   }
@@ -794,7 +795,6 @@ function bind() {
     }
     searchInventory();
   }
-  setConnectionStatus(navigator.onLine !== false, navigator.onLine === false ? "" : "Ready. Live data loads when desktop LUCAS is reachable.");
 }
 
 bind();
