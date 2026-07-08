@@ -5,6 +5,7 @@ const state = {
   lastDuplicate: null,
   sellRecord: null,
   people: [],
+  connected: navigator.onLine !== false,
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
 const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
@@ -16,6 +17,52 @@ if (!state.clientId) {
 
 const $ = (id) => document.getElementById(id);
 const QUEUE_KEY = "lucasMobileQueue";
+const CACHE_PREFIX = `${profileMatch ? profileMatch[1] : "default"}:`;
+const CACHE_KEYS = {
+  search: `${CACHE_PREFIX}lucasMobileLastSearch`,
+  profit: `${CACHE_PREFIX}lucasMobileLastProfit`,
+  payouts: `${CACHE_PREFIX}lucasMobileLastPayouts`,
+};
+
+function setConnectionStatus(connected, message = "") {
+  state.connected = Boolean(connected);
+  const banner = $("connectionBanner");
+  if (!banner) return;
+  banner.classList.toggle("hidden", connected && !message);
+  banner.classList.toggle("online", connected);
+  if (connected) {
+    banner.textContent = message || "Connected to desktop LUCAS.";
+  } else {
+    banner.textContent = message || "Offline mode: desktop LUCAS is not reachable. Adds, expenses, and cached-card sales can be queued and synced later.";
+  }
+}
+
+function cacheSet(key, payload) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ saved_at: new Date().toISOString(), payload }));
+  } catch (_error) {
+    // Local storage can be full or disabled; offline queue still handles writes separately.
+  }
+}
+
+function cacheGet(key) {
+  try {
+    const wrapper = JSON.parse(localStorage.getItem(key) || "null");
+    return wrapper && wrapper.payload ? wrapper : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function cacheAgeText(savedAt) {
+  if (!savedAt) return "cached";
+  const ageMs = Date.now() - new Date(savedAt).getTime();
+  if (!Number.isFinite(ageMs) || ageMs < 0) return "cached";
+  const minutes = Math.max(1, Math.round(ageMs / 60000));
+  if (minutes < 60) return `${minutes} min old`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} hr old`;
+}
 
 function setUnlocked(unlocked) {
   $("authPanel").classList.toggle("hidden", unlocked);
@@ -23,16 +70,27 @@ function setUnlocked(unlocked) {
 }
 
 async function api(path, body) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...body, pin: state.pin }),
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(result.error || `Request failed with ${response.status}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 9000);
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...body, pin: state.pin }),
+      signal: controller.signal,
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.error || `Request failed with ${response.status}`);
+    }
+    setConnectionStatus(true);
+    return result;
+  } catch (error) {
+    setConnectionStatus(false);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  return result;
 }
 
 function loadQueue() {
@@ -169,6 +227,7 @@ async function syncQueuedActions() {
       loadPayouts();
     }
   } catch (error) {
+    setConnectionStatus(false);
     $("syncStatus").textContent = `Desktop not reachable. Export the queue or try again later. ${error.message || error}`;
     renderQueue();
   }
@@ -236,6 +295,19 @@ async function shareInventoryPhoto(record, photo) {
     window.open(url, "_blank");
     status.textContent = `Opened photo fallback. ${error.message || error}`;
   }
+}
+
+function renderCachedSearch(wrapper, error) {
+  if (!wrapper || !wrapper.payload) {
+    $("results").innerHTML = `<div class="hint">Desktop LUCAS is not reachable and no cached inventory search is saved on this phone yet. Add inventory and expenses can still be queued. ${escapeHtml(error?.message || error || "")}</div>`;
+    return;
+  }
+  const result = wrapper.payload;
+  updatePeople(result.people || state.people);
+  renderResults(result.items || []);
+  const note = `Showing cached inventory search (${cacheAgeText(wrapper.saved_at)}). Live search needs desktop LUCAS online.`;
+  $("scanSearchStatus").textContent = note;
+  setConnectionStatus(false, note);
 }
 
 function renderPhotoStrip(item, itemIndex) {
@@ -312,7 +384,7 @@ async function searchInventory() {
       include_sold: $("includeSold").checked,
     });
   } catch (error) {
-    $("results").innerHTML = `<div class="hint">Desktop not reachable. Add/sell/expense actions can still queue from forms already open. ${escapeHtml(error.message || error)}</div>`;
+    renderCachedSearch(cacheGet(CACHE_KEYS.search), error);
     return;
   }
   if (!result.ok) {
@@ -321,6 +393,8 @@ async function searchInventory() {
     return;
   }
   updatePeople(result.people || []);
+  cacheSet(CACHE_KEYS.search, result);
+  $("scanSearchStatus").textContent = "";
   renderResults(result.items || []);
 }
 
@@ -493,7 +567,13 @@ async function loadProfit() {
       graph: $("profitGraph").value,
     });
   } catch (error) {
-    $("profitRecent").innerHTML = `<div class="hint">Desktop not reachable. ${escapeHtml(error.message || error)}</div>`;
+    const cached = cacheGet(CACHE_KEYS.profit);
+    if (cached && cached.payload) {
+      renderProfit(cached.payload);
+      $("profitRecent").insertAdjacentHTML("afterbegin", `<div class="hint">Showing cached profit (${escapeHtml(cacheAgeText(cached.saved_at))}). Live profit needs desktop LUCAS online.</div>`);
+    } else {
+      $("profitRecent").innerHTML = `<div class="hint">Desktop LUCAS is not reachable and no cached profit is saved on this phone yet. ${escapeHtml(error.message || error)}</div>`;
+    }
     return;
   }
   if (!result.ok) {
@@ -501,6 +581,11 @@ async function loadProfit() {
     $("profitRecent").innerHTML = `<div class="hint">${escapeHtml(result.error || "Profit load failed.")}</div>`;
     return;
   }
+  cacheSet(CACHE_KEYS.profit, result);
+  renderProfit(result);
+}
+
+function renderProfit(result) {
   updatePeople(result.people || []);
   fillSelect($("profitPeriod"), result.periods || ["Total", "Year", "Month", "Week", "5 Days"], { includeAll: false });
   fillSelect($("profitGraph"), result.graphs || ["Daily Trend", "Overall Profit"], { includeAll: false });
@@ -531,7 +616,13 @@ async function loadPayouts() {
   try {
     result = await api("/payouts", { person: $("payoutPerson").value });
   } catch (error) {
-    $("payoutSummary").innerHTML = `<div class="hint">Desktop not reachable. ${escapeHtml(error.message || error)}</div>`;
+    const cached = cacheGet(CACHE_KEYS.payouts);
+    if (cached && cached.payload) {
+      renderPayouts(cached.payload);
+      $("payoutSummary").insertAdjacentHTML("afterbegin", `<div class="hint">Showing cached payouts (${escapeHtml(cacheAgeText(cached.saved_at))}). Live payouts need desktop LUCAS online.</div>`);
+    } else {
+      $("payoutSummary").innerHTML = `<div class="hint">Desktop LUCAS is not reachable and no cached payout data is saved on this phone yet. ${escapeHtml(error.message || error)}</div>`;
+    }
     return;
   }
   if (!result.ok) {
@@ -539,6 +630,11 @@ async function loadPayouts() {
     $("payoutSummary").innerHTML = `<div class="hint">${escapeHtml(result.error || "Payout load failed.")}</div>`;
     return;
   }
+  cacheSet(CACHE_KEYS.payouts, result);
+  renderPayouts(result);
+}
+
+function renderPayouts(result) {
   updatePeople(result.people || []);
   const totals = result.totals || {};
   renderMetrics($("payoutCards"), [
@@ -608,7 +704,8 @@ async function identifyPhoto(file, target) {
       await searchInventory();
     }
   } catch (error) {
-    status.textContent = `Photo search failed: ${error.message || error}`;
+    setConnectionStatus(false);
+    status.textContent = `Photo OCR needs desktop LUCAS online. You can still type the card info and queue the add. ${error.message || error}`;
   }
 }
 
@@ -677,18 +774,27 @@ function bind() {
     $("syncStatus").textContent = "Queue is empty.";
   });
   window.addEventListener("online", () => {
+    setConnectionStatus(true, "Network is back. Sync queued actions when desktop LUCAS is open.");
     if (state.pin && state.queue.length) syncQueuedActions();
   });
+  window.addEventListener("offline", () => setConnectionStatus(false));
   bindPhotoInput("photoSearchInput", "searchInput");
   bindPhotoInput("photoAddInput", "certNumber");
   $("addInventory").addEventListener("click", () => addInventory(false));
   $("updateDuplicate").addEventListener("click", () => addInventory(true));
   $("addExpense").addEventListener("click", () => addExpense());
   $("installHelp").addEventListener("click", () => alert("On iPhone: Share -> Add to Home Screen."));
-  if (state.pin) searchInventory();
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register(`${APP_BASE}/sw.js`, { scope: `${APP_BASE}/` }).catch(() => {});
   }
+  if (state.pin) {
+    const cached = cacheGet(CACHE_KEYS.search);
+    if (cached && cached.payload) {
+      renderCachedSearch(cached);
+    }
+    searchInventory();
+  }
+  setConnectionStatus(navigator.onLine !== false, navigator.onLine === false ? "" : "Ready. Live data loads when desktop LUCAS is reachable.");
 }
 
 bind();

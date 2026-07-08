@@ -70,6 +70,24 @@ main {
   margin: 0 auto 14px;
 }
 
+.connectionBanner {
+  max-width: 720px;
+  margin: 0 auto 12px;
+  padding: 10px 12px;
+  border: 1px solid #5c4d25;
+  border-radius: 8px;
+  background: #2a2316;
+  color: #ffd98d;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.connectionBanner.online {
+  border-color: #2b6659;
+  background: #132b27;
+  color: #8ee6c9;
+}
+
 button,
 .fileButton {
   display: inline-flex;

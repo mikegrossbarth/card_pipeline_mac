@@ -1,7 +1,7 @@
 const swPath = new URL(self.location.href).pathname;
 const profileMatch = swPath.match(/^\/mobile\/(team|personal)\//);
 const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
-const CACHE_NAME = `lucas-mobile-shell-v3-${profileMatch ? profileMatch[1] : "default"}`;
+const CACHE_NAME = `lucas-mobile-shell-v4-${profileMatch ? profileMatch[1] : "default"}`;
 const APP_SHELL = [
   APP_BASE,
   `${APP_BASE}/`,
@@ -13,7 +13,14 @@ const APP_SHELL = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME)
+      .then((cache) => Promise.all(APP_SHELL.map((url) => fetch(url).then((response) => {
+        if (response.ok) {
+          return cache.put(url, response);
+        }
+        return Promise.resolve();
+      }).catch(() => Promise.resolve()))))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -39,6 +46,11 @@ self.addEventListener("fetch", (event) => {
       const copy = response.clone();
       caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
       return response;
-    }).catch(() => caches.match(request))
+    }).catch(() => {
+      if (request.mode === "navigate") {
+        return caches.match(`${APP_BASE}/index.html`).then((cached) => cached || caches.match(`${APP_BASE}/`));
+      }
+      return caches.match(request);
+    })
   );
 });
