@@ -5093,9 +5093,6 @@ class CardPipelineApp(tk.Tk):
         changed = len(ledger) - len(kept)
         if changed:
             self._save_inventory_ledger(kept)
-            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
-            if callable(cleanup):
-                cleanup(removed, kept)
         return changed
 
     def _general_sold_sheet_name(self, person: str) -> str:
@@ -5141,6 +5138,8 @@ class CardPipelineApp(tk.Tk):
                 "sale_price": sale_price,
                 "sale_method": method,
                 "assigned_person": assigned_person,
+                "sport": normalized.get("sport") or "",
+                "photo_paths": list(normalized.get("photo_paths") or []),
                 "status": "Sold from inventory",
                 "notes": notes,
             }
@@ -7684,6 +7683,13 @@ class CardPipelineApp(tk.Tk):
         normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
         normalized["original_source_sheet"] = str(normalized.get("original_source_sheet") or "").strip()
         normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
+        photo_paths = normalized.get("photo_paths") or normalized.get("photos") or []
+        if isinstance(photo_paths, str):
+            photo_paths = [part.strip() for part in re.split(r"[;\n]", photo_paths) if part.strip()]
+        elif not isinstance(photo_paths, list):
+            photo_paths = []
+        normalized["photo_paths"] = [str(path).strip() for path in photo_paths if str(path or "").strip()]
+        normalized["photo_count"] = len(normalized["photo_paths"])
         normalized["ledger_key"] = self._profit_record_key(normalized)
         return normalized
 
@@ -8398,6 +8404,7 @@ class CardPipelineApp(tk.Tk):
                             "inventory_value": normalized.get("sale_price") or normalized.get("card_ladder_value") or normalized.get("comps") or normalized.get("cy_estimate"),
                             "source_sheet": normalized.get("source_sheet") or "",
                             "source": normalized.get("source") or "",
+                            "photo_paths": list(normalized.get("photo_paths") or []),
                             "status": "Active",
                             "notes": "Refunded from sold cards",
                         }
