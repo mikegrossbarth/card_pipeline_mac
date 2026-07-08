@@ -3995,6 +3995,17 @@ class CardPipelineApp(tk.Tk):
         INSTAGRAM_INVENTORY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(INSTAGRAM_INVENTORY_STATE_PATH, state)
 
+    def _instagram_profile_url(self) -> str:
+        if load_dotenv:
+            load_dotenv(ROOT / ".env", override=False)
+        profile_url = str(os.environ.get("LUCAS_INSTAGRAM_PROFILE_URL") or "").strip()
+        if profile_url:
+            return profile_url
+        username = str(os.environ.get("LUCAS_INSTAGRAM_USERNAME") or "").strip().strip("@")
+        if username:
+            return f"https://www.instagram.com/{username}/"
+        return "https://www.instagram.com/"
+
     def _instagram_inventory_identity(self, record: dict[str, object] | None) -> str:
         if not isinstance(record, dict):
             return ""
@@ -4554,12 +4565,14 @@ class CardPipelineApp(tk.Tk):
         tree.grid(row=0, column=0, sticky="nsew")
         y_scroll.grid(row=0, column=1, sticky="ns")
         x_scroll.grid(row=1, column=0, sticky="ew")
-        tree_items: dict[str, dict[str, object]] = {}
+        post_items: dict[str, dict[str, object]] = {}
+        remove_items: dict[str, dict[str, object]] = {}
 
         def reload_plan() -> None:
             nonlocal plan
             plan = self._instagram_inventory_plan()
-            tree_items.clear()
+            post_items.clear()
+            remove_items.clear()
             tree.delete(*tree.get_children())
             for index, item in enumerate(plan["to_post"]):
                 record = item["record"]
@@ -4576,12 +4589,16 @@ class CardPipelineApp(tk.Tk):
                         "Needs public photo URL" if not item.get("photo_url") else "Ready",
                     ),
                 )
-                tree_items[iid] = item
-            for item in plan["to_remove"]:
+                post_items[iid] = item
+            for index, item in enumerate(plan["to_remove"]):
                 detail = "No longer active in inventory"
                 if str(item.get("status") or "").strip().lower() == "delete_review_needed":
                     detail = f"Delete retry pending: {str(item.get('delete_error') or '')[:140]}"
-                tree.insert("", tk.END, values=("Remove", item.get("caption") or item.get("title") or "", item.get("media_id") or "", "", detail))
+                else:
+                    detail = "Manual delete needed; API delete may not be available"
+                iid = f"remove:{index}"
+                tree.insert("", tk.END, iid=iid, values=("Remove", item.get("caption") or item.get("title") or "", item.get("media_id") or "", "", detail))
+                remove_items[iid] = item
             for record in plan["missing_photos"]:
                 tree.insert(
                     "",
@@ -4601,8 +4618,8 @@ class CardPipelineApp(tk.Tk):
             )
 
         def post_one_test_item() -> None:
-            selected = [iid for iid in tree.selection() if iid in tree_items]
-            item = tree_items[selected[0]] if selected else next((candidate for candidate in plan.get("to_post") or [] if isinstance(candidate, dict) and candidate.get("photo_url")), None)
+            selected = [iid for iid in tree.selection() if iid in post_items]
+            item = post_items[selected[0]] if selected else next((candidate for candidate in plan.get("to_post") or [] if isinstance(candidate, dict) and candidate.get("photo_url")), None)
             if not item:
                 messagebox.showinfo("Instagram Sync", "No ready item with a public photo URL is available to test.")
                 return
@@ -4617,6 +4634,43 @@ class CardPipelineApp(tk.Tk):
             worker = threading.Thread(target=self._instagram_inventory_sync_worker, args=(test_plan,), daemon=True)
             worker.start()
             popup.after(1000, reload_plan)
+
+        def selected_remove_items() -> list[dict[str, object]]:
+            return [remove_items[iid] for iid in tree.selection() if iid in remove_items]
+
+        def open_manual_delete_target() -> None:
+            selected = selected_remove_items()
+            item = selected[0] if selected else next((candidate for candidate in plan.get("to_remove") or [] if isinstance(candidate, dict)), None)
+            if not item:
+                messagebox.showinfo("Instagram Sync", "Select a Remove row first.")
+                return
+            url = str(item.get("permalink") or "").strip() or self._instagram_profile_url()
+            if not url:
+                messagebox.showinfo("Instagram Sync", "No Instagram URL is configured. Open the inventory profile manually.")
+                return
+            webbrowser.open(url)
+
+        def copy_manual_delete_title() -> None:
+            selected = selected_remove_items()
+            item = selected[0] if selected else next((candidate for candidate in plan.get("to_remove") or [] if isinstance(candidate, dict)), None)
+            if not item:
+                messagebox.showinfo("Instagram Sync", "Select a Remove row first.")
+                return
+            text = str(item.get("caption") or item.get("title") or item.get("card_title") or item.get("media_id") or "").strip()
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.status_var.set("Copied Instagram delete queue title.")
+
+        def mark_manual_deleted() -> None:
+            selected = selected_remove_items()
+            if not selected:
+                messagebox.showinfo("Instagram Sync", "Select one or more Remove rows to mark manually deleted.")
+                return
+            if not messagebox.askyesno("Instagram Sync", f"Mark {len(selected)} Instagram post(s) manually deleted in LUCAS?\n\nOnly do this after you deleted them on Instagram."):
+                return
+            marked = self._mark_instagram_posts_manually_deleted(selected)
+            reload_plan()
+            messagebox.showinfo("Instagram Sync", f"Marked {marked} post(s) manually deleted.")
 
         def import_existing_posts() -> None:
             config = self._instagram_env_config()
@@ -4663,9 +4717,14 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(actions, text="Refresh Preview", command=reload_plan, style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(actions, text="Import Existing Posts", command=import_existing_posts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Post One Test Item", command=post_one_test_item, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(actions, text="Remove Old Posts", command=remove_old_posts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Run Live Sync", command=lambda: self._run_instagram_inventory_sync(plan, popup, reload_plan), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
+        delete_actions = ttk.Frame(frame, style="Panel.TFrame")
+        delete_actions.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(delete_actions, text="Open Delete Target", command=open_manual_delete_target, style="Soft.TButton").pack(side=tk.LEFT)
+        ttk.Button(delete_actions, text="Copy Delete Title", command=copy_manual_delete_title, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(delete_actions, text="Mark Manual Deleted", command=mark_manual_deleted, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(delete_actions, text="Try API Delete", command=remove_old_posts, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         reload_plan()
 
     def _instagram_api_json(self, endpoint: str, params: dict[str, object] | None = None, method: str = "GET") -> dict[str, object]:
@@ -4748,11 +4807,52 @@ class CardPipelineApp(tk.Tk):
                 "caption": str(item.get("caption") or item.get("title") or ""),
                 "permalink": str(item.get("permalink") or ""),
                 "removed_at": datetime.now().isoformat(timespec="seconds"),
-                "reason": "inventory_not_active",
+                "reason": str(item.get("reason") or "inventory_not_active"),
             }
         )
         if len(removed_posts) > 250:
             del removed_posts[:-250]
+
+    def _mark_instagram_posts_manually_deleted(self, items: list[dict[str, object]]) -> int:
+        if not items:
+            return 0
+        state = self._load_instagram_inventory_state()
+        posts = state.setdefault("posts", {})
+        if not isinstance(posts, dict):
+            posts = {}
+            state["posts"] = posts
+        duplicates = state.get("duplicate_posts")
+        if not isinstance(duplicates, list):
+            duplicates = []
+        marked = 0
+        for raw_item in items:
+            if not isinstance(raw_item, dict):
+                continue
+            key = str(raw_item.get("inventory_key") or "").strip()
+            media_id = str(raw_item.get("media_id") or "").strip()
+            if not key and not media_id:
+                continue
+            tracked = posts.get(key) if key and isinstance(posts.get(key), dict) else {}
+            item = {**raw_item}
+            if isinstance(tracked, dict):
+                item = {**tracked, **item}
+            item["reason"] = "manual_delete_confirmed"
+            self._record_instagram_removed_post(state, item)
+            if key:
+                tracked_media_id = str(tracked.get("media_id") or "").strip() if isinstance(tracked, dict) else ""
+                if not media_id or not tracked_media_id or media_id == tracked_media_id:
+                    posts.pop(key, None)
+            if media_id:
+                duplicates = [
+                    duplicate
+                    for duplicate in duplicates
+                    if not isinstance(duplicate, dict) or str(duplicate.get("media_id") or "").strip() != media_id
+                ]
+            marked += 1
+        state["duplicate_posts"] = duplicates
+        self._save_instagram_inventory_state(state)
+        self._append_activity("Instagram Manual Delete", f"Marked {marked} Instagram inventory post(s) manually deleted.", {"marked": marked})
+        return marked
 
     def _instagram_inventory_sync_worker(self, plan: dict[str, object]) -> None:
         started = time.perf_counter()
@@ -4807,6 +4907,13 @@ class CardPipelineApp(tk.Tk):
                     raise RuntimeError(f"Instagram did not return a creation id for {caption}.")
                 publish_response = self._instagram_publish_media_with_retry(str(plan["config"]["user_id"]), creation_id, caption)
                 media_id = str(publish_response.get("id") or "").strip()
+                permalink = ""
+                if media_id:
+                    try:
+                        media_details = self._instagram_api_json(media_id, {"fields": "permalink"})
+                        permalink = str(media_details.get("permalink") or "").strip()
+                    except Exception:
+                        permalink = ""
                 posts[key] = {
                     "status": "posted",
                     "media_id": media_id,
@@ -4817,6 +4924,7 @@ class CardPipelineApp(tk.Tk):
                     "cert_number": scan_to_cert(current_record.get("cert_number")) if isinstance(current_record, dict) else "",
                     "item_id": str(current_record.get("item_id") or "").strip() if isinstance(current_record, dict) else "",
                     "photo_url": photo_url,
+                    "permalink": permalink,
                     "posted_at": datetime.now().isoformat(timespec="seconds"),
                 }
                 posted += 1

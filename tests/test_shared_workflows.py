@@ -7123,6 +7123,47 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn("Unsupported delete request", entry["delete_error"])
         self.assertIn("queued 1", dummy.activities[-1][1])
 
+    def test_instagram_manual_delete_clears_tracked_post(self) -> None:
+        class InstagramDummy:
+            _mark_instagram_posts_manually_deleted = app.CardPipelineApp._mark_instagram_posts_manually_deleted
+            _record_instagram_removed_post = app.CardPipelineApp._record_instagram_removed_post
+
+            def __init__(self):
+                self.state = {
+                    "version": 1,
+                    "posts": {
+                        "old-key": {
+                            "status": "delete_review_needed",
+                            "media_id": "179-old",
+                            "caption": "Old Card",
+                            "permalink": "https://instagram.test/p/old",
+                        }
+                    },
+                    "duplicate_posts": [{"inventory_key": "old-key", "media_id": "179-old"}],
+                }
+                self.activities = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _append_activity(self, action, summary, details=None):
+                self.activities.append((action, summary, details))
+
+        dummy = InstagramDummy()
+        marked = dummy._mark_instagram_posts_manually_deleted([
+            {"inventory_key": "old-key", "media_id": "179-old", "caption": "Old Card"}
+        ])
+
+        self.assertEqual(marked, 1)
+        self.assertEqual(dummy.state["posts"], {})
+        self.assertEqual(dummy.state["duplicate_posts"], [])
+        self.assertEqual(dummy.state["removed_posts"][0]["media_id"], "179-old")
+        self.assertEqual(dummy.state["removed_posts"][0]["reason"], "manual_delete_confirmed")
+        self.assertEqual(dummy.activities[-1][0], "Instagram Manual Delete")
+
     def test_instagram_inventory_sync_skips_post_when_preview_item_is_no_longer_active(self) -> None:
         class InstagramDummy:
             _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
@@ -7175,6 +7216,59 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.api_calls, [])
         self.assertEqual(dummy.state["posts"], {})
         self.assertIn("posted 0", dummy.activities[-1][1])
+
+    def test_instagram_inventory_sync_stores_permalink_after_post(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.events = queue.Queue()
+                self.activities = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_inventory_active_records(self):
+                return [{"inventory_key": "ready-key", "status": "Active", "card_title": "Ready Card", "item_id": "RAW-1"}]
+
+            def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                if method == "POST":
+                    return {"id": "creation-1"}
+                if endpoint == "media-1":
+                    return {"permalink": "https://instagram.test/p/ready"}
+                return {}
+
+            def _instagram_publish_media_with_retry(self, user_id, creation_id, caption):
+                return {"id": "media-1"}
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+        dummy = InstagramDummy()
+        dummy._instagram_inventory_sync_worker(
+            {
+                "config": {"user_id": "178"},
+                "to_post": [
+                    {
+                        "inventory_key": "ready-key",
+                        "record": {"inventory_key": "ready-key", "status": "Active", "card_title": "Ready Card", "item_id": "RAW-1"},
+                        "caption": "Ready Card",
+                        "photo_url": "https://example.test/ready.jpg",
+                    }
+                ],
+                "to_remove": [],
+            }
+        )
+
+        self.assertEqual(dummy.state["posts"]["ready-key"]["media_id"], "media-1")
+        self.assertEqual(dummy.state["posts"]["ready-key"]["permalink"], "https://instagram.test/p/ready")
 
     def test_instagram_inventory_sync_does_not_delete_active_identity_from_stale_remove_plan(self) -> None:
         class InstagramDummy:
