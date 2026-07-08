@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import socket
 import sys
 import threading
 import time
@@ -2018,6 +2019,29 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(bridge.port, 8765)
         self.assertFalse(bridge.allow_port_fallback)
+
+    def test_instagram_media_route_supports_head_requests(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+
+        state = app.BridgeState()
+        state.instagram_media_resolver = lambda photo_id: (b"jpg-bytes", "image/jpeg") if photo_id == "abc" else None
+        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
+        bridge.start()
+        self.assertTrue(bridge.started, bridge.error)
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}{state.instagram_media_path('abc', 'front.jpg')}",
+                method="HEAD",
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("content-type"), "image/jpeg")
+                self.assertEqual(response.headers.get("content-length"), str(len(b"jpg-bytes")))
+                self.assertEqual(response.read(), b"")
+        finally:
+            bridge.stop()
 
     def test_mobile_bridge_port_uses_profile_specific_defaults(self) -> None:
         self.assertEqual(app.mobile_bridge_port({}, Path("lucas_settings.json")), 8765)

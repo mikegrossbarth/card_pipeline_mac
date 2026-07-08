@@ -1270,6 +1270,32 @@ class BridgeServer:
                     return
                 self._send_json({"ok": True, "service": "comp-orchestrator"})
 
+            def do_HEAD(self):
+                parsed = urlparse(self.path)
+                if not self._request_allowed(parsed.path):
+                    self._send_headers("application/json", 0, status=403)
+                    return
+                media_match = re.match(r"^/instagram/media/([^/]+)/([^/]+)(?:/[^/]*)?$", parsed.path)
+                if media_match:
+                    media = state.get_instagram_media(media_match.group(1), media_match.group(2))
+                    if media is None:
+                        self._send_headers("application/json", 0, status=404)
+                        return
+                    body, content_type = media
+                    self._send_headers(content_type, len(body), cache_control="public, max-age=3600")
+                    return
+                mobile_photo_match = re.match(r"^/mobile/api/inventory/photo/([^/]+)(?:/[^/]*)?$", parsed.path)
+                if mobile_photo_match:
+                    query = parse_qs(parsed.query)
+                    media = state.get_mobile_inventory_photo(None, query, mobile_photo_match.group(1))
+                    if media is None:
+                        self._send_headers("application/json", 0, status=404)
+                        return
+                    body, content_type = media
+                    self._send_headers(content_type, len(body), cache_control="private, max-age=300")
+                    return
+                self._send_headers("application/json", 0, status=404)
+
             def do_POST(self):
                 parsed = urlparse(self.path)
                 if not self._request_allowed(parsed.path):
@@ -1397,12 +1423,15 @@ class BridgeServer:
                 self._send_json(payload)
 
             def _send_bytes(self, body: bytes, content_type: str, cache_control: str = "no-cache") -> None:
-                self.send_response(200)
+                self._send_headers(content_type, len(body), cache_control=cache_control)
+                self.wfile.write(body)
+
+            def _send_headers(self, content_type: str, content_length: int, status: int = 200, cache_control: str = "no-cache") -> None:
+                self.send_response(status)
                 self.send_header("content-type", content_type)
                 self.send_header("cache-control", cache_control)
-                self.send_header("content-length", str(len(body)))
+                self.send_header("content-length", str(content_length))
                 self.end_headers()
-                self.wfile.write(body)
 
             def _send_static(self, path: Path) -> None:
                 try:
