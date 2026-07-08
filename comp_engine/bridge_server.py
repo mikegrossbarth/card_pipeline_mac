@@ -497,7 +497,7 @@ class BridgeState:
             should_close = self.cy_batch_running and not self.cy_lookup_inflight and not self.cy_lookup_pending and not self.cardladder_running
             if should_close:
                 self.cy_batch_running = False
-        if should_close:
+        if should_close and cy_close_after_batch_enabled():
             close_cy_adapter()
         if self.on_update:
             self.on_update()
@@ -674,6 +674,10 @@ def cy_lookup_enabled(platform: str | None = None) -> bool:
     if os.environ.get("LUCAS_DISABLE_CY_LOOKUP", "").strip().lower() in {"1", "true", "yes"}:
         return False
     return (platform or sys.platform) == "darwin"
+
+
+def cy_close_after_batch_enabled() -> bool:
+    return os.environ.get("LUCAS_CY_CLOSE_AFTER_BATCH", "").strip().lower() in {"1", "true", "yes"}
 
 
 def lookup_cy_buy_price(cert_number: str, slab_type: str) -> tuple[float | None, object | None, str]:

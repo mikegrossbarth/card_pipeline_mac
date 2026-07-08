@@ -708,7 +708,7 @@ class CYLookupTests(unittest.TestCase):
         self.assertIsNone(row.cy_value)
         self.assertEqual(row.status, "CY cancelled")
 
-    def test_cy_only_batch_closes_app_after_last_lookup(self) -> None:
+    def test_cy_only_batch_leaves_app_open_by_default_after_last_lookup(self) -> None:
         state = bridge_server.BridgeState()
         rows = [
             WorkbookRow(excel_row=2, cert_number="11111111", grader="PSA", card_title="Card One PSA 10"),
@@ -722,12 +722,31 @@ class CYLookupTests(unittest.TestCase):
             deadline = time.time() + 2
             while any(row.cy_value is None for row in rows) and time.time() < deadline:
                 time.sleep(0.01)
-            while close_cy.call_count == 0 and time.time() < deadline:
-                time.sleep(0.01)
 
         self.assertEqual([row.cy_value for row in rows], [87.5])
         self.assertEqual(rows[0].cy_confidence, 4)
         self.assertEqual(rows[0].status, "CY OK")
+        self.assertEqual(close_cy.call_count, 0)
+
+    def test_cy_only_batch_can_close_app_after_last_lookup_when_enabled(self) -> None:
+        state = bridge_server.BridgeState()
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="11111111", grader="PSA", card_title="Card One PSA 10"),
+        ]
+        state.set_rows(rows)
+
+        with patch.object(bridge_server, "cy_lookup_enabled", return_value=True), \
+                patch.object(bridge_server, "cy_close_after_batch_enabled", return_value=True), \
+                patch.object(bridge_server, "lookup_cy_buy_price", return_value=(87.5, 4, "ok")), \
+                patch.object(bridge_server, "close_cy_adapter") as close_cy:
+            state.start_cy_lookups(rows)
+            deadline = time.time() + 2
+            while any(row.cy_value is None for row in rows) and time.time() < deadline:
+                time.sleep(0.01)
+            while close_cy.call_count == 0 and time.time() < deadline:
+                time.sleep(0.01)
+
+        self.assertEqual([row.cy_value for row in rows], [87.5])
         self.assertGreaterEqual(close_cy.call_count, 1)
 
     def test_cy_only_unavailable_sets_cy_unavailable_status(self) -> None:
