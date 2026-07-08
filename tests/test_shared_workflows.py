@@ -7686,6 +7686,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual([item["inventory_key"] for item in limited_plan["to_remove"]], ["sold"])
         self.assertEqual(limited_plan["missing_public_urls"], [])
 
+    def test_instagram_meta_publish_limit_defaults_to_stricter_graph_limit(self) -> None:
+        class InstagramDummy:
+            _instagram_meta_publish_limit = app.CardPipelineApp._instagram_meta_publish_limit
+
+        with patch.dict(app.os.environ, {}, clear=True):
+            self.assertEqual(InstagramDummy()._instagram_meta_publish_limit(), 50)
+        with patch.dict(app.os.environ, {"LUCAS_INSTAGRAM_META_POST_LIMIT": "100"}, clear=True):
+            self.assertEqual(InstagramDummy()._instagram_meta_publish_limit(), 100)
+
     def test_instagram_manual_sync_plan_caps_ready_posts_at_meta_remaining_quota(self) -> None:
         class InstagramDummy:
             _instagram_daily_post_limit = app.CardPipelineApp._instagram_daily_post_limit

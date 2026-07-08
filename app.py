@@ -3978,11 +3978,11 @@ class CardPipelineApp(tk.Tk):
         return max(1, min(limit, 100))
 
     def _instagram_meta_publish_limit(self) -> int:
-        value = str(os.environ.get("LUCAS_INSTAGRAM_META_POST_LIMIT") or "100").strip()
+        value = str(os.environ.get("LUCAS_INSTAGRAM_META_POST_LIMIT") or "50").strip()
         try:
             limit = int(value)
         except (TypeError, ValueError):
-            limit = 100
+            limit = 50
         return max(1, limit)
 
     def _instagram_content_publishing_limit(self, config: dict[str, object] | None = None) -> dict[str, object]:
