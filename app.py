@@ -286,6 +286,21 @@ def mobile_app_host(settings: dict[str, object] | None = None) -> str:
     return macos_local_mobile_host() or lan_mobile_host()
 
 
+def mobile_public_app_url(profile: str, settings: dict[str, object] | None = None) -> str:
+    settings = settings or {}
+    raw = str(os.environ.get("LUCAS_MOBILE_PUBLIC_URL") or settings.get("mobile_public_url") or "").strip().rstrip("/")
+    if not raw:
+        return ""
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return ""
+    if re.search(r"/mobile/(?:team|personal)(?:/|$)", parsed.path):
+        return raw
+    if parsed.path.rstrip("/").endswith("/mobile"):
+        return f"{raw}/{profile}"
+    return f"{raw}/mobile/{profile}"
+
+
 def is_personal_lucas_profile(settings: dict[str, object] | None = None, settings_path: Path | None = None) -> bool:
     settings = settings or {}
     path = settings_path or SETTINGS_PATH
@@ -2575,20 +2590,35 @@ class CardPipelineApp(tk.Tk):
         return added
 
     def _mobile_app_url(self) -> str:
+        profile = "personal" if self._is_personal_lucas() else "team"
+        public_url = mobile_public_app_url(profile, getattr(self, "app_settings", {}))
+        if public_url:
+            return public_url
+        host = mobile_app_host(getattr(self, "app_settings", {}))
+        return f"http://{host}:{self.bridge.port}/mobile/{profile}"
+
+    def _mobile_local_app_url(self) -> str:
         host = mobile_app_host(getattr(self, "app_settings", {}))
         profile = "personal" if self._is_personal_lucas() else "team"
         return f"http://{host}:{self.bridge.port}/mobile/{profile}"
 
     def open_mobile_connection_helper(self) -> None:
         url = self._mobile_app_url()
+        local_url = self._mobile_local_app_url()
+        profile = "personal" if self._is_personal_lucas() else "team"
+        public_url = mobile_public_app_url(profile, getattr(self, "app_settings", {}))
         details = "\n".join(
             [
                 f"Mobile URL: {url}",
+                f"Local Wi-Fi URL: {local_url}",
                 f"PIN: {self.mobile_pin}",
                 "",
-                "Phone and Mac must be on the same Wi-Fi network.",
+                "Live reads and syncing need a reachable desktop LUCAS bridge.",
+                "For LTE/offline Home Screen use, install from a stable HTTPS public URL set in LUCAS_MOBILE_PUBLIC_URL.",
+                "A local http:// Mac URL may white-screen on LTE because iPhone cannot reach that origin or reliably boot its cache.",
+                "" if public_url else f"No HTTPS public mobile URL is configured for {profile} LUCAS.",
                 "Open the Mobile URL in Safari on the iPhone, then enter the PIN.",
-                "For offline use, export/import the mobile queue file from the Inventory tab.",
+                "Offline adds, expenses, and cached-card sales stay in the phone Sync queue until desktop LUCAS is reachable.",
             ]
         )
         popup = tk.Toplevel(self)

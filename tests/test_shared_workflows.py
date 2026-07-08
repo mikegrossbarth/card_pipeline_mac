@@ -2014,6 +2014,21 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         with patch.dict(app.os.environ, {"LUCAS_MOBILE_PORT": "8777"}):
             self.assertEqual(app.mobile_bridge_port({}, Path("lucas_settings.json")), 8777)
 
+    def test_mobile_public_app_url_requires_https_and_appends_profile(self) -> None:
+        self.assertEqual(
+            app.mobile_public_app_url("personal", {"mobile_public_url": "https://lucas.example.com"}),
+            "https://lucas.example.com/mobile/personal",
+        )
+        self.assertEqual(
+            app.mobile_public_app_url("team", {"mobile_public_url": "https://lucas.example.com/mobile"}),
+            "https://lucas.example.com/mobile/team",
+        )
+        self.assertEqual(
+            app.mobile_public_app_url("personal", {"mobile_public_url": "https://lucas.example.com/mobile/personal"}),
+            "https://lucas.example.com/mobile/personal",
+        )
+        self.assertEqual(app.mobile_public_app_url("personal", {"mobile_public_url": "http://192.168.1.244:8766"}), "")
+
     def test_bridge_rejects_untrusted_browser_origin(self) -> None:
         self.assertFalse(bridge_server.request_origin_allowed("https://example.com", "127.0.0.1:8765"))
         self.assertFalse(bridge_server.request_origin_allowed("file://local", "127.0.0.1:8765"))
