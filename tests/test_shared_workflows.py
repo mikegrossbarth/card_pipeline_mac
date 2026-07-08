@@ -2029,6 +2029,18 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         )
         self.assertEqual(app.mobile_public_app_url("personal", {"mobile_public_url": "http://192.168.1.244:8766"}), "")
 
+    def test_mobile_public_app_url_prefers_profile_setting_over_global_env(self) -> None:
+        with patch.dict(app.os.environ, {"LUCAS_MOBILE_PUBLIC_URL": "https://personal.example.com"}):
+            self.assertEqual(
+                app.mobile_public_app_url("team", {"mobile_public_url": "https://team.example.com"}),
+                "https://team.example.com/mobile/team",
+            )
+        with patch.dict(app.os.environ, {"LUCAS_TEAM_MOBILE_PUBLIC_URL": "https://team-env.example.com"}):
+            self.assertEqual(
+                app.mobile_public_app_url("team", {"mobile_public_url": "https://team.example.com"}),
+                "https://team-env.example.com/mobile/team",
+            )
+
     def test_bridge_rejects_untrusted_browser_origin(self) -> None:
         self.assertFalse(bridge_server.request_origin_allowed("https://example.com", "127.0.0.1:8765"))
         self.assertFalse(bridge_server.request_origin_allowed("file://local", "127.0.0.1:8765"))

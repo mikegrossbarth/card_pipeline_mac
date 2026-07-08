@@ -345,6 +345,80 @@ On an actual Mac, prefer:
 - `main` and `master` should both be pushed after the cleanup/handoff commit.
 - Working tree should be clean after the handoff commit.
 
+## Active Mobile/Cloudflare Handoff - 2026-07-07 Late
+
+User asked to stop because the thread is too large. Stop feature work and read this before continuing.
+
+Important user intent:
+
+- Personal LUCAS and Team LUCAS must stay separated.
+- Earlier user said Personal-only work should not touch Team. After that, user explicitly asked to also do the LTE/stable-domain setup for Team LUCAS.
+- Do not commit secrets or Mac-local tunnel credentials.
+
+Personal LUCAS mobile status:
+
+- Stable URL: `https://lucas.mikeyscards.com/mobile/personal`
+- Cloudflare tunnel name: `lucas-personal`
+- Tunnel ID: `789db1ce-bcba-479c-9fb5-f7b374e63fe3`
+- Local mobile bridge target: `http://127.0.0.1:8766`
+- Local tunnel config installed at `/Users/michaelgrossbarth/.cloudflared/lucas-personal.yml`
+- Local tunnel credentials at `/Users/michaelgrossbarth/.cloudflared/789db1ce-bcba-479c-9fb5-f7b374e63fe3.json`
+- LaunchAgent installed at `/Users/michaelgrossbarth/Library/LaunchAgents/com.lucas.personal-tunnel.plist`
+- Personal app LaunchAgent installed at `/Users/michaelgrossbarth/Library/LaunchAgents/com.lucas.personal-app.plist`
+- Personal app LaunchAgent currently uses direct executable `/Users/michaelgrossbarth/Desktop/Michael LUCAS.app/Contents/MacOS/LUCAS` with keepalive. This fixed 502s caused by the local app bridge being down.
+- Verified before handoff: `curl -sS https://lucas.mikeyscards.com/mobile/api/config` returned `{"ok": true, "service": "lucas-mobile", ...}`.
+- User needs Mac awake/online and Personal LUCAS running for live LTE use. Cloudflare 502 means tunnel is reachable but local Mac app/port is down.
+
+Team LUCAS mobile setup in progress:
+
+- Planned stable URL: `https://team-lucas.mikeyscards.com/mobile/team`
+- Cloudflare tunnel name: `lucas-team`
+- Tunnel ID: `3b34592e-77d8-4976-8eac-26e771289bee`
+- DNS route was created: `team-lucas.mikeyscards.com`
+- Local mobile bridge target should be `http://127.0.0.1:8765`
+- `cloudflared tunnel list` showed both `lucas-personal` and `lucas-team` with live connections.
+- During setup, local Team files were installed outside the repo:
+  - `/Users/michaelgrossbarth/.cloudflared/lucas-team.yml`
+  - `/Users/michaelgrossbarth/Library/LaunchAgents/com.lucas.team-tunnel.plist`
+  - `/Users/michaelgrossbarth/Library/LaunchAgents/com.lucas.team-app.plist`
+- The temporary repo copies under `work/cloudflared/` were deleted so they do not get committed. Confirm installed local files if continuing.
+- Team public URL was not fully verified before stop. Next step should be:
+
+```bash
+launchctl print gui/501/com.lucas.team-tunnel
+launchctl print gui/501/com.lucas.team-app
+curl -sS http://127.0.0.1:8765/mobile/api/config
+curl -sS https://team-lucas.mikeyscards.com/mobile/api/config
+```
+
+In-progress code/settings changes at stop:
+
+- `app.py` modified `mobile_public_app_url()` so profile-specific environment variables win before the old global one:
+  - `LUCAS_PERSONAL_MOBILE_PUBLIC_URL`
+  - `LUCAS_TEAM_MOBILE_PUBLIC_URL`
+  - then `settings["mobile_public_url"]`
+  - then old `LUCAS_MOBILE_PUBLIC_URL`
+- `tests/test_shared_workflows.py` has a new regression test `test_mobile_public_app_url_prefers_profile_setting_over_global_env`.
+- Tests had not been run after this change at stop.
+- Ignored local settings were changed:
+  - `.env` has `LUCAS_MOBILE_PUBLIC_URL=https://lucas.mikeyscards.com`
+  - `lucas_settings.michael.json` has `mobile_public_url=https://lucas.mikeyscards.com`
+  - `lucas_settings.json` has `mobile_public_url=https://team-lucas.mikeyscards.com`
+- Because `lucas_settings*.json` and `.env` are ignored/local, these changes will not show in normal `git status`. Use `git status --short --ignored .env lucas_settings.json lucas_settings.michael.json` to check.
+
+Recommended continuation:
+
+1. Verify Team local bridge on `8765` and public Team URL.
+2. If Team app is not serving, inspect `/Users/michaelgrossbarth/Library/Logs/lucas-team-app.err.log` and `/Users/michaelgrossbarth/Library/Logs/lucas-team-app.log`.
+3. Run targeted tests:
+
+```bash
+.venv/bin/python -m unittest tests.test_shared_workflows.AppSharedWorkflowLogicTests.test_mobile_public_app_url_requires_https_and_appends_profile -v
+.venv/bin/python -m unittest tests.test_shared_workflows.AppSharedWorkflowLogicTests.test_mobile_public_app_url_prefers_profile_setting_over_global_env -v
+```
+
+4. Commit only tracked code/test changes if tests pass. Do not commit `.env`, tunnel credential JSON, or Mac-local LaunchAgent plist files.
+
 ## New Chat Bootstrap
 
 Tell a new chat:

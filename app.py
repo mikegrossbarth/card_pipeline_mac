@@ -288,7 +288,13 @@ def mobile_app_host(settings: dict[str, object] | None = None) -> str:
 
 def mobile_public_app_url(profile: str, settings: dict[str, object] | None = None) -> str:
     settings = settings or {}
-    raw = str(os.environ.get("LUCAS_MOBILE_PUBLIC_URL") or settings.get("mobile_public_url") or "").strip().rstrip("/")
+    profile_key = "LUCAS_PERSONAL_MOBILE_PUBLIC_URL" if profile == "personal" else "LUCAS_TEAM_MOBILE_PUBLIC_URL"
+    raw = str(
+        os.environ.get(profile_key)
+        or settings.get("mobile_public_url")
+        or os.environ.get("LUCAS_MOBILE_PUBLIC_URL")
+        or ""
+    ).strip().rstrip("/")
     if not raw:
         return ""
     parsed = urllib.parse.urlparse(raw)
