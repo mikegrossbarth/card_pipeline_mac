@@ -123,6 +123,7 @@ SHEET_MARKERS_PATH = CARD_PIPELINE_DIR / "sheet_markers.json"
 WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
 PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
 INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
+INVENTORY_DELETED_TOMBSTONES_PATH = CARD_PIPELINE_DIR / "inventory_deleted_tombstones.json"
 INVENTORY_PHOTOS_DIR = CARD_PIPELINE_DIR / "INVENTORY PHOTOS"
 INVENTORY_PHOTO_STATE_PATH = CARD_PIPELINE_DIR / "inventory_photo_state.json"
 INSTAGRAM_INVENTORY_STATE_PATH = CARD_PIPELINE_DIR / "instagram_inventory_state.json"
@@ -364,7 +365,7 @@ def is_google_sheet_url(value: object) -> bool:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, INVENTORY_PHOTOS_DIR, INVENTORY_PHOTO_STATE_PATH, INSTAGRAM_INVENTORY_STATE_PATH, DELETED_ARCHIVE_DIR, DELETED_INVENTORY_PHOTOS_DIR, DELETED_SHEETS_DIR, ACTIVITY_LOG_PATH, MOBILE_ACTION_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, INVENTORY_DELETED_TOMBSTONES_PATH, INVENTORY_PHOTOS_DIR, INVENTORY_PHOTO_STATE_PATH, INSTAGRAM_INVENTORY_STATE_PATH, DELETED_ARCHIVE_DIR, DELETED_INVENTORY_PHOTOS_DIR, DELETED_SHEETS_DIR, ACTIVITY_LOG_PATH, MOBILE_ACTION_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -375,6 +376,7 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     WEEKLY_COMPANY_SHEETS_PATH = CARD_PIPELINE_DIR / "weekly_company_sheets.json"
     PROFIT_LEDGER_PATH = CARD_PIPELINE_DIR / "profit_ledger.json"
     INVENTORY_LEDGER_PATH = CARD_PIPELINE_DIR / "inventory_ledger.json"
+    INVENTORY_DELETED_TOMBSTONES_PATH = CARD_PIPELINE_DIR / "inventory_deleted_tombstones.json"
     INVENTORY_PHOTOS_DIR = CARD_PIPELINE_DIR / "INVENTORY PHOTOS"
     INVENTORY_PHOTO_STATE_PATH = CARD_PIPELINE_DIR / "inventory_photo_state.json"
     INSTAGRAM_INVENTORY_STATE_PATH = CARD_PIPELINE_DIR / "instagram_inventory_state.json"
@@ -762,6 +764,7 @@ class CardPipelineApp(tk.Tk):
         self.instagram_tunnel_process: subprocess.Popen | None = None
         self.instagram_tunnel_public_url = ""
         self.instagram_tunnel_log_path = ROOT / "work" / "instagram-cloudflared.log"
+        self.instagram_auto_sync_running = False
 
         self.events: queue.Queue[str] = queue.Queue()
         self.intake_rows: list[WorkbookRow] = []
@@ -928,6 +931,8 @@ class CardPipelineApp(tk.Tk):
         self.status_var.set(self.bridge_status_text)
         self.after(100, self._start_startup_refresh)
         self.after(5 * 60 * 1000, self._weekly_company_sheet_timer)
+        if self._personal_instagram_sync_enabled():
+            self.after(90 * 1000, self._instagram_auto_sync_timer)
         record_performance_event("app.init", perf_start, f"pipeline={CARD_PIPELINE_DIR}", force=True)
 
     def _on_close(self) -> None:
@@ -2292,6 +2297,66 @@ class CardPipelineApp(tk.Tk):
         INVENTORY_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(INVENTORY_LEDGER_PATH, {"items": rows})
 
+    def _load_inventory_deleted_tombstones(self) -> list[dict[str, object]]:
+        if not INVENTORY_DELETED_TOMBSTONES_PATH.exists():
+            return []
+        try:
+            raw = json.loads(INVENTORY_DELETED_TOMBSTONES_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        entries = raw.get("items", raw) if isinstance(raw, dict) else raw
+        return [item for item in entries if isinstance(item, dict)] if isinstance(entries, list) else []
+
+    def _save_inventory_deleted_tombstones(self, rows: list[dict[str, object]]) -> None:
+        INVENTORY_DELETED_TOMBSTONES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(INVENTORY_DELETED_TOMBSTONES_PATH, {"items": rows[-5000:]})
+
+    def _inventory_deleted_source_cert_keys(self) -> set[tuple[str, str]]:
+        keys: set[tuple[str, str]] = set()
+        for record in self._load_inventory_deleted_tombstones():
+            source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+            cert = scan_to_cert(record.get("cert_number"))
+            if source_sheet and cert:
+                keys.add((source_sheet, cert))
+        return keys
+
+    def _record_inventory_deleted_tombstones(self, records: list[dict[str, object]], reason: str = "inventory_delete") -> int:
+        existing = self._load_inventory_deleted_tombstones()
+        existing_keys = {
+            (
+                Path(str(record.get("source_sheet") or "")).name.strip().lower(),
+                scan_to_cert(record.get("cert_number")),
+            )
+            for record in existing
+        }
+        added = 0
+        deleted_at = datetime.now().isoformat(timespec="seconds")
+        for raw_record in records:
+            record = self._normalize_inventory_record(raw_record)
+            source_sheet = Path(str(record.get("source_sheet") or "")).name.strip()
+            cert = scan_to_cert(record.get("cert_number"))
+            if not source_sheet or not cert:
+                continue
+            key = (source_sheet.lower(), cert)
+            if key in existing_keys:
+                continue
+            existing.append(
+                {
+                    "source_sheet": source_sheet,
+                    "cert_number": cert,
+                    "inventory_key": str(record.get("inventory_key") or ""),
+                    "card_title": str(record.get("card_title") or ""),
+                    "assigned_person": str(record.get("assigned_person") or ""),
+                    "deleted_at": deleted_at,
+                    "reason": reason,
+                }
+            )
+            existing_keys.add(key)
+            added += 1
+        if added:
+            self._save_inventory_deleted_tombstones(existing)
+        return added
+
     def _load_activity_log(self) -> list[dict[str, object]]:
         if not ACTIVITY_LOG_PATH.exists():
             return []
@@ -3265,12 +3330,29 @@ class CardPipelineApp(tk.Tk):
                 keys.add((source_sheet, cert))
         return keys
 
+    def _received_inventory_accounted_source_cert_keys(self) -> set[tuple[str, str]]:
+        keys: set[tuple[str, str]] = set()
+        for record in [self._normalize_inventory_record(row) for row in self._load_inventory_ledger()]:
+            source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+            cert = scan_to_cert(record.get("cert_number"))
+            if source_sheet and cert:
+                keys.add((source_sheet, cert))
+        for record in [self._normalize_profit_record(row) for row in self._load_profit_ledger()]:
+            cert = scan_to_cert(record.get("cert_number"))
+            for source_value in (record.get("source_sheet"), record.get("original_source_sheet")):
+                source_sheet = Path(str(source_value or "")).name.strip().lower()
+                if source_sheet and cert:
+                    keys.add((source_sheet, cert))
+        keys.update(self._inventory_deleted_source_cert_keys())
+        return keys
+
     def _received_inventory_candidate_records_for_sheet(
         self,
         stage: str,
         path: Path,
         person: str,
         company_keys: set[tuple[str, str]] | None = None,
+        accounted_keys: set[tuple[str, str]] | None = None,
     ) -> list[dict[str, object]]:
         assigned_person = str(person or "").strip()
         if not assigned_person or not path.exists():
@@ -3283,6 +3365,8 @@ class CardPipelineApp(tk.Tk):
         except Exception:
             return []
         company_keys = company_keys if company_keys is not None else self._company_sheet_source_cert_keys()
+        accounted_loader = getattr(self, "_received_inventory_accounted_source_cert_keys", None)
+        accounted_keys = accounted_keys if accounted_keys is not None else accounted_loader() if callable(accounted_loader) else set()
         candidates: list[dict[str, object]] = []
         for row in rows:
             cert = scan_to_cert(row.get("cert_number"))
@@ -3291,6 +3375,8 @@ class CardPipelineApp(tk.Tk):
             if received_certs is not None and cert not in received_certs:
                 continue
             if (path.name.lower(), cert) in company_keys:
+                continue
+            if (path.name.lower(), cert) in accounted_keys:
                 continue
             card_title = str(row.get("card_title") or "")
             sport = CardPipelineApp._inventory_sport_from_value(self, row.get("sport") or row.get("category"), card_title)
@@ -3324,6 +3410,7 @@ class CardPipelineApp(tk.Tk):
 
     def _received_inventory_candidate_records(self) -> list[dict[str, object]]:
         company_keys = self._company_sheet_source_cert_keys()
+        accounted_keys = self._received_inventory_accounted_source_cert_keys()
         candidates: list[dict[str, object]] = []
         for stage, directory in (("Received", RECEIVED_SHEETS_DIR), ("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR)):
             if not directory.exists():
@@ -3333,7 +3420,7 @@ class CardPipelineApp(tk.Tk):
                 person = str(marker.get("assigned_person") or "").strip()
                 if not person:
                     continue
-                candidates.extend(self._received_inventory_candidate_records_for_sheet(stage, path, person, company_keys))
+                candidates.extend(self._received_inventory_candidate_records_for_sheet(stage, path, person, company_keys, accounted_keys))
         return candidates
 
     def _sync_received_inventory_to_ledger(self, filtered_only: bool = False) -> tuple[int, int]:
@@ -3729,7 +3816,20 @@ class CardPipelineApp(tk.Tk):
             "access_token": str(os.environ.get("LUCAS_INSTAGRAM_ACCESS_TOKEN") or "").strip(),
             "public_photo_base_url": str(os.environ.get("LUCAS_INSTAGRAM_PUBLIC_PHOTO_BASE_URL") or "").strip().rstrip("/"),
             "public_bridge_url": str(background_url or ("" if background_enabled else manual_bridge_url)).strip().rstrip("/"),
+            "daily_post_limit": str(os.environ.get("LUCAS_INSTAGRAM_DAILY_POST_LIMIT") or "75").strip(),
         }
+
+    def _instagram_daily_post_limit(self, config: dict[str, object] | None = None) -> int:
+        value = ""
+        if isinstance(config, dict):
+            value = str(config.get("daily_post_limit") or "").strip()
+        if not value:
+            value = str(os.environ.get("LUCAS_INSTAGRAM_DAILY_POST_LIMIT") or "75").strip()
+        try:
+            limit = int(value)
+        except (TypeError, ValueError):
+            limit = 75
+        return max(1, min(limit, 100))
 
     def _load_instagram_inventory_state(self) -> dict[str, object]:
         if not INSTAGRAM_INVENTORY_STATE_PATH.exists():
@@ -3748,6 +3848,114 @@ class CardPipelineApp(tk.Tk):
     def _save_instagram_inventory_state(self, state: dict[str, object]) -> None:
         INSTAGRAM_INVENTORY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(INSTAGRAM_INVENTORY_STATE_PATH, state)
+
+    def _instagram_inventory_identity(self, record: dict[str, object] | None) -> str:
+        if not isinstance(record, dict):
+            return ""
+        cert = scan_to_cert(record.get("cert_number"))
+        if cert and len(cert) >= 5:
+            return f"cert:{cert}"
+        item_id = str(record.get("item_id") or "").strip().lower()
+        if item_id:
+            return f"item:{re.sub(r'[^a-z0-9]+', '', item_id)}"
+        title = str(record.get("card_title") or record.get("caption") or "").strip().lower()
+        title = re.sub(r"[^a-z0-9]+", " ", title)
+        title = re.sub(r"\s+", " ", title).strip()
+        return f"title:{title}" if title else ""
+
+    def _instagram_post_entry_identity(self, entry: dict[str, object]) -> str:
+        explicit = str(entry.get("inventory_identity") or "").strip()
+        if explicit:
+            return explicit
+        return self._instagram_inventory_identity(
+            {
+                "cert_number": entry.get("cert_number"),
+                "item_id": entry.get("item_id"),
+                "card_title": entry.get("card_title") or entry.get("caption"),
+            }
+        )
+
+    def _instagram_record_duplicate_post(self, state: dict[str, object], record: dict[str, object], post: dict[str, object], method: str, score: float) -> None:
+        media_id = str(post.get("id") or post.get("media_id") or "").strip()
+        if not media_id:
+            return
+        duplicates = state.setdefault("duplicate_posts", [])
+        if not isinstance(duplicates, list):
+            duplicates = []
+            state["duplicate_posts"] = duplicates
+        if any(isinstance(item, dict) and str(item.get("media_id") or "").strip() == media_id for item in duplicates):
+            return
+        duplicates.append(
+            {
+                "inventory_key": str(record.get("inventory_key") or ""),
+                "inventory_identity": self._instagram_inventory_identity(record),
+                "media_id": media_id,
+                "caption": str(post.get("caption") or record.get("card_title") or "").strip(),
+                "permalink": str(post.get("permalink") or ""),
+                "photo_url": str(post.get("media_url") or ""),
+                "detected_at": datetime.now().isoformat(timespec="seconds"),
+                "reason": "duplicate_inventory_post",
+                "matched_by": method,
+                "match_score": round(float(score), 3),
+            }
+        )
+        if len(duplicates) > 500:
+            del duplicates[:-500]
+
+    def _instagram_auto_sync_due(self, now: datetime | None = None) -> bool:
+        if not self._personal_instagram_sync_enabled():
+            return False
+        if getattr(self, "instagram_auto_sync_running", False):
+            return False
+        state = self._load_instagram_inventory_state()
+        today = (now or datetime.now()).date().isoformat()
+        return str(state.get("last_auto_sync_date") or "") != today
+
+    def _mark_instagram_auto_sync_completed(self, day: str, summary: str) -> None:
+        state = self._load_instagram_inventory_state()
+        state["last_auto_sync_date"] = day
+        state["last_auto_sync_at"] = datetime.now().isoformat(timespec="seconds")
+        state["last_auto_sync_summary"] = summary
+        self._save_instagram_inventory_state(state)
+
+    def _instagram_auto_sync_timer(self) -> None:
+        try:
+            self._run_instagram_auto_sync_if_due()
+        finally:
+            if self._personal_instagram_sync_enabled():
+                self.after(60 * 60 * 1000, self._instagram_auto_sync_timer)
+
+    def _run_instagram_auto_sync_if_due(self) -> bool:
+        if not self._instagram_auto_sync_due():
+            return False
+        config = self._instagram_env_config()
+        if not str(config.get("user_id") or "").strip() or not str(config.get("access_token") or "").strip():
+            self.events.put(("status", "Instagram daily sync skipped: missing Instagram token or user id."))
+            return False
+        plan = self._instagram_inventory_plan()
+        daily_limit = self._instagram_daily_post_limit(config)
+        ready_posts = [item for item in plan.get("to_post") or [] if isinstance(item, dict) and str(item.get("photo_url") or "").strip()]
+        ready_posts = ready_posts[:daily_limit]
+        removable = [item for item in plan.get("to_remove") or [] if isinstance(item, dict) and str(item.get("media_id") or "").strip()]
+        today = datetime.now().date().isoformat()
+        if not ready_posts and not removable:
+            self._mark_instagram_auto_sync_completed(today, "no_changes")
+            self.events.put(("status", "Instagram daily sync checked: no inventory changes to post or remove."))
+            return False
+        auto_plan = {**plan, "to_post": ready_posts, "to_remove": removable, "missing_public_urls": []}
+        self.instagram_auto_sync_running = True
+        worker = threading.Thread(target=self._instagram_auto_sync_worker, args=(auto_plan, today), daemon=True)
+        worker.start()
+        return True
+
+    def _instagram_auto_sync_worker(self, plan: dict[str, object], day: str) -> None:
+        try:
+            self._instagram_inventory_sync_worker(plan)
+            limit = self._instagram_daily_post_limit(plan.get("config") if isinstance(plan.get("config"), dict) else None)
+            summary = f"posted={len(plan.get('to_post') or [])} remove_candidates={len(plan.get('to_remove') or [])} daily_limit={limit}"
+            self._mark_instagram_auto_sync_completed(day, summary)
+        finally:
+            self.instagram_auto_sync_running = False
 
     def _inventory_photo_encoded_id(self, path: Path) -> str:
         try:
@@ -3814,20 +4022,45 @@ class CardPipelineApp(tk.Tk):
             active.append(record)
         return active
 
+    def _instagram_active_identity_map(self, active_records: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+        active_by_identity: dict[str, dict[str, object]] = {}
+        for record in active_records:
+            identity = self._instagram_inventory_identity(record)
+            if identity and identity not in active_by_identity:
+                active_by_identity[identity] = record
+        return active_by_identity
+
     def _instagram_inventory_plan(self) -> dict[str, object]:
         state = self._load_instagram_inventory_state()
         posts = state.get("posts") if isinstance(state.get("posts"), dict) else {}
         config = self._instagram_env_config()
         active_records = self._instagram_inventory_active_records()
         active_by_key = {str(record.get("inventory_key") or ""): record for record in active_records if str(record.get("inventory_key") or "")}
+        active_by_identity = self._instagram_active_identity_map(active_records)
         to_post: list[dict[str, object]] = []
         already_posted: list[dict[str, object]] = []
         missing_photos: list[dict[str, object]] = []
         missing_public_urls: list[dict[str, object]] = []
+        posted_identities: set[str] = set()
+
+        for key, post_entry in posts.items():
+            if not isinstance(post_entry, dict):
+                continue
+            if str(post_entry.get("status") or "").strip().lower() != "posted":
+                continue
+            identity = self._instagram_post_entry_identity(post_entry)
+            if not identity and str(key) in active_by_key:
+                identity = self._instagram_inventory_identity(active_by_key[str(key)])
+            if identity:
+                posted_identities.add(identity)
 
         for key, record in active_by_key.items():
             post_entry = posts.get(key) if isinstance(posts.get(key), dict) else {}
             if str(post_entry.get("media_id") or "").strip() and str(post_entry.get("status") or "").strip().lower() == "posted":
+                already_posted.append(record)
+                continue
+            identity = self._instagram_inventory_identity(record)
+            if identity and identity in posted_identities:
                 already_posted.append(record)
                 continue
             paths = self._inventory_photo_paths_for_record(record)
@@ -3849,13 +4082,26 @@ class CardPipelineApp(tk.Tk):
             to_post.append(item)
 
         to_remove: list[dict[str, object]] = []
+        duplicate_posts = state.get("duplicate_posts") if isinstance(state.get("duplicate_posts"), list) else []
+        duplicate_media_ids: set[str] = set()
+        for duplicate in duplicate_posts:
+            if not isinstance(duplicate, dict):
+                continue
+            media_id = str(duplicate.get("media_id") or "").strip()
+            if not media_id or media_id in duplicate_media_ids:
+                continue
+            duplicate_media_ids.add(media_id)
+            to_remove.append({"inventory_key": str(duplicate.get("inventory_key") or ""), **duplicate})
         for key, post_entry in posts.items():
             if not isinstance(post_entry, dict):
                 continue
             if key in active_by_key:
                 continue
+            identity = self._instagram_post_entry_identity(post_entry)
+            if identity and identity in active_by_identity:
+                continue
             media_id = str(post_entry.get("media_id") or "").strip()
-            if media_id:
+            if media_id and media_id not in duplicate_media_ids:
                 to_remove.append({"inventory_key": key, **post_entry})
 
         return {
@@ -4008,6 +4254,7 @@ class CardPipelineApp(tk.Tk):
         media_items = self._instagram_existing_media_posts(config, limit=limit)
         imported = 0
         already_known = 0
+        duplicates_found = 0
         ocr_attempted = 0
         ocr_matched = 0
         unmatched: list[dict[str, object]] = []
@@ -4021,6 +4268,16 @@ class CardPipelineApp(tk.Tk):
                 already_known += 1
                 continue
             record, method, score = self._instagram_find_inventory_match_for_post(post, active_records, used_keys)
+            duplicate_record: dict[str, object] | None = None
+            duplicate_method = ""
+            duplicate_score = 0.0
+            if not record:
+                candidate, candidate_method, candidate_score = self._instagram_find_inventory_match_for_post(post, active_records, set())
+                candidate_key = str(candidate.get("inventory_key") or "") if isinstance(candidate, dict) else ""
+                if candidate_key and candidate_key in used_keys:
+                    duplicate_record = candidate
+                    duplicate_method = candidate_method
+                    duplicate_score = candidate_score
             if not record and use_ocr:
                 if ocr_client is None and genai is not None and genai_types is not None:
                     if hasattr(self, "_load_photo_env"):
@@ -4043,6 +4300,18 @@ class CardPipelineApp(tk.Tk):
                         if record:
                             method = f"ocr_{method}"
                             ocr_matched += 1
+                        else:
+                            candidate, candidate_method, candidate_score = self._instagram_find_inventory_match_for_post(post, active_records, set())
+                            candidate_key = str(candidate.get("inventory_key") or "") if isinstance(candidate, dict) else ""
+                            if candidate_key and candidate_key in used_keys:
+                                duplicate_record = candidate
+                                duplicate_method = f"ocr_{candidate_method}"
+                                duplicate_score = candidate_score
+            if not record and duplicate_record:
+                self._instagram_record_duplicate_post(state, duplicate_record, post, duplicate_method, duplicate_score)
+                known_media_ids.add(media_id)
+                duplicates_found += 1
+                continue
             if not record:
                 unmatched.append(
                     {
@@ -4059,6 +4328,10 @@ class CardPipelineApp(tk.Tk):
                 "status": "posted",
                 "media_id": media_id,
                 "caption": caption,
+                "inventory_identity": self._instagram_inventory_identity(record),
+                "card_title": str(record.get("card_title") or "").strip(),
+                "cert_number": scan_to_cert(record.get("cert_number")),
+                "item_id": str(record.get("item_id") or "").strip(),
                 "photo_url": str(post.get("media_url") or ""),
                 "permalink": str(post.get("permalink") or ""),
                 "posted_at": str(post.get("timestamp") or ""),
@@ -4078,6 +4351,7 @@ class CardPipelineApp(tk.Tk):
             {
                 "imported": imported,
                 "already_known": already_known,
+                "duplicates_found": duplicates_found,
                 "ocr_attempted": ocr_attempted,
                 "ocr_matched": ocr_matched,
                 "unmatched": unmatched[:12],
@@ -4086,6 +4360,7 @@ class CardPipelineApp(tk.Tk):
         return {
             "imported": imported,
             "already_known": already_known,
+            "duplicates_found": duplicates_found,
             "ocr_attempted": ocr_attempted,
             "ocr_matched": ocr_matched,
             "unmatched": unmatched,
@@ -4157,7 +4432,10 @@ class CardPipelineApp(tk.Tk):
                 )
                 tree_items[iid] = item
             for item in plan["to_remove"]:
-                tree.insert("", tk.END, values=("Remove", item.get("caption") or item.get("title") or "", item.get("media_id") or "", "", "No longer active in inventory"))
+                detail = "No longer active in inventory"
+                if str(item.get("status") or "").strip().lower() == "delete_review_needed":
+                    detail = f"Delete retry pending: {str(item.get('delete_error') or '')[:140]}"
+                tree.insert("", tk.END, values=("Remove", item.get("caption") or item.get("title") or "", item.get("media_id") or "", "", detail))
             for record in plan["missing_photos"]:
                 tree.insert(
                     "",
@@ -4173,7 +4451,7 @@ class CardPipelineApp(tk.Tk):
             summary_var.set(
                 f"Active inventory: {plan['active_count']} | Posted: {plan['posted_count']} | "
                 f"To post: {len(plan['to_post'])} | To remove: {len(plan['to_remove'])} | "
-                f"Missing photos: {len(plan['missing_photos'])}"
+                f"Missing photos: {len(plan['missing_photos'])} | Daily auto cap: {self._instagram_daily_post_limit(plan.get('config') if isinstance(plan.get('config'), dict) else None)}"
             )
 
         def post_one_test_item() -> None:
@@ -4208,6 +4486,7 @@ class CardPipelineApp(tk.Tk):
                     message = (
                         f"Imported: {result['imported']}\n"
                         f"Already known: {result['already_known']}\n"
+                        f"Duplicates queued for removal: {result['duplicates_found']}\n"
                         f"OCR attempted: {result['ocr_attempted']}\n"
                         f"OCR matched: {result['ocr_matched']}\n"
                         f"Unmatched: {len(result['unmatched'])}\n"
@@ -4221,11 +4500,24 @@ class CardPipelineApp(tk.Tk):
 
             threading.Thread(target=worker, daemon=True).start()
 
+        def remove_old_posts() -> None:
+            removable = [item for item in plan.get("to_remove") or [] if isinstance(item, dict) and str(item.get("media_id") or "").strip()]
+            if not removable:
+                messagebox.showinfo("Instagram Sync", "No old Instagram inventory posts are ready to remove.")
+                return
+            if not messagebox.askyesno("Instagram Sync", f"Remove {len(removable)} Instagram post(s) that are no longer active in LUCAS inventory?"):
+                return
+            remove_plan = {**plan, "to_post": [], "to_remove": removable, "missing_public_urls": []}
+            worker = threading.Thread(target=self._instagram_inventory_sync_worker, args=(remove_plan,), daemon=True)
+            worker.start()
+            popup.after(1000, reload_plan)
+
         actions = ttk.Frame(frame, style="Panel.TFrame")
         actions.pack(fill=tk.X, pady=(12, 0))
         ttk.Button(actions, text="Refresh Preview", command=reload_plan, style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(actions, text="Import Existing Posts", command=import_existing_posts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Post One Test Item", command=post_one_test_item, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(actions, text="Remove Old Posts", command=remove_old_posts, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Run Live Sync", command=lambda: self._run_instagram_inventory_sync(plan, popup, reload_plan), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
         reload_plan()
@@ -4289,10 +4581,40 @@ class CardPipelineApp(tk.Tk):
                 time.sleep(5)
         raise RuntimeError(last_error or f"Instagram media was not ready for publishing: {caption}")
 
+    def _instagram_delete_media_post(self, media_id: str) -> dict[str, object]:
+        media_id = str(media_id or "").strip()
+        if not media_id:
+            raise RuntimeError("Missing Instagram media id.")
+        response = self._instagram_api_json(media_id, {}, method="DELETE")
+        if isinstance(response, dict) and response.get("success") is False:
+            raise RuntimeError(json.dumps(response))
+        return response if isinstance(response, dict) else {}
+
+    def _record_instagram_removed_post(self, state: dict[str, object], item: dict[str, object]) -> None:
+        removed_posts = state.setdefault("removed_posts", [])
+        if not isinstance(removed_posts, list):
+            removed_posts = []
+            state["removed_posts"] = removed_posts
+        removed_posts.append(
+            {
+                "inventory_key": str(item.get("inventory_key") or ""),
+                "media_id": str(item.get("media_id") or ""),
+                "caption": str(item.get("caption") or item.get("title") or ""),
+                "permalink": str(item.get("permalink") or ""),
+                "removed_at": datetime.now().isoformat(timespec="seconds"),
+                "reason": "inventory_not_active",
+            }
+        )
+        if len(removed_posts) > 250:
+            del removed_posts[:-250]
+
     def _instagram_inventory_sync_worker(self, plan: dict[str, object]) -> None:
         started = time.perf_counter()
         state = self._load_instagram_inventory_state()
         posts = state.setdefault("posts", {})
+        current_active_records = self._instagram_inventory_active_records()
+        active_by_key = {str(record.get("inventory_key") or ""): record for record in current_active_records if str(record.get("inventory_key") or "")}
+        active_by_identity = self._instagram_active_identity_map(current_active_records)
         posted = 0
         removed = 0
         queued_removals = 0
@@ -4305,6 +4627,29 @@ class CardPipelineApp(tk.Tk):
                 caption = str(item.get("caption") or "").strip()
                 photo_url = str(item.get("photo_url") or "").strip()
                 if not key or not caption or not photo_url:
+                    continue
+                record = item.get("record") if isinstance(item.get("record"), dict) else {}
+                current_record = active_by_key.get(key)
+                if not current_record:
+                    continue
+                identity = self._instagram_inventory_identity(current_record)
+                if identity and self._instagram_inventory_identity(record) and identity != self._instagram_inventory_identity(record):
+                    continue
+                caption = str(current_record.get("card_title") or caption).strip()
+                existing_entry = posts.get(key) if isinstance(posts.get(key), dict) else {}
+                if str(existing_entry.get("media_id") or "").strip() and str(existing_entry.get("status") or "").strip().lower() == "posted":
+                    continue
+                already_posted_identity = False
+                if identity:
+                    for existing_key, existing_post in posts.items():
+                        if not isinstance(existing_post, dict) or existing_key == key:
+                            continue
+                        if str(existing_post.get("status") or "").strip().lower() != "posted":
+                            continue
+                        if self._instagram_post_entry_identity(existing_post) == identity:
+                            already_posted_identity = True
+                            break
+                if already_posted_identity:
                     continue
                 create_response = self._instagram_api_json(
                     f"{plan['config']['user_id']}/media",
@@ -4321,6 +4666,10 @@ class CardPipelineApp(tk.Tk):
                     "media_id": media_id,
                     "creation_id": creation_id,
                     "caption": caption,
+                    "inventory_identity": identity,
+                    "card_title": str(current_record.get("card_title") or "").strip(),
+                    "cert_number": scan_to_cert(current_record.get("cert_number")) if isinstance(current_record, dict) else "",
+                    "item_id": str(current_record.get("item_id") or "").strip() if isinstance(current_record, dict) else "",
                     "photo_url": photo_url,
                     "posted_at": datetime.now().isoformat(timespec="seconds"),
                 }
@@ -4334,16 +4683,43 @@ class CardPipelineApp(tk.Tk):
                 media_id = str(item.get("media_id") or "").strip()
                 if not key or not media_id:
                     continue
+                item_identity = str(item.get("inventory_identity") or "").strip() or self._instagram_post_entry_identity(item)
+                is_duplicate_removal = str(item.get("reason") or "").strip().lower() == "duplicate_inventory_post"
+                tracked_entry = posts.get(key) if isinstance(posts.get(key), dict) else {}
+                tracked_media_id = str(tracked_entry.get("media_id") or "").strip()
+                if not is_duplicate_removal:
+                    if key in active_by_key:
+                        continue
+                    if item_identity and item_identity in active_by_identity:
+                        continue
                 try:
-                    self._instagram_api_json(media_id, {}, method="DELETE")
-                    posts.pop(key, None)
+                    self._instagram_delete_media_post(media_id)
+                    self._record_instagram_removed_post(state, item)
+                    if tracked_media_id == media_id:
+                        posts.pop(key, None)
+                    duplicates = state.get("duplicate_posts")
+                    if isinstance(duplicates, list):
+                        state["duplicate_posts"] = [
+                            duplicate
+                            for duplicate in duplicates
+                            if not isinstance(duplicate, dict) or str(duplicate.get("media_id") or "").strip() != media_id
+                    ]
                     removed += 1
                 except Exception as error:
-                    entry = posts.get(key) if isinstance(posts.get(key), dict) else {}
-                    entry["status"] = "delete_review_needed"
-                    entry["delete_error"] = str(error)[:500]
-                    entry["delete_queued_at"] = datetime.now().isoformat(timespec="seconds")
-                    posts[key] = entry
+                    if tracked_media_id == media_id:
+                        entry = posts.get(key) if isinstance(posts.get(key), dict) else {}
+                        entry["status"] = "delete_review_needed"
+                        entry["delete_error"] = str(error)[:500]
+                        entry["delete_queued_at"] = datetime.now().isoformat(timespec="seconds")
+                        posts[key] = entry
+                    else:
+                        duplicates = state.get("duplicate_posts")
+                        if isinstance(duplicates, list):
+                            for duplicate in duplicates:
+                                if isinstance(duplicate, dict) and str(duplicate.get("media_id") or "").strip() == media_id:
+                                    duplicate["status"] = "delete_review_needed"
+                                    duplicate["delete_error"] = str(error)[:500]
+                                    duplicate["delete_queued_at"] = datetime.now().isoformat(timespec="seconds")
                     queued_removals += 1
                 self._save_instagram_inventory_state(state)
         except Exception as error:
@@ -5736,8 +6112,6 @@ class CardPipelineApp(tk.Tk):
         rows = rows if rows is not None else [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         used: set[str] = set()
         for record in rows:
-            if str(record.get("status") or "").lower() != "active":
-                continue
             for value in record.get("photo_paths") or []:
                 text = str(value or "").strip()
                 if not text:
@@ -5751,11 +6125,34 @@ class CardPipelineApp(tk.Tk):
                         pass
         return used
 
+    def _inventory_photo_used_hashes(self, rows: list[dict[str, object]] | None = None) -> set[str]:
+        rows = rows if rows is not None else [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        used_hashes: set[str] = set()
+        seen_paths: set[str] = set()
+        for record in rows:
+            for value in record.get("photo_paths") or []:
+                for candidate in self._inventory_photo_path_candidates(value):
+                    if not candidate.exists() or not candidate.is_file():
+                        continue
+                    try:
+                        key = str(candidate.resolve())
+                    except Exception:
+                        key = str(candidate)
+                    if key in seen_paths:
+                        continue
+                    seen_paths.add(key)
+                    try:
+                        used_hashes.add(self._inventory_photo_file_hash(candidate))
+                    except Exception:
+                        continue
+        return used_hashes
+
     def _inventory_unattached_photo_paths(self) -> list[Path]:
         used = self._inventory_photo_used_path_keys()
+        used_hashes = self._inventory_photo_used_hashes()
         paths: list[Path] = []
         seen: set[str] = set()
-        for folder in (self._inventory_photo_source_folder(), self._inventory_photo_shared_folder()):
+        for folder in (self._inventory_photo_shared_folder(), self._inventory_photo_source_folder()):
             for path in self._inventory_photo_paths(folder):
                 keys = {str(path)}
                 try:
@@ -5767,16 +6164,49 @@ class CardPipelineApp(tk.Tk):
                     keys.add(storage)
                 if keys & used:
                     continue
-                unique_key = next(iter(keys))
+                unique_key = ""
                 try:
-                    unique_key = str(path.resolve())
+                    unique_key = self._inventory_photo_file_hash(path)
                 except Exception:
-                    pass
-                if unique_key in seen:
+                    unique_key = ""
+                if unique_key and unique_key in used_hashes:
+                    continue
+                if not unique_key:
+                    unique_key = next(iter(keys))
+                    try:
+                        unique_key = str(path.resolve())
+                    except Exception:
+                        pass
+                try:
+                    resolved_key = str(path.resolve())
+                except Exception:
+                    resolved_key = str(path)
+                if unique_key in seen or resolved_key in seen:
                     continue
                 seen.add(unique_key)
+                seen.add(resolved_key)
                 paths.append(path)
         return sorted(paths, key=lambda item: str(item).lower())
+
+    def _inventory_photo_preview_image(self, path: Path, size: tuple[int, int] = (260, 340)) -> tk.PhotoImage | None:
+        try:
+            if path.suffix.lower() in {".heic", ".heif"}:
+                try:
+                    import pillow_heif
+
+                    pillow_heif.register_heif_opener()
+                except Exception:
+                    return None
+            from PIL import Image, ImageOps, ImageTk
+
+            with Image.open(path) as opened:
+                image = ImageOps.exif_transpose(opened)
+                if image.mode not in {"RGB", "RGBA"}:
+                    image = image.convert("RGB")
+                image.thumbnail(size, Image.LANCZOS)
+                return ImageTk.PhotoImage(image)
+        except Exception:
+            return None
 
     def _choose_unattached_inventory_photos(self, max_count: int = MAX_INVENTORY_PHOTOS_PER_CARD) -> list[Path]:
         available = self._inventory_unattached_photo_paths()
@@ -5792,12 +6222,13 @@ class CardPipelineApp(tk.Tk):
         frame = ttk.Frame(popup, style="Panel.TFrame", padding=(16, 14))
         frame.pack(fill=tk.BOTH, expand=True)
         frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(1, weight=0)
         frame.rowconfigure(2, weight=1)
         title_text = "Unattached Photos" if max_count >= MAX_INVENTORY_PHOTOS_PER_CARD else f"Unattached Photos ({max_count} slot(s) left)"
-        ttk.Label(frame, text=title_text, style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text=title_text, style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
         search_var = tk.StringVar()
         search = ttk.Entry(frame, textvariable=search_var)
-        search.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        search.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         columns = ("filename", "folder", "modified")
         tree_frame = ttk.Frame(frame, style="Panel.TFrame")
         tree_frame.grid(row=2, column=0, sticky="nsew")
@@ -5815,6 +6246,14 @@ class CardPipelineApp(tk.Tk):
         for column in columns:
             tree.heading(column, text=headings[column])
             tree.column(column, width=widths[column], anchor="w", stretch=column != "modified")
+        preview_frame = ttk.Frame(frame, style="Panel.TFrame", padding=(12, 0, 0, 0))
+        preview_frame.grid(row=2, column=1, sticky="ns")
+        ttk.Label(preview_frame, text="Photo Preview", style="Muted.TLabel").pack(anchor="w", pady=(0, 6))
+        preview_label = ttk.Label(preview_frame, style="Panel.TLabel")
+        preview_label.pack(anchor="n")
+        preview_detail = ttk.Label(preview_frame, text="Select a photo.", style="Muted.TLabel", wraplength=260, justify=tk.LEFT)
+        preview_detail.pack(anchor="w", fill=tk.X, pady=(8, 0))
+        preview_image_ref: dict[str, tk.PhotoImage | None] = {"image": None}
         path_by_iid: dict[str, Path] = {}
         selected_paths: list[Path] = []
 
@@ -5845,6 +6284,34 @@ class CardPipelineApp(tk.Tk):
                 iid = f"photo-{index}"
                 path_by_iid[iid] = path
                 tree.insert("", tk.END, iid=iid, values=(path.name, folder, modified))
+            first = tree.get_children()
+            if first:
+                tree.selection_set(first[0])
+                tree.focus(first[0])
+                update_preview()
+            else:
+                update_preview()
+
+        def update_preview(_event: tk.Event | None = None) -> None:
+            selected = [iid for iid in tree.selection() if iid in path_by_iid]
+            path = path_by_iid[selected[0]] if selected else None
+            if path is None:
+                preview_image_ref["image"] = None
+                preview_label.configure(image="")
+                preview_detail.configure(text="No matching photos.")
+                return
+            image = self._inventory_photo_preview_image(path)
+            preview_image_ref["image"] = image
+            if image is None:
+                preview_label.configure(image="")
+                preview_detail.configure(text=f"Preview unavailable\n{path.name}")
+                return
+            preview_label.configure(image=image)
+            try:
+                relative = path.relative_to(self._inventory_photo_picker_initial_dir()).as_posix()
+            except Exception:
+                relative = str(path)
+            preview_detail.configure(text=relative)
 
         def attach() -> None:
             selected_paths[:] = [path_by_iid[iid] for iid in tree.selection() if iid in path_by_iid]
@@ -5862,10 +6329,11 @@ class CardPipelineApp(tk.Tk):
 
         search_var.trace_add("write", lambda *_: render())
         buttons = ttk.Frame(frame, style="Panel.TFrame")
-        buttons.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        buttons.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         buttons.columnconfigure(0, weight=1)
         ttk.Button(buttons, text="Cancel", command=close, style="Soft.TButton").grid(row=0, column=1, padx=(0, 8))
         ttk.Button(buttons, text="Attach Selected", command=attach, style="Primary.TButton").grid(row=0, column=2)
+        tree.bind("<<TreeviewSelect>>", update_preview)
         tree.bind("<Double-1>", lambda _event: attach())
         popup.protocol("WM_DELETE_WINDOW", close)
         render()
@@ -6130,11 +6598,9 @@ class CardPipelineApp(tk.Tk):
                 self._sync_received_inventory_to_ledger(filtered_only=filtered_only)
             finally:
                 self._inventory_reconcile_running = False
-        stored_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-        active_rows = [record for record in stored_rows if str(record.get("status") or "").lower() == "active"]
-        if len(active_rows) != len(stored_rows):
-            self._save_inventory_ledger(active_rows)
-            stored_rows = active_rows
+        all_stored_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        non_active_stored_rows = [record for record in all_stored_rows if str(record.get("status") or "").lower() != "active"]
+        stored_rows = [record for record in all_stored_rows if str(record.get("status") or "").lower() == "active"]
         if enrich and filtered_only:
             filtered_keys = {str(record.get("inventory_key") or "") for record in self._filtered_inventory_records(stored_rows)}
             self._last_inventory_enrich_visible_count = len(filtered_keys)
@@ -6161,7 +6627,7 @@ class CardPipelineApp(tk.Tk):
             else:
                 self.inventory_rows = stored_rows
         if enrich and self.inventory_rows != stored_rows:
-            self._save_inventory_ledger(self.inventory_rows)
+            self._save_inventory_ledger([*non_active_stored_rows, *self.inventory_rows])
         self.filtered_inventory_rows = self._filtered_inventory_records(self.inventory_rows)
         if hasattr(self, "_sorted_records"):
             self.filtered_inventory_rows = self._sorted_records(
@@ -6507,6 +6973,7 @@ class CardPipelineApp(tk.Tk):
             kept = [record for record in rows if str(record.get("inventory_key") or "") not in keys]
             deleted = len(rows) - len(kept)
             if deleted:
+                self._record_inventory_deleted_tombstones(removed)
                 self._save_inventory_ledger(kept)
                 cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
                 if callable(cleanup):
@@ -11545,6 +12012,8 @@ class CardPipelineApp(tk.Tk):
         if not card_text:
             return ""
         card_compact = self._compact_match_text(card_text)
+        card_tokens = self._match_text_tokens(card_text)
+        filename_hint_tokens = self._match_text_tokens(card.get("photo_filename_hint"))
         player_compact = self._compact_match_text(card.get("player") or card.get("subject") or "")
         year = str(card.get("year") or "").strip()
         set_compact = self._compact_match_text(card.get("set") or "")
@@ -11558,6 +12027,7 @@ class CardPipelineApp(tk.Tk):
             if not title:
                 continue
             title_compact = self._compact_match_text(title)
+            title_tokens = self._match_text_tokens(title)
             score = difflib.SequenceMatcher(None, card_compact, title_compact).ratio()
             evidence = 0.0
             if player_compact and player_compact in title_compact:
@@ -11574,6 +12044,15 @@ class CardPipelineApp(tk.Tk):
                 evidence += 0.75
             if grader and grader in title_compact:
                 evidence += 0.75
+            overlap = card_tokens & title_tokens
+            if len(overlap) >= 3:
+                overlap_ratio = len(overlap) / max(1, len(card_tokens))
+                if overlap_ratio >= 0.5:
+                    evidence += min(5.0, len(overlap) * 1.0)
+            if filename_hint_tokens and len(filename_hint_tokens & title_tokens) >= 3:
+                hint_ratio = len(filename_hint_tokens & title_tokens) / max(1, len(filename_hint_tokens))
+                if hint_ratio >= 0.75:
+                    evidence += 1.5
             scored.append((evidence + score, key))
         if not scored:
             return ""
@@ -11594,11 +12073,38 @@ class CardPipelineApp(tk.Tk):
             card.get("grade"),
             card.get("grading_company"),
             card.get("label_text"),
+            card.get("photo_filename_hint"),
         ]
         return " ".join(str(value or "") for value in values if str(value or "").strip())
 
+    def _match_text_tokens(self, value: object) -> set[str]:
+        tokens = set(re.findall(r"[a-z0-9]+", str(value or "").lower()))
+        stop_words = {
+            "the", "and", "with", "for", "card", "cards", "photo", "photos", "front", "back",
+            "image", "img", "shot", "scan", "scans", "psa", "bgs", "sgc", "cgc", "gem", "mint",
+        }
+        return {token for token in tokens if (len(token) >= 3 or token.isdigit()) and token not in stop_words}
+
     def _compact_match_text(self, value: object) -> str:
         return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+    def _inventory_photo_filename_hint(self, image: dict[str, object]) -> str:
+        stem = Path(str(image.get("relative_path") or image.get("filename") or "")).stem.strip()
+        if not stem:
+            return ""
+        stem = re.sub(r"(?i)^\[[^\]]+\][-_ ]*", "", stem)
+        stem = re.sub(r"(?i)^card\[\d+\][-_ ]*\[\d+\][-_ ]*", "", stem)
+        stem = re.sub(r"(?i)^card[-_ ]*\d+[-_ ]*\d+[-_ ]*", "", stem)
+        stem = re.sub(r"(?i)^card\[\d+\][-_ ]*", "", stem)
+        stem = re.sub(r"(?i)^card[-_ ]*\d+[-_ ]*", "", stem)
+        stem = re.sub(r"(?i)^\[\d+\][-_ ]*", "", stem)
+        stem = re.sub(r"(?i)^(?:photo|img|shot|scan|p)?[-_ ]*\d+[-_ ]*", "", stem)
+        stem = re.sub(r"(?i)[-_ ]+(?:photo|img|shot|scan|p)[-_ ]*\d+$", "", stem)
+        stem = re.sub(r"[\[\]{}()]+", " ", stem)
+        stem = re.sub(r"[_-]+", " ", stem)
+        stem = re.sub(r"\s+", " ", stem).strip()
+        return stem if len(self._match_text_tokens(stem)) >= 2 else ""
+
 
     def _link_inventory_photo_to_keys(self, keys: set[str], photo_path: Path) -> int:
         if not keys:
@@ -11758,9 +12264,9 @@ class CardPipelineApp(tk.Tk):
                 if candidate_certs:
                     continue
                 same_group = bool(anchor_group_key and self._inventory_photo_capture_group_key(candidate) == anchor_group_key)
-                distance = abs(int(candidate.get("modified") or 0) - anchor_modified)
-                if not same_group and distance > INVENTORY_PHOTO_GROUP_WINDOW_SECONDS:
+                if not same_group:
                     continue
+                distance = abs(int(candidate.get("modified") or 0) - anchor_modified)
                 candidates.append((distance, abs(candidate_index - index), candidate))
             candidates.sort(key=lambda item: (item[0], item[1]))
             for _distance, _position_distance, candidate in candidates[:remaining]:
@@ -11889,13 +12395,18 @@ class CardPipelineApp(tk.Tk):
                     self._save_inventory_photo_state(state)
                     app_debug_log(f"Inventory photo scan OCR error: {image_label}: {error}")
                     continue
-                matched_keys = self._inventory_photo_match_keys(certs, cards, keys_by_cert, records_by_key)
+                filename_hint = self._inventory_photo_filename_hint(image)
+                match_cards = list(cards)
+                if filename_hint and not certs:
+                    match_cards.append({"label_text": filename_hint, "photo_filename_hint": filename_hint})
+                matched_keys = self._inventory_photo_match_keys(certs, match_cards, keys_by_cert, records_by_key)
                 if matched_keys:
                     linked += self._link_inventory_photo_to_keys(matched_keys, image_path)
                 photos[sha] = {
                     **image,
                     "cards": cards,
                     "certs": sorted(certs),
+                    "filename_hint": filename_hint,
                     "linked_keys": sorted(matched_keys),
                     "status": "linked" if matched_keys else "no_matching_inventory",
                     "last_seen": datetime.now().isoformat(timespec="seconds"),

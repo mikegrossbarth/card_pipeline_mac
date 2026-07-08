@@ -4578,10 +4578,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _company_sheet_source_cert_keys = app.CardPipelineApp._company_sheet_source_cert_keys
+            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
             _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
             _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
             _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _load_inventory_ledger = lambda self: []
+            _load_profit_ledger = lambda self: []
+            _inventory_deleted_source_cert_keys = lambda self: set()
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4632,10 +4637,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _company_sheet_source_cert_keys = app.CardPipelineApp._company_sheet_source_cert_keys
+            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
             _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
             _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
             _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _load_inventory_ledger = lambda self: []
+            _load_profit_ledger = lambda self: []
+            _inventory_deleted_source_cert_keys = lambda self: set()
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4664,6 +4674,149 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INCOMING_SHEETS_DIR = old_incoming
                 app.WORKING_SHEETS_DIR = old_working
                 app.COMPANY_SHEETS_DIR = old_company
+
+    def test_received_inventory_reconcile_skips_already_sold_profit_rows(self) -> None:
+        class ReconcileDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _company_sheet_source_cert_keys = lambda self: set()
+            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _inventory_deleted_source_cert_keys = lambda self: set()
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _load_profit_ledger(self):
+                return [
+                    {
+                        "record_type": "sale",
+                        "source_sheet": "Lot A.xlsx",
+                        "original_source_sheet": "Lot A.xlsx",
+                        "cert_number": "222",
+                        "card_title": "Already Sold Card",
+                        "purchase_price": 50,
+                        "sale_price": 75,
+                    }
+                ]
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            received_dir.mkdir()
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Comps"])
+            sheet.append(["111", "PSA", "Still Active Candidate", 40, 100])
+            sheet.append(["222", "PSA", "Already Sold Card", 50, 120])
+            workbook.save(received_dir / "Lot A.xlsx")
+
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            dummy = ReconcileDummy()
+            dummy.home_sheet_markers = {"Received|Lot A.xlsx": {"assigned_person": "Kevin Hambone"}}
+            try:
+                records = dummy._received_inventory_candidate_records()
+                self.assertEqual([record["cert_number"] for record in records], ["111"])
+            finally:
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+
+    def test_received_inventory_reconcile_skips_deleted_tombstone_rows(self) -> None:
+        class ReconcileDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _company_sheet_source_cert_keys = lambda self: set()
+            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _load_profit_ledger(self):
+                return []
+
+            def _inventory_deleted_source_cert_keys(self):
+                return {("lot a.xlsx", "222")}
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            received_dir.mkdir()
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Comps"])
+            sheet.append(["111", "PSA", "Still Active Candidate", 40, 100])
+            sheet.append(["222", "PSA", "Deleted Inventory Card", 50, 120])
+            workbook.save(received_dir / "Lot A.xlsx")
+
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            dummy = ReconcileDummy()
+            dummy.home_sheet_markers = {"Received|Lot A.xlsx": {"assigned_person": "Kevin Hambone"}}
+            try:
+                records = dummy._received_inventory_candidate_records()
+                self.assertEqual([record["cert_number"] for record in records], ["111"])
+            finally:
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+
+    def test_inventory_refresh_enrich_preserves_non_active_ledger_rows(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
+
+            def __init__(self):
+                self.inventory_filter_after_id = None
+                self.saved_rows = None
+
+            def _load_inventory_ledger(self):
+                return [
+                    {"cert_number": "111", "source_sheet": "Lot A.xlsx", "assigned_person": "Kevin", "status": "Active", "card_title": "Active Card"},
+                    {"cert_number": "222", "source_sheet": "Lot A.xlsx", "assigned_person": "Kevin", "status": "Sold", "card_title": "Sold Card"},
+                ]
+
+            def _save_inventory_ledger(self, rows):
+                self.saved_rows = rows
+
+            def _enrich_inventory_record_assignment(self, record, force=False):
+                updated = dict(record)
+                updated["best_company"] = "Arena Club"
+                return updated
+
+            def _filtered_inventory_records(self, rows):
+                return rows
+
+        dummy = InventoryDummy()
+        dummy.refresh_inventory_tab(enrich=True)
+
+        self.assertIsNotNone(dummy.saved_rows)
+        self.assertEqual([row["cert_number"] for row in dummy.saved_rows], ["222", "111"])
+        self.assertEqual(dummy.saved_rows[0]["status"], "Sold")
+        self.assertEqual(dummy.saved_rows[1]["best_company"], "Arena Club")
 
     def test_received_inventory_candidates_preserve_source_sheet_sport(self) -> None:
         class InventoryDummy:
@@ -4827,12 +4980,18 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_inventory_deleted_tombstones = app.CardPipelineApp._load_inventory_deleted_tombstones
+            _save_inventory_deleted_tombstones = app.CardPipelineApp._save_inventory_deleted_tombstones
+            _record_inventory_deleted_tombstones = app.CardPipelineApp._record_inventory_deleted_tombstones
             _delete_inventory_records_by_keys = app.CardPipelineApp._delete_inventory_records_by_keys
+            _delete_inventory_photo_files_for_removed_records = lambda self, removed, kept: 0
 
         with TemporaryDirectory() as tmp:
             old_inventory = app.INVENTORY_LEDGER_PATH
+            old_tombstones = app.INVENTORY_DELETED_TOMBSTONES_PATH
             old_pipeline = app.CARD_PIPELINE_DIR
             app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.INVENTORY_DELETED_TOMBSTONES_PATH = Path(tmp) / "inventory_deleted_tombstones.json"
             app.CARD_PIPELINE_DIR = Path(tmp)
             dummy = InventoryDummy()
             dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
@@ -4849,8 +5008,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(len(ledger), 1)
                 self.assertEqual(ledger[0]["inventory_key"], second["inventory_key"])
                 self.assertEqual(ledger[0]["cert_number"], "222")
+                tombstones = json.loads(app.INVENTORY_DELETED_TOMBSTONES_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual({item["cert_number"] for item in tombstones}, {"111", "333"})
+                self.assertEqual({item["source_sheet"] for item in tombstones}, {"A.xlsx", "C.xlsx"})
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
+                app.INVENTORY_DELETED_TOMBSTONES_PATH = old_tombstones
                 app.CARD_PIPELINE_DIR = old_pipeline
 
     def test_delete_person_records_unassigns_markers_inventory_and_profit(self) -> None:
@@ -5474,6 +5637,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
             _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
             _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
+            _match_text_tokens = app.CardPipelineApp._match_text_tokens
+            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
             _compact_match_text = app.CardPipelineApp._compact_match_text
             _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
             _inventory_photo_base64 = lambda self, path: "stub"
@@ -5514,7 +5679,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
-    def test_inventory_photo_scan_groups_nearby_unmatched_photos_with_matched_front(self) -> None:
+    def test_inventory_photo_scan_does_not_group_by_time_only(self) -> None:
         class PhotoDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -5532,6 +5697,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
             _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
             _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
+            _match_text_tokens = app.CardPipelineApp._match_text_tokens
+            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
             _compact_match_text = app.CardPipelineApp._compact_match_text
             _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
             _inventory_photo_base64 = lambda self, path: "stub"
@@ -5566,12 +5733,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 with patch.object(app, "identify_cards_sync", side_effect=[[{"cert_number": "12345678"}], [{}]]):
                     dummy._inventory_photo_scan_worker(app.INVENTORY_PHOTOS_DIR)
                 ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
-                self.assertEqual(ledger[0]["photo_paths"], [str(front), str(back)])
+                self.assertEqual(ledger[0]["photo_paths"], [str(front)])
                 state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
                 grouped = [photo for photo in state["photos"].values() if photo.get("auto_grouped_from")]
-                self.assertEqual(len(grouped), 1)
-                self.assertEqual(grouped[0]["status"], "linked")
-                self.assertEqual(grouped[0]["linked_keys"], [ledger[0]["inventory_key"]])
+                self.assertEqual(grouped, [])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
@@ -5596,6 +5761,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
             _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
             _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
+            _match_text_tokens = app.CardPipelineApp._match_text_tokens
+            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
             _compact_match_text = app.CardPipelineApp._compact_match_text
             _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
             _inventory_photo_base64 = lambda self, path: "stub"
@@ -5688,6 +5855,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
             _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
             _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
+            _match_text_tokens = app.CardPipelineApp._match_text_tokens
+            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
             _compact_match_text = app.CardPipelineApp._compact_match_text
             _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
             _inventory_photo_base64 = lambda self, path: "stub"
@@ -5752,6 +5921,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
             _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
             _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
+            _match_text_tokens = app.CardPipelineApp._match_text_tokens
+            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
             _compact_match_text = app.CardPipelineApp._compact_match_text
             _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
@@ -5832,6 +6003,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
             _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
             _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
+            _match_text_tokens = app.CardPipelineApp._match_text_tokens
+            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
             _compact_match_text = app.CardPipelineApp._compact_match_text
             _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
             _inventory_photo_base64 = lambda self, path: "stub"
@@ -5880,6 +6053,75 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
+    def test_inventory_photo_scan_links_raw_card_by_filename_hint(self) -> None:
+        class PhotoDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _inventory_photo_files = app.CardPipelineApp._inventory_photo_files
+            _inventory_photo_certs_from_cards = app.CardPipelineApp._inventory_photo_certs_from_cards
+            _active_inventory_keys_by_cert = app.CardPipelineApp._active_inventory_keys_by_cert
+            _link_inventory_photo_to_keys = app.CardPipelineApp._link_inventory_photo_to_keys
+            _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
+            _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
+            _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
+            _match_text_tokens = app.CardPipelineApp._match_text_tokens
+            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
+            _compact_match_text = app.CardPipelineApp._compact_match_text
+            _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
+            _inventory_photo_base64 = lambda self, path: "stub"
+            _inventory_photo_scan_group_nearby_unmatched = app.CardPipelineApp._inventory_photo_scan_group_nearby_unmatched
+            _inventory_photo_scan_worker = app.CardPipelineApp._inventory_photo_scan_worker
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            photo = app.INVENTORY_PHOTOS_DIR / "[20260706-1226]-Card[1]-[1]-stockton immaculate laundry tag 3.jpg"
+            photo.write_bytes(b"fake image")
+            dummy = PhotoDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.app_settings = {}
+            dummy.inventory_photo_client = object()
+            dummy.events = __import__("queue").Queue()
+            record = dummy._normalize_inventory_record(
+                {
+                    "assigned_person": "Kevin",
+                    "item_id": "RAW-STOCKTON-1",
+                    "cert_number": "",
+                    "card_title": "John Stockton Panini Immaculate Laundry Tag /3",
+                    "status": "Active",
+                }
+            )
+            dummy._save_inventory_ledger([record])
+            try:
+                with patch.object(app, "identify_cards_sync", return_value=[]):
+                    dummy._inventory_photo_scan_worker(app.INVENTORY_PHOTOS_DIR)
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(ledger[0]["photo_paths"], [str(photo)])
+                state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
+                state_record = next(iter(state["photos"].values()))
+                self.assertEqual(state_record["filename_hint"], "stockton immaculate laundry tag 3")
+                self.assertEqual(state_record["linked_keys"], [record["inventory_key"]])
+                self.assertEqual(state_record["status"], "linked")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+
     def test_inventory_photo_scan_does_not_title_match_when_cert_mismatches(self) -> None:
         class PhotoDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -5898,6 +6140,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
             _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
             _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
+            _match_text_tokens = app.CardPipelineApp._match_text_tokens
+            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
             _compact_match_text = app.CardPipelineApp._compact_match_text
             _inventory_photo_base64 = lambda self, path: "stub"
             _inventory_photo_scan_group_nearby_unmatched = app.CardPipelineApp._inventory_photo_scan_group_nearby_unmatched
@@ -6387,6 +6631,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class InstagramDummy:
             _instagram_inventory_plan = app.CardPipelineApp._instagram_inventory_plan
             _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
 
             def _load_instagram_inventory_state(self):
                 return {
@@ -6424,6 +6671,99 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(len(plan["to_remove"]), 1)
         self.assertEqual(plan["to_remove"][0]["media_id"], "179000")
         self.assertEqual(len(plan["missing_photos"]), 1)
+
+    def test_personal_instagram_inventory_plan_skips_repost_when_identity_already_posted(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_plan = app.CardPipelineApp._instagram_inventory_plan
+            _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def _load_instagram_inventory_state(self):
+                return {
+                    "version": 1,
+                    "posts": {
+                        "old-import-key": {
+                            "status": "posted",
+                            "media_id": "179-old",
+                            "caption": "2023 Panini Prizm Victor Wembanyama Silver PSA 10",
+                            "inventory_identity": "cert:0019267453",
+                        }
+                    },
+                }
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token", "public_photo_base_url": "https://example.test/photos"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "rebuilt-key",
+                        "status": "Active",
+                        "card_title": "2023 Panini Prizm Victor Wembanyama Silver PSA 10",
+                        "cert_number": "0019267453",
+                        "photo_paths": ["front.jpg"],
+                    }
+                ]
+
+            def _inventory_photo_paths_for_record(self, record):
+                return [Path("/tmp") / value for value in record.get("photo_paths") or []]
+
+            def _inventory_photo_relative_path(self, path):
+                return Path(path.name)
+
+        plan = InstagramDummy()._instagram_inventory_plan()
+
+        self.assertEqual(plan["posted_count"], 1)
+        self.assertEqual(plan["to_post"], [])
+
+    def test_personal_instagram_inventory_plan_does_not_remove_active_identity_under_old_key(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_plan = app.CardPipelineApp._instagram_inventory_plan
+            _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def _load_instagram_inventory_state(self):
+                return {
+                    "version": 1,
+                    "posts": {
+                        "old-key": {
+                            "status": "posted",
+                            "media_id": "179-active",
+                            "caption": "2023 Panini Prizm Victor Wembanyama Silver PSA 10",
+                            "inventory_identity": "cert:0019267453",
+                        }
+                    },
+                }
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token", "public_photo_base_url": "https://example.test/photos"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "new-key-after-rebuild",
+                        "status": "Active",
+                        "card_title": "2023 Panini Prizm Victor Wembanyama Silver PSA 10",
+                        "cert_number": "0019267453",
+                        "photo_paths": ["front.jpg"],
+                    }
+                ]
+
+            def _inventory_photo_paths_for_record(self, record):
+                return [Path("/tmp") / value for value in record.get("photo_paths") or []]
+
+            def _inventory_photo_relative_path(self, path):
+                return Path(path.name)
+
+        plan = InstagramDummy()._instagram_inventory_plan()
+
+        self.assertEqual(plan["posted_count"], 1)
+        self.assertEqual(plan["to_post"], [])
+        self.assertEqual(plan["to_remove"], [])
 
     def test_company_sheet_week_start_uses_configured_reset_day_and_time(self) -> None:
         before_reset = datetime(2026, 7, 8, 11, 30)
@@ -6613,11 +6953,381 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(result["id"], "179123")
         self.assertEqual(dummy.calls, 2)
 
+    def test_instagram_inventory_sync_removes_inactive_posts(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
+            _instagram_delete_media_post = app.CardPipelineApp._instagram_delete_media_post
+            _record_instagram_removed_post = app.CardPipelineApp._record_instagram_removed_post
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def __init__(self):
+                self.state = {
+                    "version": 1,
+                    "posts": {
+                        "sold-key": {
+                            "status": "posted",
+                            "media_id": "179-sold",
+                            "caption": "Sold Card",
+                            "permalink": "https://instagram.test/p/sold",
+                        }
+                    },
+                }
+                self.events = queue.Queue()
+                self.activities = []
+                self.deleted = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                self.deleted.append((endpoint, method))
+                return {"success": True}
+
+            def _instagram_inventory_active_records(self):
+                return []
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+        dummy = InstagramDummy()
+        dummy._instagram_inventory_sync_worker(
+            {
+                "config": {"user_id": "178"},
+                "to_post": [],
+                "to_remove": [
+                    {
+                        "inventory_key": "sold-key",
+                        "media_id": "179-sold",
+                        "caption": "Sold Card",
+                        "permalink": "https://instagram.test/p/sold",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(dummy.deleted, [("179-sold", "DELETE")])
+        self.assertNotIn("sold-key", dummy.state["posts"])
+        self.assertEqual(dummy.state["removed_posts"][0]["media_id"], "179-sold")
+        self.assertEqual(dummy.state["removed_posts"][0]["reason"], "inventory_not_active")
+        self.assertIn("removed 1", dummy.activities[-1][1])
+
+    def test_instagram_inventory_sync_marks_failed_delete_for_review(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
+            _instagram_delete_media_post = app.CardPipelineApp._instagram_delete_media_post
+            _record_instagram_removed_post = app.CardPipelineApp._record_instagram_removed_post
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def __init__(self):
+                self.state = {
+                    "version": 1,
+                    "posts": {
+                        "old-key": {
+                            "status": "posted",
+                            "media_id": "179-old",
+                            "caption": "Old Card",
+                        }
+                    },
+                }
+                self.events = queue.Queue()
+                self.activities = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                raise RuntimeError("Unsupported delete request")
+
+            def _instagram_inventory_active_records(self):
+                return []
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+        dummy = InstagramDummy()
+        dummy._instagram_inventory_sync_worker(
+            {
+                "config": {"user_id": "178"},
+                "to_post": [],
+                "to_remove": [{"inventory_key": "old-key", "media_id": "179-old", "caption": "Old Card"}],
+            }
+        )
+
+        entry = dummy.state["posts"]["old-key"]
+        self.assertEqual(entry["status"], "delete_review_needed")
+        self.assertIn("Unsupported delete request", entry["delete_error"])
+        self.assertIn("queued 1", dummy.activities[-1][1])
+
+    def test_instagram_inventory_sync_skips_post_when_preview_item_is_no_longer_active(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.events = queue.Queue()
+                self.activities = []
+                self.api_calls = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_inventory_active_records(self):
+                return []
+
+            def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                self.api_calls.append((endpoint, method, params))
+                return {"id": "should-not-happen"}
+
+            def _instagram_publish_media_with_retry(self, user_id, creation_id, caption):
+                self.api_calls.append(("publish", "POST", {"creation_id": creation_id}))
+                return {"id": "should-not-happen"}
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+        dummy = InstagramDummy()
+        dummy._instagram_inventory_sync_worker(
+            {
+                "config": {"user_id": "178"},
+                "to_post": [
+                    {
+                        "inventory_key": "sold-before-sync",
+                        "record": {"inventory_key": "sold-before-sync", "card_title": "Sold Card", "cert_number": "12345"},
+                        "caption": "Sold Card",
+                        "photo_url": "https://example.test/sold.jpg",
+                    }
+                ],
+                "to_remove": [],
+            }
+        )
+
+        self.assertEqual(dummy.api_calls, [])
+        self.assertEqual(dummy.state["posts"], {})
+        self.assertIn("posted 0", dummy.activities[-1][1])
+
+    def test_instagram_inventory_sync_does_not_delete_active_identity_from_stale_remove_plan(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
+            _instagram_delete_media_post = app.CardPipelineApp._instagram_delete_media_post
+            _record_instagram_removed_post = app.CardPipelineApp._record_instagram_removed_post
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def __init__(self):
+                self.state = {
+                    "version": 1,
+                    "posts": {
+                        "old-key": {
+                            "status": "posted",
+                            "media_id": "179-active",
+                            "caption": "Active Card",
+                            "inventory_identity": "cert:12345",
+                        }
+                    },
+                }
+                self.events = queue.Queue()
+                self.activities = []
+                self.deleted = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_inventory_active_records(self):
+                return [{"inventory_key": "new-key", "status": "Active", "card_title": "Active Card", "cert_number": "12345"}]
+
+            def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                self.deleted.append((endpoint, method))
+                return {"success": True}
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+        dummy = InstagramDummy()
+        dummy._instagram_inventory_sync_worker(
+            {
+                "config": {"user_id": "178"},
+                "to_post": [],
+                "to_remove": [
+                    {
+                        "inventory_key": "old-key",
+                        "media_id": "179-active",
+                        "caption": "Active Card",
+                        "inventory_identity": "cert:12345",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(dummy.deleted, [])
+        self.assertEqual(dummy.state["posts"]["old-key"]["media_id"], "179-active")
+        self.assertIn("removed 0", dummy.activities[-1][1])
+
+    def test_instagram_auto_sync_runs_ready_posts_and_removals_once_daily(self) -> None:
+        class ImmediateThread:
+            def __init__(self, target, args=(), daemon=None):
+                self.target = target
+                self.args = args
+                self.daemon = daemon
+
+            def start(self):
+                self.target(*self.args)
+
+        class InstagramDummy:
+            _instagram_auto_sync_due = app.CardPipelineApp._instagram_auto_sync_due
+            _mark_instagram_auto_sync_completed = app.CardPipelineApp._mark_instagram_auto_sync_completed
+            _run_instagram_auto_sync_if_due = app.CardPipelineApp._run_instagram_auto_sync_if_due
+            _instagram_auto_sync_worker = app.CardPipelineApp._instagram_auto_sync_worker
+            _instagram_daily_post_limit = app.CardPipelineApp._instagram_daily_post_limit
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.instagram_auto_sync_running = False
+                self.events = queue.Queue()
+                self.synced_plan = None
+
+            def _personal_instagram_sync_enabled(self):
+                return True
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token"}
+
+            def _instagram_inventory_plan(self):
+                return {
+                    "config": {"user_id": "178", "access_token": "token"},
+                    "to_post": [
+                        {"inventory_key": "ready", "caption": "Ready Card", "photo_url": "https://example.test/ready.jpg"},
+                        {"inventory_key": "waiting", "caption": "Waiting Card", "photo_url": ""},
+                    ],
+                    "to_remove": [{"inventory_key": "sold", "media_id": "179-sold", "caption": "Sold Card"}],
+                    "missing_public_urls": [],
+                }
+
+            def _instagram_inventory_sync_worker(self, plan):
+                self.synced_plan = plan
+
+        dummy = InstagramDummy()
+        with patch.object(app.threading, "Thread", ImmediateThread):
+            self.assertTrue(dummy._run_instagram_auto_sync_if_due())
+
+        self.assertFalse(dummy.instagram_auto_sync_running)
+        self.assertEqual([item["inventory_key"] for item in dummy.synced_plan["to_post"]], ["ready"])
+        self.assertEqual([item["inventory_key"] for item in dummy.synced_plan["to_remove"]], ["sold"])
+        self.assertEqual(dummy.state["last_auto_sync_date"], datetime.now().date().isoformat())
+        self.assertIn("posted=1", dummy.state["last_auto_sync_summary"])
+
+    def test_instagram_auto_sync_caps_daily_posts_at_configured_limit(self) -> None:
+        class ImmediateThread:
+            def __init__(self, target, args=(), daemon=None):
+                self.target = target
+                self.args = args
+                self.daemon = daemon
+
+            def start(self):
+                self.target(*self.args)
+
+        class InstagramDummy:
+            _instagram_auto_sync_due = app.CardPipelineApp._instagram_auto_sync_due
+            _mark_instagram_auto_sync_completed = app.CardPipelineApp._mark_instagram_auto_sync_completed
+            _run_instagram_auto_sync_if_due = app.CardPipelineApp._run_instagram_auto_sync_if_due
+            _instagram_auto_sync_worker = app.CardPipelineApp._instagram_auto_sync_worker
+            _instagram_daily_post_limit = app.CardPipelineApp._instagram_daily_post_limit
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.instagram_auto_sync_running = False
+                self.events = queue.Queue()
+                self.synced_plan = None
+
+            def _personal_instagram_sync_enabled(self):
+                return True
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token", "daily_post_limit": "75"}
+
+            def _instagram_inventory_plan(self):
+                return {
+                    "config": {"user_id": "178", "access_token": "token", "daily_post_limit": "75"},
+                    "to_post": [
+                        {"inventory_key": f"ready-{index}", "caption": f"Ready Card {index}", "photo_url": f"https://example.test/{index}.jpg"}
+                        for index in range(80)
+                    ],
+                    "to_remove": [],
+                    "missing_public_urls": [],
+                }
+
+            def _instagram_inventory_sync_worker(self, plan):
+                self.synced_plan = plan
+
+        dummy = InstagramDummy()
+        with patch.object(app.threading, "Thread", ImmediateThread):
+            self.assertTrue(dummy._run_instagram_auto_sync_if_due())
+
+        self.assertEqual(len(dummy.synced_plan["to_post"]), 75)
+        self.assertEqual(dummy.synced_plan["to_post"][0]["inventory_key"], "ready-0")
+        self.assertEqual(dummy.synced_plan["to_post"][-1]["inventory_key"], "ready-74")
+        self.assertIn("daily_limit=75", dummy.state["last_auto_sync_summary"])
+
+    def test_instagram_auto_sync_due_skips_after_daily_completion(self) -> None:
+        class InstagramDummy:
+            _instagram_auto_sync_due = app.CardPipelineApp._instagram_auto_sync_due
+
+            def __init__(self):
+                self.instagram_auto_sync_running = False
+                self.state = {"last_auto_sync_date": "2026-07-07"}
+
+            def _personal_instagram_sync_enabled(self):
+                return True
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+        dummy = InstagramDummy()
+        self.assertFalse(dummy._instagram_auto_sync_due(datetime(2026, 7, 7, 9, 30)))
+        self.assertTrue(dummy._instagram_auto_sync_due(datetime(2026, 7, 8, 9, 30)))
+
     def test_instagram_import_existing_posts_matches_cert_and_leaves_unclear_unmatched(self) -> None:
         class InstagramDummy:
             _instagram_import_existing_posts = app.CardPipelineApp._instagram_import_existing_posts
             _instagram_find_inventory_match_for_post = app.CardPipelineApp._instagram_find_inventory_match_for_post
             _instagram_match_text_tokens = app.CardPipelineApp._instagram_match_text_tokens
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_record_duplicate_post = app.CardPipelineApp._instagram_record_duplicate_post
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_record_duplicate_post = app.CardPipelineApp._instagram_record_duplicate_post
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_record_duplicate_post = app.CardPipelineApp._instagram_record_duplicate_post
 
             def __init__(self):
                 self.state = {"version": 1, "posts": {}}
@@ -6676,11 +7386,72 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.state["posts"]["cert-key"]["matched_by"], "cert_number")
         self.assertNotIn("raw-key", dummy.state["posts"])
 
+    def test_instagram_import_existing_posts_queues_duplicate_media_for_removal(self) -> None:
+        class InstagramDummy:
+            _instagram_import_existing_posts = app.CardPipelineApp._instagram_import_existing_posts
+            _instagram_find_inventory_match_for_post = app.CardPipelineApp._instagram_find_inventory_match_for_post
+            _instagram_match_text_tokens = app.CardPipelineApp._instagram_match_text_tokens
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_record_duplicate_post = app.CardPipelineApp._instagram_record_duplicate_post
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_record_duplicate_post = app.CardPipelineApp._instagram_record_duplicate_post
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_record_duplicate_post = app.CardPipelineApp._instagram_record_duplicate_post
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "cert-key",
+                        "status": "Active",
+                        "card_title": "2023 Panini Prizm Victor Wembanyama Silver PSA 10",
+                        "cert_number": "0019267453",
+                    }
+                ]
+
+            def _instagram_existing_media_posts(self, config, limit=500):
+                return [
+                    {
+                        "id": "179-keep",
+                        "caption": "2023 Panini Prizm Victor Wembanyama Silver PSA 10 cert 0019267453",
+                        "permalink": "https://instagram.test/p/keep",
+                    },
+                    {
+                        "id": "179-duplicate",
+                        "caption": "duplicate 2023 Panini Prizm Victor Wembanyama Silver PSA 10 cert 0019267453",
+                        "permalink": "https://instagram.test/p/dupe",
+                    },
+                ]
+
+            def _append_activity(self, action, summary, details):
+                pass
+
+        dummy = InstagramDummy()
+        result = dummy._instagram_import_existing_posts(use_ocr=False)
+
+        self.assertEqual(result["imported"], 1)
+        self.assertEqual(result["duplicates_found"], 1)
+        self.assertEqual(dummy.state["posts"]["cert-key"]["media_id"], "179-keep")
+        self.assertEqual(dummy.state["duplicate_posts"][0]["media_id"], "179-duplicate")
+
     def test_instagram_import_existing_posts_can_match_strong_title_overlap(self) -> None:
         class InstagramDummy:
             _instagram_import_existing_posts = app.CardPipelineApp._instagram_import_existing_posts
             _instagram_find_inventory_match_for_post = app.CardPipelineApp._instagram_find_inventory_match_for_post
             _instagram_match_text_tokens = app.CardPipelineApp._instagram_match_text_tokens
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_record_duplicate_post = app.CardPipelineApp._instagram_record_duplicate_post
 
             def __init__(self):
                 self.state = {"version": 1, "posts": {}}
@@ -6727,6 +7498,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _instagram_import_existing_posts = app.CardPipelineApp._instagram_import_existing_posts
             _instagram_find_inventory_match_for_post = app.CardPipelineApp._instagram_find_inventory_match_for_post
             _instagram_match_text_tokens = app.CardPipelineApp._instagram_match_text_tokens
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_record_duplicate_post = app.CardPipelineApp._instagram_record_duplicate_post
 
             def __init__(self):
                 self.state = {"version": 1, "posts": {}}

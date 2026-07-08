@@ -9,6 +9,7 @@ work/
 outputs/
 *.log
 *.app/
+Run Michael LUCAS.command
 .env
 lucas_settings.json
 lucas_settings.*.json
