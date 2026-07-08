@@ -6742,6 +6742,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class InstagramDummy:
             _instagram_inventory_plan = app.CardPipelineApp._instagram_inventory_plan
             _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
+            _instagram_cover_photo_path = app.CardPipelineApp._instagram_cover_photo_path
             _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
             _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
             _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
@@ -6788,6 +6789,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class InstagramDummy:
             _instagram_inventory_plan = app.CardPipelineApp._instagram_inventory_plan
             _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
+            _instagram_cover_photo_path = app.CardPipelineApp._instagram_cover_photo_path
             _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
             _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
             _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
@@ -6830,6 +6832,62 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(plan["posted_count"], 1)
         self.assertEqual(plan["to_post"], [])
         self.assertEqual(plan["to_remove"], [])
+
+    def test_personal_instagram_inventory_plan_queues_active_post_when_cover_photo_changes(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_plan = app.CardPipelineApp._instagram_inventory_plan
+            _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
+            _instagram_cover_photo_path = app.CardPipelineApp._instagram_cover_photo_path
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def _load_instagram_inventory_state(self):
+                return {
+                    "version": 1,
+                    "posts": {
+                        "raw-key": {
+                            "status": "posted",
+                            "media_id": "179-back",
+                            "caption": "1957 Topps Johnny Unitas Rookie SGC 3",
+                            "inventory_identity": "item:rawkey",
+                            "photo_url": "https://example.test/photos/%5B20260708-0923%5D-Card%5B10%5D-%5B2%5D-%5Bunitas%5D.jpg",
+                        }
+                    },
+                }
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token", "public_photo_base_url": "https://example.test/photos"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "raw-key",
+                        "item_id": "RAW-KEY",
+                        "status": "Active",
+                        "card_title": "1957 Topps Johnny Unitas Rookie SGC 3",
+                        "cert_number": "",
+                        "photo_paths": [
+                            "[20260708-0923]-Card[10]-[2]-[unitas].jpg",
+                            "[20260708-0923]-Card[10]-[1]-[unitas].jpg",
+                        ],
+                    }
+                ]
+
+            def _inventory_photo_paths_for_record(self, record):
+                return [Path("/tmp") / value for value in record.get("photo_paths") or []]
+
+            def _inventory_photo_relative_path(self, path):
+                return Path(path.name)
+
+        plan = InstagramDummy()._instagram_inventory_plan()
+
+        self.assertEqual(plan["posted_count"], 1)
+        self.assertEqual(plan["to_post"], [])
+        self.assertEqual(len(plan["to_remove"]), 1)
+        self.assertEqual(plan["to_remove"][0]["media_id"], "179-back")
+        self.assertEqual(plan["to_remove"][0]["reason"], "cover_photo_changed")
+        self.assertIn("%5B1%5D", plan["to_remove"][0]["expected_photo_url"])
 
     def test_company_sheet_week_start_uses_configured_reset_day_and_time(self) -> None:
         before_reset = datetime(2026, 7, 8, 11, 30)

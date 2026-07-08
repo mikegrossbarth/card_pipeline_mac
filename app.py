@@ -4222,6 +4222,7 @@ class CardPipelineApp(tk.Tk):
         already_posted: list[dict[str, object]] = []
         missing_photos: list[dict[str, object]] = []
         missing_public_urls: list[dict[str, object]] = []
+        cover_replacements: list[dict[str, object]] = []
         posted_identities: set[str] = set()
 
         for key, post_entry in posts.items():
@@ -4238,6 +4239,20 @@ class CardPipelineApp(tk.Tk):
         for key, record in active_by_key.items():
             post_entry = posts.get(key) if isinstance(posts.get(key), dict) else {}
             if str(post_entry.get("media_id") or "").strip() and str(post_entry.get("status") or "").strip().lower() == "posted":
+                paths = self._inventory_photo_paths_for_record(record)
+                cover_photo = self._instagram_cover_photo_path(paths)
+                expected_photo_url = self._instagram_inventory_photo_url(cover_photo, config) if cover_photo is not None else ""
+                posted_photo_url = str(post_entry.get("photo_url") or "").strip()
+                if expected_photo_url and posted_photo_url and expected_photo_url != posted_photo_url:
+                    cover_replacements.append(
+                        {
+                            "inventory_key": key,
+                            **post_entry,
+                            "reason": "cover_photo_changed",
+                            "expected_photo_path": str(cover_photo),
+                            "expected_photo_url": expected_photo_url,
+                        }
+                    )
                 already_posted.append(record)
                 continue
             identity = self._instagram_inventory_identity(record)
@@ -4265,7 +4280,7 @@ class CardPipelineApp(tk.Tk):
                 missing_public_urls.append(item)
             to_post.append(item)
 
-        to_remove: list[dict[str, object]] = []
+        to_remove: list[dict[str, object]] = list(cover_replacements)
         duplicate_posts = state.get("duplicate_posts") if isinstance(state.get("duplicate_posts"), list) else []
         duplicate_media_ids: set[str] = set()
         for duplicate in duplicate_posts:
@@ -4621,6 +4636,8 @@ class CardPipelineApp(tk.Tk):
                 detail = "No longer active in inventory"
                 if str(item.get("status") or "").strip().lower() == "delete_review_needed":
                     detail = f"Delete retry pending: {str(item.get('delete_error') or '')[:140]}"
+                elif str(item.get("reason") or "").strip().lower() == "cover_photo_changed":
+                    detail = "Manual delete needed; cover photo changed"
                 else:
                     detail = "Manual delete needed; API delete may not be available"
                 iid = f"remove:{index}"
