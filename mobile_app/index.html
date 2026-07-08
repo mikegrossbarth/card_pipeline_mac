@@ -50,6 +50,20 @@
             <input id="photoSearchInput" class="fileInput" type="file" accept="image/*" capture="environment">
           </div>
           <div id="scanSearchStatus" class="status"></div>
+          <details class="filterPanel">
+            <summary>Categories</summary>
+            <div class="categoryGrid" aria-label="Inventory category filters">
+              <label class="checkLine"><input class="categoryFilter" type="checkbox" value="baseball"> Baseball</label>
+              <label class="checkLine"><input class="categoryFilter" type="checkbox" value="basketball"> Basketball</label>
+              <label class="checkLine"><input class="categoryFilter" type="checkbox" value="football"> Football</label>
+              <label class="checkLine"><input class="categoryFilter" type="checkbox" value="hockey"> Hockey</label>
+              <label class="checkLine"><input class="categoryFilter" type="checkbox" value="soccer"> Soccer</label>
+              <label class="checkLine"><input class="categoryFilter" type="checkbox" value="pokemon"> Pokemon</label>
+              <label class="checkLine"><input class="categoryFilter" type="checkbox" value="racing"> Racing</label>
+              <label class="checkLine"><input class="categoryFilter" type="checkbox" value="wrestling"> Wrestling</label>
+            </div>
+            <button id="clearCategoryFilters" class="secondary" type="button">Clear Categories</button>
+          </details>
           <label class="checkLine"><input id="includeSold" type="checkbox"> Include inactive/sold</label>
           <section id="sellPanel" class="panel inlinePanel hidden">
             <h2 id="sellTitle">Mark Sold</h2>

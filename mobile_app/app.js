@@ -365,6 +365,12 @@ function renderResults(items) {
   });
 }
 
+function selectedCategories() {
+  return Array.from(document.querySelectorAll(".categoryFilter:checked"))
+    .map((input) => input.value)
+    .filter(Boolean);
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -381,6 +387,7 @@ async function searchInventory() {
     result = await api("/inventory/search", {
       query: $("searchInput").value,
       person: $("personFilter").value,
+      sport: selectedCategories(),
       include_sold: $("includeSold").checked,
     });
   } catch (error) {
@@ -396,6 +403,13 @@ async function searchInventory() {
   cacheSet(CACHE_KEYS.search, result);
   $("scanSearchStatus").textContent = "";
   renderResults(result.items || []);
+}
+
+function clearCategoryFilters() {
+  document.querySelectorAll(".categoryFilter").forEach((input) => {
+    input.checked = false;
+  });
+  searchInventory();
 }
 
 function addPayload(updateExisting = false) {
@@ -754,6 +768,10 @@ function bind() {
     syncPersonInputs($("personFilter").value);
     searchInventory();
   });
+  document.querySelectorAll(".categoryFilter").forEach((input) => {
+    input.addEventListener("change", () => searchInventory());
+  });
+  $("clearCategoryFilters").addEventListener("click", () => clearCategoryFilters());
   $("includeSold").addEventListener("change", () => searchInventory());
   $("cancelSell").addEventListener("click", () => cancelSell());
   $("confirmSell").addEventListener("click", () => confirmSell());

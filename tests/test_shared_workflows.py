@@ -7808,6 +7808,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
             _mobile_inventory_payload_record = app.CardPipelineApp._mobile_inventory_payload_record
             _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            _mobile_inventory_sport_filters = app.CardPipelineApp._mobile_inventory_sport_filters
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
             mobile_inventory_search = app.CardPipelineApp.mobile_inventory_search
             mobile_inventory_add = app.CardPipelineApp.mobile_inventory_add
@@ -7842,8 +7843,22 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                             "cert_number": "123456",
                             "grader": "PSA",
                             "card_title": "2024 Test Player Silver PSA 10",
+                            "sport": "Basketball",
                             "purchase_price": 42,
                             "inventory_value": 88,
+                            "source_sheet": "Existing.xlsx",
+                            "source": "Barcode",
+                        }
+                    ),
+                    dummy._normalize_inventory_record(
+                        {
+                            "assigned_person": "Kevin Hambone",
+                            "cert_number": "654321",
+                            "grader": "BGS",
+                            "card_title": "2023 Baseball Test Prospect BGS 9.5",
+                            "sport": "Baseball",
+                            "purchase_price": 15,
+                            "inventory_value": 35,
                             "source_sheet": "Existing.xlsx",
                             "source": "Barcode",
                         }
@@ -7855,8 +7870,12 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertEqual(search["count"], 1)
                 self.assertEqual(search["items"][0]["purchase_price_display"], "$42.00")
                 self.assertEqual(search["people"], ["Kevin Hambone"])
-                self.assertEqual(dummy.mobile_inventory_search({"person": "Kevin"})["count"], 1)
+                self.assertEqual(dummy.mobile_inventory_search({"person": "Kevin"})["count"], 2)
                 self.assertEqual(dummy.mobile_inventory_search({"person": "Mike"})["count"], 0)
+                self.assertEqual(dummy.mobile_inventory_search({"sport": "baseball"})["items"][0]["cert_number"], "654321")
+                multi_category = dummy.mobile_inventory_search({"sport": ["baseball", "basketball"]})
+                self.assertEqual(multi_category["count"], 2)
+                self.assertEqual({item["cert_number"] for item in multi_category["items"]}, {"123456", "654321"})
 
                 duplicate = dummy.mobile_inventory_add({"cert_number": "123456", "purchase_price": "50"})
                 self.assertFalse(duplicate["ok"])

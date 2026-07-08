@@ -2717,6 +2717,7 @@ class CardPipelineApp(tk.Tk):
     def mobile_inventory_search(self, payload: dict) -> dict:
         query = str(payload.get("query") or payload.get("q") or "").strip().lower()
         person = str(payload.get("person") or "").strip().lower()
+        sport_filters = self._mobile_inventory_sport_filters(payload)
         include_sold = bool(payload.get("include_sold"))
         rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         results: list[dict[str, object]] = []
@@ -2726,6 +2727,11 @@ class CardPipelineApp(tk.Tk):
                 continue
             if person and person not in str(record.get("assigned_person") or "Unassigned").lower():
                 continue
+            if sport_filters:
+                record_sport_text = str(record.get("sport") or "").strip().lower()
+                record_sport = (assignment_engine.canonical_sport_label(record_sport_text) or record_sport_text).strip().lower()
+                if record_sport not in sport_filters and not any(sport in record_sport_text for sport in sport_filters):
+                    continue
             haystack = " ".join(
                 str(record.get(field) or "")
                 for field in ("inventory_key", "item_type", "item_id", "cert_number", "card_title", "grader", "assigned_person", "sport", "source", "best_company", "notes")
@@ -2736,6 +2742,20 @@ class CardPipelineApp(tk.Tk):
             if len(results) >= 75:
                 break
         return {"ok": True, "count": len(results), "items": results, "people": self._known_people()}
+
+    def _mobile_inventory_sport_filters(self, payload: dict) -> set[str]:
+        raw = payload.get("sport") or payload.get("category") or ""
+        if isinstance(raw, list):
+            parts = [str(value or "") for value in raw]
+        else:
+            parts = re.split(r"[,;/|]", str(raw or ""))
+        values: set[str] = set()
+        for part in parts:
+            text = part.strip().lower()
+            if not text:
+                continue
+            values.add((assignment_engine.canonical_sport_label(text) or text).strip().lower())
+        return values
 
     def mobile_inventory_add(self, payload: dict) -> dict:
         record = self._mobile_inventory_payload_record(payload)

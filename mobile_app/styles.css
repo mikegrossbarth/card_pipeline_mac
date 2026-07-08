@@ -260,6 +260,27 @@ textarea {
   margin: 0;
 }
 
+.filterPanel {
+  margin: 10px 0 8px;
+  padding: 10px;
+  border: 1px solid #2b3e4d;
+  border-radius: 8px;
+  background: #13202a;
+}
+
+.filterPanel summary {
+  min-height: 32px;
+  color: #eef5f6;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.categoryGrid {
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+}
+
 .hint,
 .status {
   color: #9eb1ba;
@@ -390,6 +411,11 @@ textarea {
 
   .controlGrid {
     grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  .categoryGrid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 10px;
   }
 
   .grid label:nth-last-child(1),
