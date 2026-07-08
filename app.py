@@ -4158,6 +4158,15 @@ class CardPipelineApp(tk.Tk):
             relative = Path(path.name)
         return f"{base_url}/{urllib.parse.quote(relative.as_posix())}"
 
+    def _instagram_post_photo_id(self, post_entry: dict[str, object]) -> str:
+        photo_id = str(post_entry.get("photo_id") or "").strip()
+        if photo_id:
+            return photo_id
+        photo_url = str(post_entry.get("photo_url") or "").strip()
+        parsed = urllib.parse.urlparse(photo_url)
+        match = re.match(r"^/instagram/media/[^/]+/([^/]+)(?:/|$)", parsed.path)
+        return urllib.parse.unquote(match.group(1)) if match else ""
+
     def _instagram_cover_photo_path(self, paths: list[Path]) -> Path | None:
         if not paths:
             return None
@@ -4241,16 +4250,16 @@ class CardPipelineApp(tk.Tk):
             if str(post_entry.get("media_id") or "").strip() and str(post_entry.get("status") or "").strip().lower() == "posted":
                 paths = self._inventory_photo_paths_for_record(record)
                 cover_photo = self._instagram_cover_photo_path(paths)
-                expected_photo_url = self._instagram_inventory_photo_url(cover_photo, config) if cover_photo is not None else ""
-                posted_photo_url = str(post_entry.get("photo_url") or "").strip()
-                if expected_photo_url and posted_photo_url and expected_photo_url != posted_photo_url:
+                expected_photo_id = self._instagram_inventory_photo_id(cover_photo) if cover_photo is not None else ""
+                posted_photo_id = self._instagram_post_photo_id(post_entry)
+                if expected_photo_id and posted_photo_id and expected_photo_id != posted_photo_id:
                     cover_replacements.append(
                         {
                             "inventory_key": key,
                             **post_entry,
                             "reason": "cover_photo_changed",
                             "expected_photo_path": str(cover_photo),
-                            "expected_photo_url": expected_photo_url,
+                            "expected_photo_id": expected_photo_id,
                         }
                     )
                 already_posted.append(record)
@@ -4986,6 +4995,7 @@ class CardPipelineApp(tk.Tk):
                     "card_title": str(current_record.get("card_title") or "").strip(),
                     "cert_number": scan_to_cert(current_record.get("cert_number")) if isinstance(current_record, dict) else "",
                     "item_id": str(current_record.get("item_id") or "").strip() if isinstance(current_record, dict) else "",
+                    "photo_id": self._instagram_inventory_photo_id(Path(str(item.get("photo_path") or ""))),
                     "photo_url": photo_url,
                     "permalink": permalink,
                     "posted_at": datetime.now().isoformat(timespec="seconds"),
