@@ -4560,10 +4560,9 @@ class CardPipelineApp(tk.Tk):
 
         columns = ("action", "card", "id", "photo", "detail")
         table_frame = ttk.Frame(frame, style="Panel.TFrame")
-        table_frame.pack(fill=tk.BOTH, expand=True)
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
-        tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=17)
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=14)
         headings = {
             "action": "Action",
             "card": "Card",
@@ -4741,6 +4740,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(delete_actions, text="Mark Deleted", command=mark_manual_deleted, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Try API Delete", command=remove_old_posts, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
+        table_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
         reload_plan()
 
     def _instagram_api_json(self, endpoint: str, params: dict[str, object] | None = None, method: str = "GET") -> dict[str, object]:
