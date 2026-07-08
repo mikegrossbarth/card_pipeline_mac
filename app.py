@@ -4158,6 +4158,15 @@ class CardPipelineApp(tk.Tk):
             relative = Path(path.name)
         return f"{base_url}/{urllib.parse.quote(relative.as_posix())}"
 
+    def _instagram_cover_photo_path(self, paths: list[Path]) -> Path | None:
+        if not paths:
+            return None
+        front_pattern = re.compile(r"\]-\[(?:0*1|front)\]-", re.IGNORECASE)
+        for path in paths:
+            if front_pattern.search(path.name):
+                return path
+        return paths[0]
+
     def instagram_inventory_media_response(self, photo_id: str) -> tuple[bytes, str] | None:
         if not self._personal_instagram_sync_enabled():
             return None
@@ -4239,12 +4248,15 @@ class CardPipelineApp(tk.Tk):
             if not paths:
                 missing_photos.append(record)
                 continue
-            first_photo = paths[0]
-            photo_url = self._instagram_inventory_photo_url(first_photo, config)
+            cover_photo = self._instagram_cover_photo_path(paths)
+            if cover_photo is None:
+                missing_photos.append(record)
+                continue
+            photo_url = self._instagram_inventory_photo_url(cover_photo, config)
             item = {
                 "inventory_key": key,
                 "record": record,
-                "photo_path": first_photo,
+                "photo_path": cover_photo,
                 "photo_count": len(paths),
                 "photo_url": photo_url,
                 "caption": str(record.get("card_title") or "").strip(),

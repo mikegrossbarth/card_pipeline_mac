@@ -6686,6 +6686,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class InstagramDummy:
             _instagram_inventory_plan = app.CardPipelineApp._instagram_inventory_plan
             _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
+            _instagram_cover_photo_path = app.CardPipelineApp._instagram_cover_photo_path
             _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
             _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
             _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
@@ -6707,7 +6708,16 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
             def _instagram_inventory_active_records(self):
                 return [
-                    {"inventory_key": "new-key", "status": "Active", "card_title": "New Card", "cert_number": "111", "photo_paths": ["front.jpg"]},
+                    {
+                        "inventory_key": "new-key",
+                        "status": "Active",
+                        "card_title": "New Card",
+                        "cert_number": "111",
+                        "photo_paths": [
+                            "[20260708-0923]-Card[10]-[2]-[new card].jpg",
+                            "[20260708-0923]-Card[10]-[1]-[new card].jpg",
+                        ],
+                    },
                     {"inventory_key": "missing-key", "status": "Active", "card_title": "No Photo", "cert_number": "222", "photo_paths": []},
                 ]
 
@@ -6722,7 +6732,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(plan["active_count"], 2)
         self.assertEqual(len(plan["to_post"]), 1)
         self.assertEqual(plan["to_post"][0]["caption"], "New Card")
-        self.assertEqual(plan["to_post"][0]["photo_url"], "https://example.test/photos/front.jpg")
+        self.assertEqual(plan["to_post"][0]["photo_url"], "https://example.test/photos/%5B20260708-0923%5D-Card%5B10%5D-%5B1%5D-%5Bnew%20card%5D.jpg")
+        self.assertEqual(Path(plan["to_post"][0]["photo_path"]).name, "[20260708-0923]-Card[10]-[1]-[new card].jpg")
         self.assertEqual(len(plan["to_remove"]), 1)
         self.assertEqual(plan["to_remove"][0]["media_id"], "179000")
         self.assertEqual(len(plan["missing_photos"]), 1)
