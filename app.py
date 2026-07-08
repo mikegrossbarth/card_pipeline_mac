@@ -4114,6 +4114,21 @@ class CardPipelineApp(tk.Tk):
         finally:
             self.instagram_auto_sync_running = False
 
+    def _instagram_limited_manual_sync_plan(self, plan: dict[str, object]) -> tuple[dict[str, object], int, int]:
+        limit = self._instagram_daily_post_limit(plan.get("config") if isinstance(plan.get("config"), dict) else None)
+        ready_posts = [
+            item
+            for item in plan.get("to_post") or []
+            if isinstance(item, dict) and str(item.get("photo_url") or "").strip()
+        ]
+        limited_posts = ready_posts[:limit]
+        limited_plan = {
+            **plan,
+            "to_post": limited_posts,
+            "missing_public_urls": [],
+        }
+        return limited_plan, len(ready_posts), limit
+
     def _inventory_photo_encoded_id(self, path: Path) -> str:
         try:
             storage_value = self._inventory_photo_storage_value(path)
@@ -4752,17 +4767,35 @@ class CardPipelineApp(tk.Tk):
         if not str(config.get("user_id") or "").strip() or not str(config.get("access_token") or "").strip():
             messagebox.showerror("Instagram Sync", "Missing Instagram user ID or access token in .env.")
             return
-        missing_public = plan.get("missing_public_urls") or []
-        if missing_public:
+        sync_plan, ready_total, post_limit = self._instagram_limited_manual_sync_plan(plan)
+        if not sync_plan.get("to_post") and not sync_plan.get("to_remove"):
+            missing_public = plan.get("missing_public_urls") or []
+            if missing_public:
+                messagebox.showinfo(
+                    "Instagram Sync",
+                    "Preview is ready, but live posting needs public photo URLs.\n\n"
+                    "Add LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL or LUCAS_INSTAGRAM_PUBLIC_PHOTO_BASE_URL to .env after we set up a hosted photo URL source.",
+                )
+                return
             messagebox.showinfo(
                 "Instagram Sync",
-                "Preview is ready, but live posting needs public photo URLs.\n\n"
-                "Add LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL or LUCAS_INSTAGRAM_PUBLIC_PHOTO_BASE_URL to .env after we set up a hosted photo URL source.",
+                "No ready Instagram inventory changes are available to sync.",
             )
             return
-        if not messagebox.askyesno("Instagram Sync", f"Run live Instagram sync?\n\nPost {len(plan.get('to_post') or [])} card(s).\nRemove {len(plan.get('to_remove') or [])} old post(s) if Meta allows it."):
+        post_count = len(sync_plan.get("to_post") or [])
+        remove_count = len(sync_plan.get("to_remove") or [])
+        skipped_count = max(0, ready_total - post_count)
+        message = (
+            "Run live Instagram sync?\n\n"
+            f"Post {post_count} of {ready_total} ready card(s)."
+            f"\nRemove {remove_count} old post(s) if Meta allows it."
+            f"\n\nManual live posting is capped at {post_limit} card(s) per run."
+        )
+        if skipped_count:
+            message += f"\n{skipped_count} ready card(s) will remain for the next batch."
+        if not messagebox.askyesno("Instagram Sync", message):
             return
-        worker = threading.Thread(target=self._instagram_inventory_sync_worker, args=(plan,), daemon=True)
+        worker = threading.Thread(target=self._instagram_inventory_sync_worker, args=(sync_plan,), daemon=True)
         worker.start()
         popup.after(1000, refresh_callback)
 

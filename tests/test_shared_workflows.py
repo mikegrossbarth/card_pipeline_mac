@@ -7448,6 +7448,30 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.synced_plan["to_post"][-1]["inventory_key"], "ready-74")
         self.assertIn("daily_limit=75", dummy.state["last_auto_sync_summary"])
 
+    def test_instagram_manual_sync_plan_caps_ready_posts_at_configured_limit(self) -> None:
+        class InstagramDummy:
+            _instagram_daily_post_limit = app.CardPipelineApp._instagram_daily_post_limit
+            _instagram_limited_manual_sync_plan = app.CardPipelineApp._instagram_limited_manual_sync_plan
+
+        plan = {
+            "config": {"daily_post_limit": "3"},
+            "to_post": [
+                {"inventory_key": f"ready-{index}", "caption": f"Ready Card {index}", "photo_url": f"https://example.test/{index}.jpg"}
+                for index in range(5)
+            ]
+            + [{"inventory_key": "missing-url", "caption": "Missing URL", "photo_url": ""}],
+            "to_remove": [{"inventory_key": "sold", "media_id": "179-sold", "caption": "Sold Card"}],
+            "missing_public_urls": [{"inventory_key": "missing-url"}],
+        }
+
+        limited_plan, ready_total, limit = InstagramDummy()._instagram_limited_manual_sync_plan(plan)
+
+        self.assertEqual(limit, 3)
+        self.assertEqual(ready_total, 5)
+        self.assertEqual([item["inventory_key"] for item in limited_plan["to_post"]], ["ready-0", "ready-1", "ready-2"])
+        self.assertEqual([item["inventory_key"] for item in limited_plan["to_remove"]], ["sold"])
+        self.assertEqual(limited_plan["missing_public_urls"], [])
+
     def test_instagram_auto_sync_due_skips_after_daily_completion(self) -> None:
         class InstagramDummy:
             _instagram_auto_sync_due = app.CardPipelineApp._instagram_auto_sync_due
