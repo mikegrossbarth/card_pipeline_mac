@@ -2625,9 +2625,12 @@ class CardPipelineApp(tk.Tk):
             for field in ("cert_number", "source_sheet", "assigned_person")
         )
 
+    def _raw_item_id_namespace(self) -> str:
+        return "MIKEY" if self._is_personal_lucas() else "TEAM"
+
     def _next_raw_item_id(self, existing_records: list[dict[str, object]] | None = None) -> str:
         today = datetime.now().strftime("%Y%m%d")
-        prefix = f"RAW-{today}-"
+        prefix = f"RAW-{self._raw_item_id_namespace()}-{today}-"
         records = existing_records if existing_records is not None else self._load_inventory_ledger()
         max_sequence = 0
         for record in records:
