@@ -44,6 +44,7 @@ PHOTO_EXPORT_POSITIONS = {
     "source": 16,
 }
 
+ITEM_ID_HEADERS = ("itemid", "rawitemid", "inventoryitemid", "inventoryid")
 CERT_HEADERS = ("certificationnumber", "certnumber", "cert", "certification", "cert#")
 GRADER_HEADERS = ("company", "gradingcompany", "grader", "gradingco", "gradingcompanyname")
 CARD_HEADERS = ("carddescription", "card", "description", "title", "cardtitle", "item", "itemtitle")
@@ -105,7 +106,8 @@ STATUS_HEADERS = ("compstatus", "status", "assignmentstatus")
 NOTES_HEADERS = ("notes", "note")
 SOURCE_HEADERS = ("source", "sourcephoto", "sourcefile", "file")
 SIMPLE_HEADER_ALIASES = (
-    CERT_HEADERS
+    ITEM_ID_HEADERS
+    + CERT_HEADERS
     + GRADER_HEADERS
     + CARD_HEADERS
     + SPORT_HEADERS
@@ -191,6 +193,7 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
         source_fallback = None if has_header else 4
         for row_index in range(start_row, _sheet_max_row(sheet) + 1):
             date_added = clean_part(_cell_by_header(sheet, row_index, headers, DATE_HEADERS, None))
+            item_id = clean_part(_cell_by_header(sheet, row_index, headers, ITEM_ID_HEADERS, None))
             cert = normalize_cert(_cell_by_header(sheet, row_index, headers, CERT_HEADERS, cert_fallback))
             grader = normalize_grader(_cell_by_header(sheet, row_index, headers, GRADER_HEADERS, None))
             card = clean_part(_cell_by_header(sheet, row_index, headers, CARD_HEADERS, card_fallback))
@@ -212,6 +215,7 @@ def read_simple_spreadsheet(path: Path, sheet_name: str | None = None) -> list[d
             grader = grader or infer_grader(card)
             rows.append(
                 {
+                    "item_id": item_id,
                     "cert_number": cert,
                     "card_title": card,
                     "sport": sport,

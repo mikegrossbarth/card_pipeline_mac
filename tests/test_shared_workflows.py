@@ -2538,6 +2538,81 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INCOMING_SHEETS_DIR = old_incoming
                 app.WORKING_SHEETS_DIR = old_working
 
+    def test_manual_receive_can_match_raw_row_by_item_id(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            refresh_incoming_index = app.CardPipelineApp.refresh_incoming_index
+            _append_review_rows = app.CardPipelineApp._append_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+            _receive_row_ref = app.CardPipelineApp._receive_row_ref
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _match_all_review_rows = app.CardPipelineApp._match_all_review_rows
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+            _row_display_value = app.CardPipelineApp._row_display_value
+
+            def _refresh_table(self, schedule_recommendations=False):
+                self.refreshed = True
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            incoming_dir = root / "INCOMING SHEETS"
+            working_dir = root / "WORKING SHEETS"
+            incoming_dir.mkdir(parents=True)
+            working_dir.mkdir(parents=True)
+            raw_id = "RAW-20260709-0007"
+            write_working_sheet(
+                incoming_dir / "Raw Lot.xlsx",
+                [
+                    WorkbookRow(
+                        excel_row=2,
+                        cert_number="",
+                        item_id=raw_id,
+                        card_title="Raw Item ID Test",
+                        grader="",
+                        existing_value=14,
+                    )
+                ],
+                {2: "Manual"},
+            )
+
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            app.INCOMING_SHEETS_DIR = incoming_dir
+            app.WORKING_SHEETS_DIR = working_dir
+            dummy = Dummy()
+            dummy.assignment_engine = types.SimpleNamespace(
+                recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("", None, None)
+            )
+            dummy.incoming_cert_index = {}
+            dummy.review_rows = []
+            dummy.review_sources = {}
+            dummy.review_sheet_sources = {}
+            dummy.review_status = FieldVar()
+            dummy.refreshed = False
+            try:
+                self.assertIn("item_id", app.RECEIVE_COLUMNS)
+                self.assertIn("item_id", app.EDITABLE_COLUMNS)
+                dummy.refresh_incoming_index()
+                added = dummy._append_review_rows([{"item_id": raw_id, "source": "Manual"}])
+                self.assertEqual(added, [2])
+                self.assertEqual(dummy.review_rows[0].status, "Received")
+                self.assertEqual(dummy.review_rows[0].item_id, raw_id)
+                self.assertEqual(dummy.review_rows[0].card_title, "Raw Item ID Test")
+                self.assertEqual(dummy.review_sheet_sources[2], "Raw Lot.xlsx")
+                self.assertEqual(dummy._receive_row_ref(dummy.review_rows[0]), ("Raw Lot.xlsx", "Cards", 2))
+                self.assertEqual(dummy._row_display_value(dummy.review_rows[0], "item_id", {}, {}), raw_id)
+            finally:
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+
     def test_receive_barcode_refreshes_stale_match_without_assignment_values(self) -> None:
         class Dummy:
             _append_review_rows = app.CardPipelineApp._append_review_rows

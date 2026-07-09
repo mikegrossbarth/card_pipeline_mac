@@ -525,6 +525,7 @@ COMP_COLUMNS = (
 RECEIVE_COLUMNS = (
     "excel_row",
     "person",
+    "item_id",
     "sheet_source",
     "cert_number",
     "grader",
@@ -572,6 +573,7 @@ ADD_REVIEW_ROW_IID = "__add_review_row__"
 
 EDITABLE_COLUMNS = {
     "source",
+    "item_id",
     "cert_number",
     "grader",
     "category",
@@ -587,6 +589,7 @@ HEADINGS = {
     "excel_row": "Row",
     "source": "Source",
     "person": "Person",
+    "item_id": "Item ID",
     "sheet_source": "Sheet Source",
     "cert_number": "Cert #",
     "grader": "Company",
@@ -608,6 +611,7 @@ COLUMN_WIDTHS = {
     "excel_row": 52,
     "source": 130,
     "person": 145,
+    "item_id": 150,
     "sheet_source": 150,
     "cert_number": 110,
     "grader": 86,
@@ -11952,7 +11956,7 @@ class CardPipelineApp(tk.Tk):
 
     def _build_manual_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
-        ttk.Label(self.review_mode_host, text="Double-click cells in the Receive table to enter certs or adjust matched details.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
+        ttk.Label(self.review_mode_host, text="Double-click cells in the Receive table to enter certs, raw Item IDs, or adjust matched details.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
 
     def _build_manual_intake_mode(self) -> None:
         self.scanning_station_active = False
@@ -12972,6 +12976,7 @@ class CardPipelineApp(tk.Tk):
             for row in rows:
                 cert = scan_to_cert(row.get("cert_number"))
                 candidate = {
+                    "item_id": row.get("item_id") or "",
                     "sheet": path.name,
                     "path": path,
                     "workbook_sheet": row.get("workbook_sheet") or "",
@@ -13282,6 +13287,16 @@ class CardPipelineApp(tk.Tk):
         return f"raw:{sheet_name.lower()}:{workbook_sheet.lower()}:{workbook_row}"
 
     def _incoming_raw_match(self, row: dict[str, object]) -> dict[str, object]:
+        item_id = str(row.get("item_id") or "").strip().lower()
+        if item_id:
+            matches = [
+                candidate
+                for key, candidate in self.incoming_cert_index.items()
+                if str(key).startswith("raw:")
+                and str(candidate.get("item_id") or "").strip().lower() == item_id
+            ]
+            if len(matches) == 1:
+                return matches[0]
         explicit_key = str(row.get("receive_key") or "").strip().lower()
         if explicit_key and explicit_key in self.incoming_cert_index:
             return self.incoming_cert_index[explicit_key]
@@ -13342,6 +13357,7 @@ class CardPipelineApp(tk.Tk):
             match = self._incoming_match(row.cert_number) if scan_to_cert(row.cert_number) else self._incoming_raw_match(
                 {
                     "card_title": row.card_title,
+                    "item_id": row.item_id,
                     "sheet_source": self.review_sheet_sources.get(row.excel_row, ""),
                     "receive_key": getattr(row, "_receive_key", ""),
                 }
@@ -14987,6 +15003,8 @@ class CardPipelineApp(tk.Tk):
             return sources.get(row.excel_row, "")
         if column == "person":
             return self._assignment_person_for_row(row)
+        if column == "item_id":
+            return getattr(row, "item_id", "")
         if column == "sheet_source":
             return (sheet_sources or {}).get(row.excel_row, "")
         if column == "cert_number":
@@ -15241,7 +15259,9 @@ class CardPipelineApp(tk.Tk):
             if row.excel_row != excel_row:
                 continue
             previous_cert = scan_to_cert(row.cert_number)
-            if column == "cert_number":
+            if column == "item_id":
+                row.item_id = clean_value
+            elif column == "cert_number":
                 row.cert_number = scan_to_cert(clean_value)
             elif column == "grader":
                 row.grader = normalize_grader(clean_value) or clean_value.upper()
@@ -15264,17 +15284,30 @@ class CardPipelineApp(tk.Tk):
                 row.cy_value = self._parse_money_text(clean_value)
             elif column == "cy_confidence":
                 row.cy_confidence = clean_value
-            row.status = "Ready" if row.cert_number and row.grader else "Needs setup"
+            row.status = "Ready" if (row.cert_number and row.grader) or row.item_id else "Needs setup"
             if tree is self.intake_tree:
                 if column == "purchase_price":
                     setattr(row, "_seller_terms_base_purchase", row.existing_value)
                 if column in {"purchase_price", "card_ladder_value", "card_ladder_comps_average", "cy_value"}:
                     self.apply_create_seller_terms(show_status=False)
-            if self._is_review_row_tree(tree) and column == "cert_number" and scan_to_cert(row.cert_number) != previous_cert:
-                match = self._incoming_match(row.cert_number)
+            if self._is_review_row_tree(tree) and (
+                (column == "cert_number" and scan_to_cert(row.cert_number) != previous_cert)
+                or column == "item_id"
+            ):
+                match = self._incoming_match(row.cert_number) if scan_to_cert(row.cert_number) else self._incoming_raw_match(
+                    {
+                        "item_id": row.item_id,
+                        "card_title": row.card_title,
+                        "sheet_source": target_sheet_sources.get(excel_row, ""),
+                        "receive_key": "" if column == "item_id" else getattr(row, "_receive_key", ""),
+                    }
+                )
                 target_sheet_sources[excel_row] = str(match.get("sheet") or "NO SHEET FOUND")
                 if match:
+                    self._attach_receive_match_to_row(row, match)
                     row.status = "Received"
+                    if not row.item_id and match.get("item_id"):
+                        row.item_id = str(match.get("item_id") or "")
                     if is_placeholder_title(row.card_title, row.grader) and match.get("card_title"):
                         row.card_title = str(match.get("card_title") or "")
                     if not row.category and (match.get("sport") or match.get("category")):
@@ -15291,12 +15324,16 @@ class CardPipelineApp(tk.Tk):
                         row.cy_confidence = match.get("cy_confidence")
                     if not row.card_ladder_comps and match.get("card_ladder_comps"):
                         row.card_ladder_comps = str(match.get("card_ladder_comps") or "")
-                elif row.cert_number:
+                elif row.cert_number or row.item_id:
                     target_sheet_sources[excel_row] = "NO SHEET FOUND"
+                    setattr(row, "_receive_key", "")
+                    setattr(row, "_receive_sheet", "")
+                    setattr(row, "_receive_workbook_sheet", "")
+                    setattr(row, "_receive_workbook_row", 0)
                     row.status = "Received - no incoming match"
-            if not row.cert_number:
+            if not row.cert_number and not row.item_id:
                 row.notes = "Missing cert"
-            elif not row.grader:
+            elif row.cert_number and not row.grader:
                 row.notes = "Missing grader"
             elif row.notes in {"Missing cert", "Missing grader", "Missing cert or grader"}:
                 row.notes = ""
