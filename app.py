@@ -183,6 +183,7 @@ PROFIT_SPORT_COLORS = {
 }
 EXPENSE_CATEGORY_OPTIONS = ("Travel", "Supplies", "Travel Meal", "Fees", "Shipping")
 EXPENSE_LINK_OPTIONS = ("General", "Card", "Sheet")
+INVENTORY_GRADER_OPTIONS = ("PSA", "BGS", "CGC", "SGC")
 ASSIGNMENT_CATEGORY_OPTIONS = (
     "basketball",
     "football",
@@ -765,6 +766,15 @@ BUTTON_TOOLTIPS = {
 def inventory_display_notes(record: dict[str, object]) -> str:
     notes = str(record.get("notes") or "").strip()
     return "" if notes.lower() in AUTO_INVENTORY_NOTES else notes
+
+
+def inventory_grader_filter_values(raw: object) -> set[str]:
+    values: set[str] = set()
+    for part in re.split(r"[,;/|]", str(raw or "")):
+        text = part.strip().upper()
+        if text:
+            values.add(text)
+    return values
 
 
 class CardPipelineApp(tk.Tk):
@@ -2132,8 +2142,25 @@ class CardPipelineApp(tk.Tk):
             ).grid(row=index // 3, column=index % 3, sticky="w", padx=(0, 14), pady=(0, 4))
 
         ttk.Label(frame, text="Grader", style="AppMuted.TLabel").grid(row=2, column=0, sticky="w", pady=(0, 10))
-        grader_combo = ttk.Combobox(frame, textvariable=self.inventory_grader_var, values=("", "PSA", "BGS", "CGC", "SGC"), width=22)
-        grader_combo.grid(row=2, column=1, columnspan=3, sticky="w", pady=(0, 10))
+        grader_frame = ttk.Frame(frame, style="App.TFrame")
+        grader_frame.grid(row=2, column=1, columnspan=3, sticky="ew", pady=(0, 10))
+        selected_graders = inventory_grader_filter_values(self.inventory_grader_var.get())
+        grader_vars: dict[str, tk.BooleanVar] = {}
+
+        def sync_grader_filter() -> None:
+            values = [grader for grader in INVENTORY_GRADER_OPTIONS if grader_vars[grader].get()]
+            self.inventory_grader_var.set(", ".join(values))
+
+        for index, grader in enumerate(INVENTORY_GRADER_OPTIONS):
+            var = tk.BooleanVar(value=grader in selected_graders)
+            grader_vars[grader] = var
+            ttk.Checkbutton(
+                grader_frame,
+                text=grader,
+                variable=var,
+                command=sync_grader_filter,
+                style="Panel.TCheckbutton",
+            ).grid(row=0, column=index, sticky="w", padx=(0, 14), pady=(0, 4))
 
         ttk.Label(frame, text="Card Year", style="AppMuted.TLabel").grid(row=3, column=0, sticky="w", pady=(0, 10))
         ttk.Entry(frame, textvariable=self.inventory_year_var, width=12).grid(row=3, column=1, sticky="w", pady=(0, 10))
@@ -7396,7 +7423,7 @@ class CardPipelineApp(tk.Tk):
     def _filtered_inventory_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         person = self.inventory_person_var.get().strip().lower() if hasattr(self, "inventory_person_var") else ""
         sport_filters = self._inventory_sport_filter_values()
-        grader = self.inventory_grader_var.get().strip().lower() if hasattr(self, "inventory_grader_var") else ""
+        grader_filters = inventory_grader_filter_values(self.inventory_grader_var.get() if hasattr(self, "inventory_grader_var") else "")
         card_year = re.sub(r"\D", "", self.inventory_year_var.get()) if hasattr(self, "inventory_year_var") else ""
         search = self.inventory_search_var.get().strip().lower() if hasattr(self, "inventory_search_var") else ""
         min_value = self._money_value(self.inventory_min_var.get()) if hasattr(self, "inventory_min_var") else None
@@ -7415,8 +7442,10 @@ class CardPipelineApp(tk.Tk):
                 record_sport = (assignment_engine.canonical_sport_label(record_sport_text) or record_sport_text).strip().lower()
                 if record_sport not in sport_filters and not any(sport in record_sport_text for sport in sport_filters):
                     continue
-            if grader and grader not in str(record.get("grader") or "").lower():
-                continue
+            if grader_filters:
+                record_grader = str(record.get("grader") or "").strip().upper()
+                if record_grader not in grader_filters:
+                    continue
             if card_year and card_year not in self._inventory_record_card_years(record):
                 continue
             if search:

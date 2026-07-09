@@ -4117,6 +4117,35 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["111"])
 
+    def test_inventory_grader_filter_accepts_multiple_checked_graders(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+
+        dummy = InventoryDummy()
+        dummy.inventory_person_var = FieldVar("")
+        dummy.inventory_sport_var = FieldVar("")
+        dummy.inventory_grader_var = FieldVar("PSA, CGC")
+        dummy.inventory_search_var = FieldVar("")
+        dummy.inventory_min_var = FieldVar("")
+        dummy.inventory_max_var = FieldVar("")
+        rows = [
+            {"status": "Active", "cert_number": "111", "card_title": "PSA Card", "grader": "PSA", "inventory_value": 50},
+            {"status": "Active", "cert_number": "222", "card_title": "BGS Card", "grader": "BGS", "inventory_value": 50},
+            {"status": "Active", "cert_number": "333", "card_title": "CGC Card", "grader": "CGC", "inventory_value": 50},
+            {"status": "Active", "cert_number": "444", "card_title": "No Grader Card", "grader": "", "inventory_value": 50},
+        ]
+
+        self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["111", "333"])
+
     def test_inventory_filter_applies_card_year_from_title(self) -> None:
         class FieldVar:
             def __init__(self, value=""):
