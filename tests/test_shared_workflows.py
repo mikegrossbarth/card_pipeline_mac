@@ -4913,7 +4913,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.WORKING_SHEETS_DIR = old_working
                 app.COMPANY_SHEETS_DIR = old_company
 
-    def test_received_inventory_reconcile_skips_unassigned_sheet_markers(self) -> None:
+    def test_received_inventory_reconcile_defaults_unassigned_sheet_markers(self) -> None:
         class ReconcileDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -4952,7 +4952,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy = ReconcileDummy()
             dummy.home_sheet_markers = {}
             try:
-                self.assertEqual(dummy._received_inventory_candidate_records(), [])
+                records = dummy._received_inventory_candidate_records()
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0]["cert_number"], "151740304")
+                self.assertEqual(records[0]["assigned_person"], "Unassigned")
             finally:
                 app.RECEIVED_SHEETS_DIR = old_received
                 app.INCOMING_SHEETS_DIR = old_incoming
