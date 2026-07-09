@@ -7658,6 +7658,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             def _instagram_publish_media_with_retry(self, user_id, creation_id, caption):
                 return {"id": "media-1"}
 
+            def _instagram_inventory_photo_id(self, path):
+                return "photo-1"
+
             def _append_activity(self, action, summary, details):
                 self.activities.append((action, summary, details))
 
@@ -7679,6 +7682,76 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(dummy.state["posts"]["ready-key"]["media_id"], "media-1")
         self.assertEqual(dummy.state["posts"]["ready-key"]["permalink"], "https://instagram.test/p/ready")
+
+    def test_instagram_inventory_sync_continues_after_single_post_error(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.events = queue.Queue()
+                self.activities = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {"inventory_key": "bad-key", "status": "Active", "card_title": "Bad Card", "item_id": "RAW-BAD"},
+                    {"inventory_key": "good-key", "status": "Active", "card_title": "Good Card", "item_id": "RAW-GOOD"},
+                ]
+
+            def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                if method == "POST" and params and params.get("caption") == "Bad Card":
+                    raise RuntimeError("image fetch failed")
+                if method == "POST":
+                    return {"id": "creation-good"}
+                if endpoint == "media-good":
+                    return {"permalink": "https://instagram.test/p/good"}
+                return {}
+
+            def _instagram_publish_media_with_retry(self, user_id, creation_id, caption):
+                return {"id": "media-good"}
+
+            def _instagram_inventory_photo_id(self, path):
+                return "photo-good"
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+        dummy = InstagramDummy()
+        dummy._instagram_inventory_sync_worker(
+            {
+                "config": {"user_id": "178"},
+                "to_post": [
+                    {
+                        "inventory_key": "bad-key",
+                        "record": {"inventory_key": "bad-key", "status": "Active", "card_title": "Bad Card", "item_id": "RAW-BAD"},
+                        "caption": "Bad Card",
+                        "photo_url": "https://example.test/bad.jpg",
+                    },
+                    {
+                        "inventory_key": "good-key",
+                        "record": {"inventory_key": "good-key", "status": "Active", "card_title": "Good Card", "item_id": "RAW-GOOD"},
+                        "caption": "Good Card",
+                        "photo_url": "https://example.test/good.jpg",
+                    },
+                ],
+                "to_remove": [],
+            }
+        )
+
+        self.assertEqual(dummy.state["posts"]["bad-key"]["status"], "post_error")
+        self.assertIn("image fetch failed", dummy.state["posts"]["bad-key"]["post_error"])
+        self.assertEqual(dummy.state["posts"]["good-key"]["media_id"], "media-good")
+        self.assertIn("posted 1", dummy.activities[-1][1])
+        self.assertIn("errors 1", dummy.activities[-1][1])
 
     def test_instagram_inventory_sync_does_not_delete_active_identity_from_stale_remove_plan(self) -> None:
         class InstagramDummy:

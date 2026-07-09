@@ -5131,38 +5131,54 @@ class CardPipelineApp(tk.Tk):
                             break
                 if already_posted_identity:
                     continue
-                create_response = self._instagram_api_json(
-                    f"{plan['config']['user_id']}/media",
-                    {"image_url": photo_url, "caption": caption},
-                    method="POST",
-                )
-                creation_id = str(create_response.get("id") or "").strip()
-                if not creation_id:
-                    raise RuntimeError(f"Instagram did not return a creation id for {caption}.")
-                publish_response = self._instagram_publish_media_with_retry(str(plan["config"]["user_id"]), creation_id, caption)
-                media_id = str(publish_response.get("id") or "").strip()
-                permalink = ""
-                if media_id:
-                    try:
-                        media_details = self._instagram_api_json(media_id, {"fields": "permalink"})
-                        permalink = str(media_details.get("permalink") or "").strip()
-                    except Exception:
-                        permalink = ""
-                posts[key] = {
-                    "status": "posted",
-                    "media_id": media_id,
-                    "creation_id": creation_id,
-                    "caption": caption,
-                    "inventory_identity": identity,
-                    "card_title": str(current_record.get("card_title") or "").strip(),
-                    "cert_number": scan_to_cert(current_record.get("cert_number")) if isinstance(current_record, dict) else "",
-                    "item_id": str(current_record.get("item_id") or "").strip() if isinstance(current_record, dict) else "",
-                    "photo_id": self._instagram_inventory_photo_id(Path(str(item.get("photo_path") or ""))),
-                    "photo_url": photo_url,
-                    "permalink": permalink,
-                    "posted_at": datetime.now().isoformat(timespec="seconds"),
-                }
-                posted += 1
+                try:
+                    create_response = self._instagram_api_json(
+                        f"{plan['config']['user_id']}/media",
+                        {"image_url": photo_url, "caption": caption},
+                        method="POST",
+                    )
+                    creation_id = str(create_response.get("id") or "").strip()
+                    if not creation_id:
+                        raise RuntimeError(f"Instagram did not return a creation id for {caption}.")
+                    publish_response = self._instagram_publish_media_with_retry(str(plan["config"]["user_id"]), creation_id, caption)
+                    media_id = str(publish_response.get("id") or "").strip()
+                    permalink = ""
+                    if media_id:
+                        try:
+                            media_details = self._instagram_api_json(media_id, {"fields": "permalink"})
+                            permalink = str(media_details.get("permalink") or "").strip()
+                        except Exception:
+                            permalink = ""
+                    posts[key] = {
+                        "status": "posted",
+                        "media_id": media_id,
+                        "creation_id": creation_id,
+                        "caption": caption,
+                        "inventory_identity": identity,
+                        "card_title": str(current_record.get("card_title") or "").strip(),
+                        "cert_number": scan_to_cert(current_record.get("cert_number")) if isinstance(current_record, dict) else "",
+                        "item_id": str(current_record.get("item_id") or "").strip() if isinstance(current_record, dict) else "",
+                        "photo_id": self._instagram_inventory_photo_id(Path(str(item.get("photo_path") or ""))),
+                        "photo_url": photo_url,
+                        "permalink": permalink,
+                        "posted_at": datetime.now().isoformat(timespec="seconds"),
+                    }
+                    posted += 1
+                except Exception as error:
+                    error_text = str(error)
+                    errors.append(f"{caption or key}: {error_text}")
+                    posts[key] = {
+                        "status": "post_error",
+                        "caption": caption,
+                        "inventory_identity": identity,
+                        "card_title": str(current_record.get("card_title") or "").strip(),
+                        "cert_number": scan_to_cert(current_record.get("cert_number")) if isinstance(current_record, dict) else "",
+                        "item_id": str(current_record.get("item_id") or "").strip() if isinstance(current_record, dict) else "",
+                        "photo_url": photo_url,
+                        "post_error": error_text[:500],
+                        "post_error_at": datetime.now().isoformat(timespec="seconds"),
+                    }
+                    self.events.put(("status", f"Instagram skipped {caption[:60] or key}: {error_text[:120]}"))
                 self._save_instagram_inventory_state(state)
 
             for item in plan.get("to_remove") or []:
