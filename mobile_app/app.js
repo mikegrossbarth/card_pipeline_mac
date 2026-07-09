@@ -10,6 +10,8 @@ const state = {
   viewerPhoto: null,
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
+const IS_PERSONAL_PROFILE = Boolean(profileMatch && profileMatch[1] === "personal");
+const PERSONAL_DEFAULT_PERSON = "Mikey";
 const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
 const API_BASE = `${APP_BASE}/api`;
 if (!state.clientId) {
@@ -340,9 +342,18 @@ function exportQueue() {
 }
 
 function syncPersonInputs(person) {
+  if (IS_PERSONAL_PROFILE) {
+    $("assignedPerson").value = PERSONAL_DEFAULT_PERSON;
+    $("expensePerson").value = PERSONAL_DEFAULT_PERSON;
+    return;
+  }
   const value = person || $("personFilter").value || $("profitPerson").value || $("payoutPerson").value || "";
   if (value && !$("assignedPerson").value) $("assignedPerson").value = value;
   if (value && !$("expensePerson").value) $("expensePerson").value = value;
+}
+
+function personalPersonValue(value = "") {
+  return IS_PERSONAL_PROFILE ? PERSONAL_DEFAULT_PERSON : value;
 }
 
 function photoFileName(photo, record) {
@@ -494,7 +505,7 @@ function selectedCategories() {
 function inventorySearchPayload(overrides = {}) {
   return {
     query: $("searchInput").value,
-    person: $("personFilter").value,
+    person: IS_PERSONAL_PROFILE ? "" : $("personFilter").value,
     sport: selectedCategories(),
     include_sold: $("includeSold").checked,
     ...overrides,
@@ -617,7 +628,7 @@ function addPayload(updateExisting = false) {
     grader: $("grader").value,
     card_title: $("cardTitle").value,
     purchase_price: $("purchasePrice").value,
-    assigned_person: $("assignedPerson").value,
+    assigned_person: personalPersonValue($("assignedPerson").value),
     source: $("source").value,
     inventory_value: $("inventoryValue").value,
     notes: $("notes").value,
@@ -705,7 +716,7 @@ async function confirmSell() {
 
 function expensePayload() {
   return {
-    person: $("expensePerson").value,
+    person: personalPersonValue($("expensePerson").value),
     date: $("expenseDate").value,
     expense_type: $("expenseType").value,
     amount: $("expenseAmount").value,
@@ -781,7 +792,7 @@ async function loadProfit() {
   let result;
   try {
     result = await api("/profit/summary", {
-      person: $("profitPerson").value,
+      person: IS_PERSONAL_PROFILE ? "" : $("profitPerson").value,
       period: $("profitPeriod").value,
       graph: $("profitGraph").value,
     });
@@ -833,7 +844,7 @@ function renderProfit(result) {
 async function loadPayouts() {
   let result;
   try {
-    result = await api("/payouts", { person: $("payoutPerson").value });
+    result = await api("/payouts", { person: IS_PERSONAL_PROFILE ? "" : $("payoutPerson").value });
   } catch (error) {
     const cached = cacheGet(CACHE_KEYS.payouts);
     if (cached && cached.payload) {
@@ -940,6 +951,7 @@ function bindPhotoInput(inputId, targetId) {
 function bind() {
   loadQueue();
   hydratePendingInventoryFromQueue();
+  document.body.classList.toggle("personalProfile", IS_PERSONAL_PROFILE);
   $("pin").value = state.pin;
   $("expenseDate").value = new Date().toISOString().slice(0, 10);
   $("sellDate").value = new Date().toISOString().slice(0, 10);
@@ -949,6 +961,7 @@ function bind() {
   fillSelect($("profitPeriod"), ["Total", "Year", "Month", "Week", "5 Days"], { includeAll: false });
   fillSelect($("profitGraph"), ["Daily Trend", "Overall Profit"], { includeAll: false });
   updatePeople([]);
+  syncPersonInputs(PERSONAL_DEFAULT_PERSON);
   renderQueue();
   setUnlocked(Boolean(state.pin));
   $("savePin").addEventListener("click", () => {

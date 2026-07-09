@@ -180,6 +180,10 @@ textarea {
   resize: vertical;
 }
 
+body.personalProfile .personControl {
+  display: none;
+}
+
 .fileInput {
   position: absolute;
   left: -9999px;

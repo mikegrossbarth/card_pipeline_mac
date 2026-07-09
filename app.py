@@ -1768,7 +1768,8 @@ class CardPipelineApp(tk.Tk):
         sheet_panel.configure(width=360)
         sheet_panel.pack_propagate(False)
         person_row = ttk.Frame(sheet_panel, style="Panel.TFrame")
-        person_row.pack(fill=tk.X, pady=(0, 8))
+        if not self._is_personal_lucas():
+            person_row.pack(fill=tk.X, pady=(0, 8))
         ttk.Label(person_row, text="Person", style="Muted.TLabel").pack(side=tk.LEFT)
         self.home_person_combo = ttk.Combobox(person_row, textvariable=self.home_person_var, width=24)
         self.home_person_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
@@ -1968,9 +1969,12 @@ class CardPipelineApp(tk.Tk):
     def _build_payouts_tab(self) -> None:
         controls = ttk.Frame(self.payouts_tab, style="Panel.TFrame", padding=(16, 12))
         controls.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(controls, text="Filter by Assigned Person", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
+        payout_person_label = ttk.Label(controls, text="Filter by Assigned Person", style="Panel.TLabel")
+        if not self._is_personal_lucas():
+            payout_person_label.grid(row=0, column=0, sticky="w")
         self.payout_person_combo = ttk.Combobox(controls, textvariable=self.payout_person_var, width=30)
-        self.payout_person_combo.grid(row=0, column=1, sticky="w", padx=(8, 10))
+        if not self._is_personal_lucas():
+            self.payout_person_combo.grid(row=0, column=1, sticky="w", padx=(8, 10))
         self._bind_person_autocomplete(self.payout_person_combo, refresh_callback=self.refresh_payouts_tab)
         self.payout_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_payouts_tab(), add="+")
         controls.columnconfigure(2, weight=1)
@@ -2019,13 +2023,18 @@ class CardPipelineApp(tk.Tk):
         controls.columnconfigure(9, weight=1)
         ttk.Label(controls, text="Inventory", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, sticky="w")
         ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=1, columnspan=8, sticky="e", padx=(18, 0))
-        ttk.Label(controls, text="Person", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        inventory_person_label = ttk.Label(controls, text="Person", style="Muted.TLabel")
+        if not self._is_personal_lucas():
+            inventory_person_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.inventory_person_combo = ttk.Combobox(controls, textvariable=self.inventory_person_var, width=22)
-        self.inventory_person_combo.grid(row=1, column=1, sticky="w", padx=(8, 14), pady=(10, 0))
+        if not self._is_personal_lucas():
+            self.inventory_person_combo.grid(row=1, column=1, sticky="w", padx=(8, 14), pady=(10, 0))
         self._bind_person_autocomplete(self.inventory_person_combo, refresh_callback=self.refresh_inventory_tab)
         self.inventory_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_inventory_tab(), add="+")
-        ttk.Label(controls, text="Search ID/Cert/Card", style="Muted.TLabel").grid(row=1, column=2, sticky="e", padx=(0, 6), pady=(10, 0))
-        ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=3, columnspan=4, sticky="w", pady=(10, 0))
+        search_label_column = 0 if self._is_personal_lucas() else 2
+        search_entry_column = 1 if self._is_personal_lucas() else 3
+        ttk.Label(controls, text="Search ID/Cert/Card", style="Muted.TLabel").grid(row=1, column=search_label_column, sticky="e", padx=(0, 6), pady=(10, 0))
+        ttk.Entry(controls, textvariable=self.inventory_search_var, width=42).grid(row=1, column=search_entry_column, columnspan=4, sticky="w", pady=(10, 0))
         action_row = ttk.Frame(controls, style="Panel.TFrame")
         action_row.grid(row=2, column=0, columnspan=10, sticky="w", pady=(10, 0))
         ttk.Button(action_row, text="Add Card", command=self.add_raw_inventory_card, style="Primary.TButton").pack(side=tk.LEFT)
@@ -2267,12 +2276,17 @@ class CardPipelineApp(tk.Tk):
         controls = ttk.Frame(self.profit_tab, style="Panel.TFrame", padding=(14, 8))
         controls.pack(fill=tk.X, pady=(0, 6))
         ttk.Label(controls, text="Profit", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, sticky="w")
-        ttk.Label(controls, text="Person", style="Muted.TLabel").grid(row=0, column=1, sticky="e", padx=(18, 6))
+        profit_person_label = ttk.Label(controls, text="Person", style="Muted.TLabel")
+        if not self._is_personal_lucas():
+            profit_person_label.grid(row=0, column=1, sticky="e", padx=(18, 6))
         self.profit_person_combo = ttk.Combobox(controls, textvariable=self.profit_person_var, width=28)
-        self.profit_person_combo.grid(row=0, column=2, sticky="w")
+        if not self._is_personal_lucas():
+            self.profit_person_combo.grid(row=0, column=2, sticky="w")
         self._bind_person_autocomplete(self.profit_person_combo, refresh_callback=self.refresh_profit_tab)
         self.profit_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_profit_tab(), add="+")
-        ttk.Label(controls, text="Period", style="Muted.TLabel").grid(row=0, column=3, sticky="e", padx=(18, 6))
+        period_label_column = 1 if self._is_personal_lucas() else 3
+        period_combo_column = 2 if self._is_personal_lucas() else 4
+        ttk.Label(controls, text="Period", style="Muted.TLabel").grid(row=0, column=period_label_column, sticky="e", padx=(18, 6))
         self.profit_period_combo = ttk.Combobox(
             controls,
             textvariable=self.profit_period_var,
@@ -2280,7 +2294,7 @@ class CardPipelineApp(tk.Tk):
             width=10,
             state="readonly",
         )
-        self.profit_period_combo.grid(row=0, column=4, sticky="w")
+        self.profit_period_combo.grid(row=0, column=period_combo_column, sticky="w")
         self.profit_period_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_profit_tab(), add="+")
         ttk.Label(controls, text="Metric", style="Muted.TLabel").grid(row=0, column=5, sticky="e", padx=(18, 6))
         self.profit_graph_combo = ttk.Combobox(
@@ -2738,6 +2752,10 @@ class CardPipelineApp(tk.Tk):
         card_title = str(payload.get("card_title") or payload.get("card") or "").strip()
         source = str(payload.get("source") or payload.get("seller") or "Mobile").strip() or "Mobile"
         person = str(payload.get("assigned_person") or payload.get("person") or "").strip() or "Unassigned"
+        is_personal = getattr(self, "_is_personal_lucas", lambda: False)
+        default_person = getattr(self, "_personal_default_person", lambda: "Mikey")
+        if is_personal() and person == "Unassigned":
+            person = default_person()
         sport = str(payload.get("sport") or "").strip()
         if not sport and card_title:
             sport = str(assignment_engine.parse_card_for_matching(card_title).get("sport") or "")
@@ -3053,6 +3071,10 @@ class CardPipelineApp(tk.Tk):
 
     def mobile_expense_add(self, payload: dict) -> dict:
         person = str(payload.get("person") or payload.get("assigned_person") or "").strip()
+        is_personal = getattr(self, "_is_personal_lucas", lambda: False)
+        default_person = getattr(self, "_personal_default_person", lambda: "Mikey")
+        if not person and is_personal():
+            person = default_person()
         if not person:
             return {"ok": False, "error": "Choose the person this expense belongs to."}
         expense_date = str(payload.get("date") or payload.get("date_added") or "").strip() or datetime.now().strftime("%Y-%m-%d")
@@ -3704,7 +3726,7 @@ class CardPipelineApp(tk.Tk):
 
     def _raw_inventory_card_dialog(self) -> dict[str, object] | None:
         personal_inventory = self._is_personal_lucas()
-        person_var = tk.StringVar(value=self.inventory_person_var.get().strip() if hasattr(self, "inventory_person_var") else "")
+        person_var = tk.StringVar(value=self._personal_default_person() if personal_inventory else (self.inventory_person_var.get().strip() if hasattr(self, "inventory_person_var") else ""))
         cert_var = tk.StringVar()
         grader_var = tk.StringVar()
         title_var = tk.StringVar()
@@ -3731,7 +3753,6 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(frame, text="Add Card", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 2))
 
         fields = [
-            ("Person", person_var, 28),
             ("Cert", cert_var, 24),
             ("Grader", grader_var, 18),
             ("Card description", title_var, 52),
@@ -3745,12 +3766,14 @@ class CardPipelineApp(tk.Tk):
             ("Est. Payout", payout_var, 18),
             ("Notes", notes_var, 52),
         ]
+        if not personal_inventory:
+            fields.insert(0, ("Person", person_var, 28))
         for index, (label, var, width) in enumerate(fields):
             row = 1 + index
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 10), pady=(0, 8))
             ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=1, columnspan=3, sticky="ew", pady=(0, 8))
 
-        required_text = "Card description and purchase are required. Person defaults to your profile." if personal_inventory else "Person, card description, and purchase are required. Cert and grader are optional."
+        required_text = "Card description and purchase are required." if personal_inventory else "Person, card description, and purchase are required. Cert and grader are optional."
         status_var = tk.StringVar(value=required_text)
         status_row = 1 + len(fields)
         ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=status_row, column=0, columnspan=4, sticky="w", pady=(4, 14))
@@ -3774,7 +3797,7 @@ class CardPipelineApp(tk.Tk):
             title = title_var.get().strip()
             purchase = self._money_value(purchase_var.get())
             if not person and personal_inventory:
-                person = str(self.lucas_identity.get("display_name") or "").strip() or "Personal"
+                person = self._personal_default_person()
             if not person:
                 show_validation("Enter a person.")
                 return
@@ -3872,6 +3895,9 @@ class CardPipelineApp(tk.Tk):
 
     def _is_personal_lucas(self) -> bool:
         return is_personal_lucas_profile(getattr(self, "app_settings", {}), SETTINGS_PATH)
+
+    def _personal_default_person(self) -> str:
+        return "Mikey"
 
     def _personal_instagram_sync_enabled(self) -> bool:
         return str(os.environ.get("LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -8367,7 +8393,8 @@ class CardPipelineApp(tk.Tk):
         return added
 
     def open_add_expense_popup(self) -> None:
-        person_var = tk.StringVar(value=self.profit_person_var.get().strip() if hasattr(self, "profit_person_var") else "")
+        personal_inventory = self._is_personal_lucas()
+        person_var = tk.StringVar(value=self._personal_default_person() if personal_inventory else (self.profit_person_var.get().strip() if hasattr(self, "profit_person_var") else ""))
         date_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
         type_var = tk.StringVar(value=EXPENSE_CATEGORY_OPTIONS[0])
         amount_var = tk.StringVar()
@@ -8388,9 +8415,12 @@ class CardPipelineApp(tk.Tk):
         frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text="Add Expense", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
-        ttk.Label(frame, text="Person", style="Panel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
+        person_label = ttk.Label(frame, text="Person", style="Panel.TLabel")
+        if not personal_inventory:
+            person_label.grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
-        person_combo.grid(row=1, column=1, sticky="ew", pady=(0, 10))
+        if not personal_inventory:
+            person_combo.grid(row=1, column=1, sticky="ew", pady=(0, 10))
         self._bind_person_autocomplete(person_combo)
         ttk.Label(frame, text="Date", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         ttk.Entry(frame, textvariable=date_var, width=18).grid(row=2, column=1, sticky="w", pady=(0, 10))
@@ -8499,6 +8529,8 @@ class CardPipelineApp(tk.Tk):
         popup: tk.Toplevel,
     ) -> None:
         person = person_var.get().strip()
+        if not person and self._is_personal_lucas():
+            person = self._personal_default_person()
         if not person:
             messagebox.showinfo("Person required", "Choose the person this expense belongs to.")
             return
