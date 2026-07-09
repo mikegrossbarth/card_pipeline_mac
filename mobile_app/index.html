@@ -151,6 +151,16 @@
       </section>
     </main>
 
+    <section id="photoViewer" class="photoViewer hidden" aria-modal="true" role="dialog" aria-label="Inventory photo viewer">
+      <div class="photoViewerBar">
+        <button id="closePhotoViewer" class="secondary" type="button">Back</button>
+        <div id="photoViewerTitle" class="photoViewerTitle"></div>
+      </div>
+      <div class="photoViewerCanvas">
+        <img id="photoViewerImage" alt="Inventory photo">
+      </div>
+    </section>
+
     <script src="/mobile/app.js" defer></script>
   </body>
 </html>

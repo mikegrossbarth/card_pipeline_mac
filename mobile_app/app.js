@@ -297,6 +297,28 @@ async function shareInventoryPhoto(record, photo) {
   }
 }
 
+function openInventoryPhoto(record, photo) {
+  const viewer = $("photoViewer");
+  const image = $("photoViewerImage");
+  const title = $("photoViewerTitle");
+  const url = photo && photo.url;
+  if (!viewer || !image || !url) return;
+  image.src = url;
+  image.alt = record.card_title || record.cert_number || "Inventory photo";
+  if (title) title.textContent = record.card_title || record.cert_number || photo.name || "Inventory photo";
+  viewer.classList.remove("hidden");
+  document.body.classList.add("photoViewerOpen");
+}
+
+function closeInventoryPhoto() {
+  const viewer = $("photoViewer");
+  const image = $("photoViewerImage");
+  if (!viewer || viewer.classList.contains("hidden")) return;
+  viewer.classList.add("hidden");
+  document.body.classList.remove("photoViewerOpen");
+  if (image) image.removeAttribute("src");
+}
+
 function renderCachedSearch(wrapper, error) {
   if (!wrapper || !wrapper.payload) {
     $("results").innerHTML = `<div class="hint">Desktop LUCAS is not reachable and no cached inventory search is saved on this phone yet. Add inventory and expenses can still be queued. ${escapeHtml(error?.message || error || "")}</div>`;
@@ -319,9 +341,9 @@ function renderPhotoStrip(item, itemIndex) {
     <div class="photoStrip" aria-label="Attached inventory photos">
       ${photos.map((photo, photoIndex) => `
         <div class="photoTile">
-          <a href="${escapeHtml(photo.url || "#")}" target="_blank" rel="noopener" aria-label="Open attached photo ${photoIndex + 1}">
+          <button class="photoOpenButton" data-index="${itemIndex}" data-photo-index="${photoIndex}" type="button" aria-label="Open attached photo ${photoIndex + 1}">
             <img src="${escapeHtml(photo.url || "")}" alt="${escapeHtml(item.card_title || item.cert_number || "Inventory photo")}" loading="lazy">
-          </a>
+          </button>
           <button class="secondary sharePhotoButton" data-index="${itemIndex}" data-photo-index="${photoIndex}" type="button">Share Photo</button>
         </div>
       `).join("")}
@@ -361,6 +383,13 @@ function renderResults(items) {
       const item = items[Number(button.dataset.index)];
       const photos = Array.isArray(item && item.photos) ? item.photos : [];
       shareInventoryPhoto(item, photos[Number(button.dataset.photoIndex)]);
+    });
+  });
+  document.querySelectorAll(".photoOpenButton").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = items[Number(button.dataset.index)];
+      const photos = Array.isArray(item && item.photos) ? item.photos : [];
+      openInventoryPhoto(item, photos[Number(button.dataset.photoIndex)]);
     });
   });
 }
@@ -790,6 +819,15 @@ function bind() {
     loadQueue();
     renderQueue();
     $("syncStatus").textContent = "Queue is empty.";
+  });
+  $("closePhotoViewer").addEventListener("click", () => closeInventoryPhoto());
+  $("photoViewer").addEventListener("click", (event) => {
+    if (event.target === $("photoViewer") || event.target.classList.contains("photoViewerCanvas")) {
+      closeInventoryPhoto();
+    }
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeInventoryPhoto();
   });
   window.addEventListener("online", () => {
     setConnectionStatus(true, "Network is back. Sync queued actions when desktop LUCAS is open.");
