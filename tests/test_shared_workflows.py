@@ -161,6 +161,80 @@ class SharedStateTests(unittest.TestCase):
             self.assertEqual(read_json(state_path, {}), {"b": [1, 2, 3]})
             self.assertFalse(list(root.glob("*.tmp")))
 
+    def test_personal_lucas_marker_edit_forces_mikey(self) -> None:
+        class StatusVar:
+            def set(self, value):
+                self.value = value
+
+        class PersonalMarkerDummy:
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _marker_for_stage = app.CardPipelineApp._marker_for_stage
+            save_home_sheet_markers = app.CardPipelineApp.save_home_sheet_markers
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+
+            def _is_personal_lucas(self):
+                return True
+
+            def _save_sheet_markers(self):
+                self.saved_markers = True
+
+            def _delete_sheet_marker(self, _key):
+                pass
+
+            def _move_sheet_to_received(self, _key):
+                return ""
+
+            def _move_working_sheet_to_incoming(self, _key):
+                return ""
+
+            def _retarget_inventory_rows_for_source(self, _source_sheet_name, _assigned_person):
+                self.retargeted_inventory_person = _assigned_person
+                return 0
+
+            def _retarget_profit_rows_for_source(self, _source_sheet_name, _assigned_person):
+                self.retargeted_profit_person = _assigned_person
+                return 0
+
+            def _sync_received_sheet_inventory_to_ledger(self, *_args):
+                return 0, 0
+
+            def refresh_working_sheets(self):
+                pass
+
+            def refresh_received_sheets(self):
+                pass
+
+            def refresh_incoming_index(self):
+                pass
+
+            def refresh_home(self):
+                pass
+
+        dummy = PersonalMarkerDummy()
+        dummy.home_selected_sheet_key = "Incoming|Personal Lot.xlsx"
+        dummy.home_sheet_markers = {"Incoming|Personal Lot.xlsx": {"assigned_person": "Kevin Hambone"}}
+        dummy.home_sheet_summaries = {}
+        dummy.home_sheet_kind = type("Kind", (), {"set": lambda self, _value: None})()
+        dummy.lucas_identity = {"display_name": "Tester"}
+        dummy.status_var = StatusVar()
+        dummy.saved_markers = False
+
+        with patch.object(app, "shared_lock", lambda *_args, **_kwargs: __import__("contextlib").nullcontext()):
+            dummy.save_home_sheet_markers(
+                {
+                    "incoming_proper": True,
+                    "tracking_number": "",
+                    "all_received": False,
+                    "assigned_person": "Kevin Hambone",
+                }
+            )
+
+        marker = dummy.home_sheet_markers["Incoming|Personal Lot.xlsx"]
+        self.assertTrue(dummy.saved_markers)
+        self.assertEqual(marker["assigned_person"], "Mikey")
+        self.assertEqual(dummy.retargeted_inventory_person, "Mikey")
+        self.assertEqual(dummy.retargeted_profit_person, "Mikey")
+
 
 class WorkbookCompanyProfitTests(unittest.TestCase):
     def test_company_sheet_week_start_rolls_forward_monday_at_8pm(self) -> None:

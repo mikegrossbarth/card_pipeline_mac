@@ -11428,7 +11428,8 @@ class CardPipelineApp(tk.Tk):
         incoming_proper_var = tk.BooleanVar(value=(kind == "Incoming"))
         all_received_var = tk.BooleanVar(value=bool(marker.get("all_received") or summary.get("all_received")))
         tracking_var = tk.StringVar(value=str(marker.get("tracking_number") or ""))
-        person_var = tk.StringVar(value=str(marker.get("assigned_person") or ""))
+        personal_profile = self._is_personal_lucas()
+        person_var = tk.StringVar(value=self._personal_default_person() if personal_profile else str(marker.get("assigned_person") or ""))
 
         popup = tk.Toplevel(self)
         popup.title("Edit Sheet Markers")
@@ -11445,10 +11446,11 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(frame, text="Tracking Number", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         ttk.Entry(frame, textvariable=tracking_var, width=34).grid(row=3, column=1, sticky="ew", pady=(0, 10))
         ttk.Checkbutton(frame, text="All Received", variable=all_received_var, style="Panel.TCheckbutton").grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
-        ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=(0, 14))
-        person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
-        person_combo.grid(row=5, column=1, sticky="ew", pady=(0, 14))
-        self._bind_person_autocomplete(person_combo)
+        if not personal_profile:
+            ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=(0, 14))
+            person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
+            person_combo.grid(row=5, column=1, sticky="ew", pady=(0, 14))
+            self._bind_person_autocomplete(person_combo)
         buttons = ttk.Frame(frame, style="Panel.TFrame")
         buttons.grid(row=6, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
@@ -11483,7 +11485,11 @@ class CardPipelineApp(tk.Tk):
         updated_marker["paid"] = bool(existing_marker.get("paid"))
         updated_marker["tracking_number"] = str(marker.get("tracking_number") or "").strip()
         updated_marker["all_received"] = bool(marker.get("all_received"))
-        updated_marker["assigned_person"] = str(marker.get("assigned_person") or "").strip()
+        updated_marker["assigned_person"] = (
+            self._personal_default_person()
+            if self._is_personal_lucas()
+            else str(marker.get("assigned_person") or "").strip()
+        )
         if bool(updated_marker.get("seller_terms_applied") or updated_marker.get("seller_sheet_type")):
             sheet_type = str(updated_marker.get("seller_sheet_type") or "").strip()
             assigned_person = str(updated_marker.get("assigned_person") or "").strip()
