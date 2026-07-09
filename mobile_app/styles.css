@@ -184,6 +184,10 @@ body.personalProfile .personControl {
   display: none;
 }
 
+body.personalProfile .teamControl {
+  display: none;
+}
+
 .fileInput {
   position: absolute;
   left: -9999px;

@@ -1447,7 +1447,8 @@ class CardPipelineApp(tk.Tk):
         self.tabs.add(self.comp_tab, text="Comp")
         self.tabs.add(self.receive_tab, text="Receive")
         self.tabs.add(self.review_tab, text="Assignment")
-        self.tabs.add(self.payouts_tab, text="Payouts/Tabs")
+        if not self._is_personal_lucas():
+            self.tabs.add(self.payouts_tab, text="Payouts/Tabs")
         self.tabs.add(self.inventory_tab, text="Inventory")
         self.tabs.add(self.profit_tab, text="Profit")
         for tab_attr in (
