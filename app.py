@@ -907,6 +907,7 @@ class CardPipelineApp(tk.Tk):
         self.deleted_sheet_marker_keys: set[str] = set()
         self.home_selected_sheet_key = ""
         self.home_person_var = tk.StringVar()
+        self.home_sheet_sort_var = tk.StringVar(value="Date Created")
         self.payout_person_var = tk.StringVar()
         self.payout_status_var = tk.StringVar(value="No unpaid sheets loaded.")
         self.payout_summary_people: dict[str, str] = {}
@@ -1799,6 +1800,18 @@ class CardPipelineApp(tk.Tk):
             min_button_width=70,
             uniform_columns=True,
         )
+        sort_row = ttk.Frame(sheet_panel, style="Panel.TFrame")
+        sort_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(sort_row, text="Sort", style="Muted.TLabel").pack(side=tk.LEFT)
+        self.home_sheet_sort_combo = ttk.Combobox(
+            sort_row,
+            textvariable=self.home_sheet_sort_var,
+            values=["Date Created", "Name"],
+            width=16,
+            state="readonly",
+        )
+        self.home_sheet_sort_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+        self.home_sheet_sort_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_home_sheet_list(), add="+")
         self.home_sheet_list = tk.Listbox(
             sheet_panel,
             width=1,
@@ -9337,11 +9350,27 @@ class CardPipelineApp(tk.Tk):
         return needle in person
 
     def _filtered_home_sheet_names(self, kind: str) -> list[str]:
-        return [
+        names = [
             name
             for name in self.home_sheet_paths.get(kind, {})
             if self._home_sheet_matches_person_filter(self._home_sheet_key(kind, name))
         ]
+        return self._sorted_home_sheet_names(kind, names)
+
+    def _sorted_home_sheet_names(self, kind: str, names: list[str]) -> list[str]:
+        mode = self.home_sheet_sort_var.get().strip().lower() if hasattr(self, "home_sheet_sort_var") else "date created"
+        paths = self.home_sheet_paths.get(kind, {})
+        if mode == "name":
+            return sorted(names, key=lambda name: name.lower())
+
+        def created_time(name: str) -> float:
+            path = paths.get(name)
+            try:
+                return float(path.stat().st_ctime) if path else 0.0
+            except Exception:
+                return 0.0
+
+        return sorted(names, key=lambda name: (-created_time(name), name.lower()))
 
     def _update_home_sheet_tabs(self) -> None:
         if not hasattr(self, "home_incoming_tab") or not hasattr(self, "home_working_tab"):

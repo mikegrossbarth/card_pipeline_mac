@@ -235,6 +235,38 @@ class SharedStateTests(unittest.TestCase):
         self.assertEqual(dummy.retargeted_inventory_person, "Mikey")
         self.assertEqual(dummy.retargeted_profit_person, "Mikey")
 
+    def test_home_sheet_sort_modes(self) -> None:
+        class SortVar:
+            def __init__(self, value):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class FakePath:
+            def __init__(self, created):
+                self.created = created
+
+            def stat(self):
+                return types.SimpleNamespace(st_ctime=self.created)
+
+        class SortDummy:
+            _sorted_home_sheet_names = app.CardPipelineApp._sorted_home_sheet_names
+
+        dummy = SortDummy()
+        dummy.home_sheet_paths = {
+            "Incoming": {
+                "zeta.xlsx": FakePath(10),
+                "alpha.xlsx": FakePath(30),
+                "middle.xlsx": FakePath(20),
+            }
+        }
+        dummy.home_sheet_sort_var = SortVar("Name")
+        self.assertEqual(dummy._sorted_home_sheet_names("Incoming", ["zeta.xlsx", "alpha.xlsx", "middle.xlsx"]), ["alpha.xlsx", "middle.xlsx", "zeta.xlsx"])
+
+        dummy.home_sheet_sort_var = SortVar("Date Created")
+        self.assertEqual(dummy._sorted_home_sheet_names("Incoming", ["zeta.xlsx", "alpha.xlsx", "middle.xlsx"]), ["alpha.xlsx", "middle.xlsx", "zeta.xlsx"])
+
 
 class WorkbookCompanyProfitTests(unittest.TestCase):
     def test_company_sheet_week_start_rolls_forward_monday_at_8pm(self) -> None:
