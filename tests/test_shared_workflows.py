@@ -7096,6 +7096,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(plan["to_post"][0]["caption"], "New Card")
         self.assertEqual(plan["to_post"][0]["photo_url"], "https://example.test/photos/%5B20260708-0923%5D-Card%5B10%5D-%5B1%5D-%5Bnew%20card%5D.jpg")
         self.assertEqual(Path(plan["to_post"][0]["photo_path"]).name, "[20260708-0923]-Card[10]-[1]-[new card].jpg")
+        self.assertEqual([Path(path).name for path in plan["to_post"][0]["photo_paths"]], [
+            "[20260708-0923]-Card[10]-[1]-[new card].jpg",
+            "[20260708-0923]-Card[10]-[2]-[new card].jpg",
+        ])
+        self.assertEqual(plan["to_post"][0]["photo_urls"], [
+            "https://example.test/photos/%5B20260708-0923%5D-Card%5B10%5D-%5B1%5D-%5Bnew%20card%5D.jpg",
+            "https://example.test/photos/%5B20260708-0923%5D-Card%5B10%5D-%5B2%5D-%5Bnew%20card%5D.jpg",
+        ])
         self.assertEqual(len(plan["to_remove"]), 1)
         self.assertEqual(plan["to_remove"][0]["media_id"], "179000")
         self.assertEqual(len(plan["missing_photos"]), 1)
@@ -7763,6 +7771,78 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(dummy.state["posts"]["ready-key"]["media_id"], "media-1")
         self.assertEqual(dummy.state["posts"]["ready-key"]["permalink"], "https://instagram.test/p/ready")
+
+    def test_instagram_inventory_sync_posts_multiple_photos_as_carousel(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.events = queue.Queue()
+                self.activities = []
+                self.api_calls = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_inventory_active_records(self):
+                return [{"inventory_key": "raw-key", "status": "Active", "card_title": "Front Back Card", "item_id": "RAW-1"}]
+
+            def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                self.api_calls.append((endpoint, method, dict(params or {})))
+                if method == "POST" and params and params.get("is_carousel_item"):
+                    return {"id": f"child-{len([call for call in self.api_calls if call[2].get('is_carousel_item')])}"}
+                if method == "POST" and params and params.get("media_type") == "CAROUSEL":
+                    return {"id": "carousel-parent"}
+                if endpoint == "media-carousel":
+                    return {"permalink": "https://instagram.test/p/carousel"}
+                return {}
+
+            def _instagram_publish_media_with_retry(self, user_id, creation_id, caption):
+                self.api_calls.append(("publish", "POST", {"creation_id": creation_id}))
+                return {"id": "media-carousel"}
+
+            def _instagram_inventory_photo_id(self, path):
+                return Path(str(path)).stem
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+        dummy = InstagramDummy()
+        dummy._instagram_inventory_sync_worker(
+            {
+                "config": {"user_id": "178"},
+                "to_post": [
+                    {
+                        "inventory_key": "raw-key",
+                        "record": {"inventory_key": "raw-key", "status": "Active", "card_title": "Front Back Card", "item_id": "RAW-1"},
+                        "caption": "Front Back Card",
+                        "photo_path": Path("/tmp/front.jpg"),
+                        "photo_paths": [Path("/tmp/front.jpg"), Path("/tmp/back.jpg")],
+                        "photo_url": "https://example.test/front.jpg",
+                        "photo_urls": ["https://example.test/front.jpg", "https://example.test/back.jpg"],
+                    }
+                ],
+                "to_remove": [],
+            }
+        )
+
+        post_calls = [call for call in dummy.api_calls if call[0] == "178/media"]
+        self.assertEqual(post_calls[0][2], {"image_url": "https://example.test/front.jpg", "is_carousel_item": "true"})
+        self.assertEqual(post_calls[1][2], {"image_url": "https://example.test/back.jpg", "is_carousel_item": "true"})
+        self.assertEqual(post_calls[2][2], {"media_type": "CAROUSEL", "children": "child-1,child-2", "caption": "Front Back Card"})
+        self.assertIn(("publish", "POST", {"creation_id": "carousel-parent"}), dummy.api_calls)
+        posted = dummy.state["posts"]["raw-key"]
+        self.assertEqual(posted["media_type"], "CAROUSEL")
+        self.assertEqual(posted["photo_urls"], ["https://example.test/front.jpg", "https://example.test/back.jpg"])
+        self.assertEqual(posted["child_creation_ids"], ["child-1", "child-2"])
+        self.assertEqual(posted["permalink"], "https://instagram.test/p/carousel")
 
     def test_instagram_inventory_sync_continues_after_single_post_error(self) -> None:
         class InstagramDummy:

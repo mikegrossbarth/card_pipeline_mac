@@ -144,6 +144,24 @@ try:
     PHOTO_OCR_REQUEST_TIMEOUT_MS = int(os.environ.get("LUCAS_PHOTO_OCR_TIMEOUT_MS") or "120000")
 except ValueError:
     PHOTO_OCR_REQUEST_TIMEOUT_MS = 120000
+
+
+def instagram_inventory_photo_order(paths: list[Path]) -> list[Path]:
+    def rank(path: Path) -> tuple[int, int]:
+        name = path.name.lower()
+        if re.search(r"\]-\[(?:0*1|front)\]-", name) or re.search(r"\bfront\b", name):
+            return (0, paths.index(path))
+        if re.search(r"\]-\[(?:0*2|back)\]-", name) or re.search(r"\bback\b", name):
+            return (1, paths.index(path))
+        return (2, paths.index(path))
+
+    return sorted(paths, key=rank)
+
+
+def instagram_ready_photo_urls(item: dict[str, object]) -> list[str]:
+    raw_urls = item.get("photo_urls") if isinstance(item.get("photo_urls"), list) else [item.get("photo_url")]
+    urls = [str(url or "").strip() for url in raw_urls]
+    return urls if urls and all(urls) else []
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 MIKEYS_CARDS_LOGO_PATH = ROOT / "assets" / "mikeys_cards_logo.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
@@ -4230,7 +4248,7 @@ class CardPipelineApp(tk.Tk):
         daily_limit = self._instagram_daily_post_limit(config)
         quota = self._instagram_content_publishing_limit(config)
         meta_remaining = quota.get("remaining") if isinstance(quota.get("remaining"), int) else None
-        ready_posts = [item for item in plan.get("to_post") or [] if isinstance(item, dict) and str(item.get("photo_url") or "").strip()]
+        ready_posts = [item for item in plan.get("to_post") or [] if isinstance(item, dict) and instagram_ready_photo_urls(item)]
         if meta_remaining is None and ready_posts:
             self.events.put(("status", f"Instagram daily sync skipped: could not verify Meta publishing quota: {quota.get('error') or 'unknown error'}"))
             return False
@@ -4267,7 +4285,7 @@ class CardPipelineApp(tk.Tk):
         ready_posts = [
             item
             for item in plan.get("to_post") or []
-            if isinstance(item, dict) and str(item.get("photo_url") or "").strip()
+            if isinstance(item, dict) and instagram_ready_photo_urls(item)
         ]
         limited_posts = ready_posts[:limit]
         limited_plan = {
@@ -4318,11 +4336,7 @@ class CardPipelineApp(tk.Tk):
     def _instagram_cover_photo_path(self, paths: list[Path]) -> Path | None:
         if not paths:
             return None
-        front_pattern = re.compile(r"\]-\[(?:0*1|front)\]-", re.IGNORECASE)
-        for path in paths:
-            if front_pattern.search(path.name):
-                return path
-        return paths[0]
+        return instagram_inventory_photo_order(paths)[0]
 
     def instagram_inventory_media_response(self, photo_id: str) -> tuple[bytes, str] | None:
         if not self._personal_instagram_sync_enabled():
@@ -4416,24 +4430,27 @@ class CardPipelineApp(tk.Tk):
             if identity and identity in posted_identities:
                 already_posted.append(record)
                 continue
-            paths = self._inventory_photo_paths_for_record(record)
+            paths = instagram_inventory_photo_order(self._inventory_photo_paths_for_record(record))
             if not paths:
                 missing_photos.append(record)
                 continue
-            cover_photo = self._instagram_cover_photo_path(paths)
+            cover_photo = paths[0]
             if cover_photo is None:
                 missing_photos.append(record)
                 continue
-            photo_url = self._instagram_inventory_photo_url(cover_photo, config)
+            photo_urls = [self._instagram_inventory_photo_url(path, config) for path in paths[:10]]
+            photo_url = photo_urls[0] if photo_urls else ""
             item = {
                 "inventory_key": key,
                 "record": record,
                 "photo_path": cover_photo,
+                "photo_paths": paths,
                 "photo_count": len(paths),
                 "photo_url": photo_url,
+                "photo_urls": photo_urls,
                 "caption": str(record.get("card_title") or "").strip(),
             }
-            if not photo_url:
+            if not photo_url or any(not url for url in photo_urls):
                 missing_public_urls.append(item)
             to_post.append(item)
 
@@ -4954,7 +4971,7 @@ class CardPipelineApp(tk.Tk):
         if not str(config.get("user_id") or "").strip() or not str(config.get("access_token") or "").strip():
             messagebox.showerror("Instagram Sync", "Missing Instagram user ID or access token in .env.")
             return
-        ready_candidates = [item for item in plan.get("to_post") or [] if isinstance(item, dict) and str(item.get("photo_url") or "").strip()]
+        ready_candidates = [item for item in plan.get("to_post") or [] if isinstance(item, dict) and instagram_ready_photo_urls(item)]
         quota = self._instagram_content_publishing_limit(config)
         meta_remaining = quota.get("remaining") if isinstance(quota.get("remaining"), int) else None
         if ready_candidates and meta_remaining is None:
@@ -5136,11 +5153,41 @@ class CardPipelineApp(tk.Tk):
                 if already_posted_identity:
                     continue
                 try:
-                    create_response = self._instagram_api_json(
-                        f"{plan['config']['user_id']}/media",
-                        {"image_url": photo_url, "caption": caption},
-                        method="POST",
-                    )
+                    photo_urls = instagram_ready_photo_urls(item)
+                    if not photo_urls:
+                        photo_urls = [photo_url]
+                    photo_paths = item.get("photo_paths") if isinstance(item.get("photo_paths"), list) else []
+                    if not photo_paths:
+                        photo_paths = [item.get("photo_path")]
+                    photo_ids = [
+                        self._instagram_inventory_photo_id(Path(str(path or "")))
+                        for path in photo_paths[: len(photo_urls)]
+                    ]
+                    child_creation_ids: list[str] = []
+                    media_type = "IMAGE"
+                    if len(photo_urls) > 1:
+                        for url in photo_urls[:10]:
+                            child_response = self._instagram_api_json(
+                                f"{plan['config']['user_id']}/media",
+                                {"image_url": url, "is_carousel_item": "true"},
+                                method="POST",
+                            )
+                            child_id = str(child_response.get("id") or "").strip()
+                            if not child_id:
+                                raise RuntimeError(f"Instagram did not return a carousel child id for {caption}.")
+                            child_creation_ids.append(child_id)
+                        create_response = self._instagram_api_json(
+                            f"{plan['config']['user_id']}/media",
+                            {"media_type": "CAROUSEL", "children": ",".join(child_creation_ids), "caption": caption},
+                            method="POST",
+                        )
+                        media_type = "CAROUSEL"
+                    else:
+                        create_response = self._instagram_api_json(
+                            f"{plan['config']['user_id']}/media",
+                            {"image_url": photo_urls[0], "caption": caption},
+                            method="POST",
+                        )
                     creation_id = str(create_response.get("id") or "").strip()
                     if not creation_id:
                         raise RuntimeError(f"Instagram did not return a creation id for {caption}.")
@@ -5162,8 +5209,12 @@ class CardPipelineApp(tk.Tk):
                         "card_title": str(current_record.get("card_title") or "").strip(),
                         "cert_number": scan_to_cert(current_record.get("cert_number")) if isinstance(current_record, dict) else "",
                         "item_id": str(current_record.get("item_id") or "").strip() if isinstance(current_record, dict) else "",
-                        "photo_id": self._instagram_inventory_photo_id(Path(str(item.get("photo_path") or ""))),
-                        "photo_url": photo_url,
+                        "photo_id": photo_ids[0] if photo_ids else self._instagram_inventory_photo_id(Path(str(item.get("photo_path") or ""))),
+                        "photo_ids": photo_ids,
+                        "photo_url": photo_urls[0],
+                        "photo_urls": photo_urls,
+                        "media_type": media_type,
+                        "child_creation_ids": child_creation_ids,
                         "permalink": permalink,
                         "posted_at": datetime.now().isoformat(timespec="seconds"),
                     }
@@ -5179,6 +5230,7 @@ class CardPipelineApp(tk.Tk):
                         "cert_number": scan_to_cert(current_record.get("cert_number")) if isinstance(current_record, dict) else "",
                         "item_id": str(current_record.get("item_id") or "").strip() if isinstance(current_record, dict) else "",
                         "photo_url": photo_url,
+                        "photo_urls": item.get("photo_urls") if isinstance(item.get("photo_urls"), list) else [photo_url],
                         "post_error": error_text[:500],
                         "post_error_at": datetime.now().isoformat(timespec="seconds"),
                     }
