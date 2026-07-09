@@ -20,9 +20,12 @@ const QUEUE_KEY = "lucasMobileQueue";
 const CACHE_PREFIX = `${profileMatch ? profileMatch[1] : "default"}:`;
 const CACHE_KEYS = {
   search: `${CACHE_PREFIX}lucasMobileLastSearch`,
+  inventory: `${CACHE_PREFIX}lucasMobileInventorySnapshot`,
   profit: `${CACHE_PREFIX}lucasMobileLastProfit`,
   payouts: `${CACHE_PREFIX}lucasMobileLastPayouts`,
 };
+const INVENTORY_SNAPSHOT_LIMIT = 1000;
+const INVENTORY_SNAPSHOT_REFRESH_MS = 5 * 60 * 1000;
 
 function setConnectionStatus(connected, message = "") {
   state.connected = Boolean(connected);
@@ -62,6 +65,12 @@ function cacheAgeText(savedAt) {
   if (minutes < 60) return `${minutes} min old`;
   const hours = Math.round(minutes / 60);
   return `${hours} hr old`;
+}
+
+function cacheIsFresh(wrapper, maxAgeMs) {
+  if (!wrapper || !wrapper.saved_at) return false;
+  const ageMs = Date.now() - new Date(wrapper.saved_at).getTime();
+  return Number.isFinite(ageMs) && ageMs >= 0 && ageMs < maxAgeMs;
 }
 
 function setUnlocked(unlocked) {
@@ -320,14 +329,17 @@ function closeInventoryPhoto() {
 }
 
 function renderCachedSearch(wrapper, error) {
-  if (!wrapper || !wrapper.payload) {
+  const snapshot = cacheGet(CACHE_KEYS.inventory);
+  const source = snapshot || wrapper;
+  if (!source || !source.payload) {
     $("results").innerHTML = `<div class="hint">Desktop LUCAS is not reachable and no cached inventory search is saved on this phone yet. Add inventory and expenses can still be queued. ${escapeHtml(error?.message || error || "")}</div>`;
     return;
   }
-  const result = wrapper.payload;
+  const result = filterCachedInventory(source.payload);
   updatePeople(result.people || state.people);
   renderResults(result.items || []);
-  const note = `Showing cached inventory search (${cacheAgeText(wrapper.saved_at)}). Live search needs desktop LUCAS online.`;
+  const label = snapshot ? "inventory snapshot" : "inventory search";
+  const note = `Showing cached ${label} (${cacheAgeText(source.saved_at)}). Live search needs desktop LUCAS online.`;
   $("scanSearchStatus").textContent = note;
   setConnectionStatus(false, note);
 }
@@ -400,6 +412,79 @@ function selectedCategories() {
     .filter(Boolean);
 }
 
+function inventorySearchPayload(overrides = {}) {
+  return {
+    query: $("searchInput").value,
+    person: $("personFilter").value,
+    sport: selectedCategories(),
+    include_sold: $("includeSold").checked,
+    ...overrides,
+  };
+}
+
+function cachedInventoryMatches(item, payload) {
+  const query = String(payload.query || "").trim().toLowerCase();
+  const person = String(payload.person || "").trim().toLowerCase();
+  const sports = Array.isArray(payload.sport) ? payload.sport : [payload.sport].filter(Boolean);
+  const sportFilters = sports.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
+  const status = String(item.status || "").toLowerCase();
+  if (status !== "active" && !payload.include_sold) return false;
+  if (person && !String(item.assigned_person || "Unassigned").toLowerCase().includes(person)) return false;
+  if (sportFilters.length) {
+    const sportText = String(item.sport || "").toLowerCase();
+    if (!sportFilters.some((sport) => sportText === sport || sportText.includes(sport))) return false;
+  }
+  if (query) {
+    const haystack = [
+      item.inventory_key,
+      item.item_type,
+      item.item_id,
+      item.cert_number,
+      item.card_title,
+      item.grader,
+      item.assigned_person,
+      item.sport,
+      item.source,
+      item.best_company,
+      item.notes,
+    ].map((value) => String(value || "").toLowerCase()).join(" ");
+    if (query.split(/\s+/).some((part) => part && !haystack.includes(part))) return false;
+  }
+  return true;
+}
+
+function filterCachedInventory(payload) {
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const search = inventorySearchPayload();
+  const filtered = items.filter((item) => cachedInventoryMatches(item, search)).slice(0, 75);
+  return {
+    ...payload,
+    count: filtered.length,
+    items: filtered,
+    people: payload.people || state.people,
+  };
+}
+
+async function refreshInventorySnapshot(force = false) {
+  if (state.snapshotRefreshInFlight) return;
+  if (!force && cacheIsFresh(cacheGet(CACHE_KEYS.inventory), INVENTORY_SNAPSHOT_REFRESH_MS)) return;
+  state.snapshotRefreshInFlight = true;
+  try {
+    const result = await api("/inventory/search", {
+      query: "",
+      person: "",
+      sport: [],
+      include_sold: true,
+      limit: INVENTORY_SNAPSHOT_LIMIT,
+    });
+    if (result && result.ok) cacheSet(CACHE_KEYS.inventory, result);
+  } catch (_error) {
+    // The visible search path already handles offline messaging.
+  } finally {
+    state.snapshotRefreshInFlight = false;
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -412,13 +497,12 @@ function escapeHtml(value) {
 
 async function searchInventory() {
   let result;
+  if (navigator.onLine === false) {
+    renderCachedSearch(cacheGet(CACHE_KEYS.search), "Phone is offline.");
+    return;
+  }
   try {
-    result = await api("/inventory/search", {
-      query: $("searchInput").value,
-      person: $("personFilter").value,
-      sport: selectedCategories(),
-      include_sold: $("includeSold").checked,
-    });
+    result = await api("/inventory/search", inventorySearchPayload());
   } catch (error) {
     renderCachedSearch(cacheGet(CACHE_KEYS.search), error);
     return;
@@ -432,6 +516,7 @@ async function searchInventory() {
   cacheSet(CACHE_KEYS.search, result);
   $("scanSearchStatus").textContent = "";
   renderResults(result.items || []);
+  refreshInventorySnapshot();
 }
 
 function clearCategoryFilters() {

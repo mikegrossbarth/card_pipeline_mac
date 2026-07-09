@@ -8267,6 +8267,8 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 multi_category = dummy.mobile_inventory_search({"sport": ["baseball", "basketball"]})
                 self.assertEqual(multi_category["count"], 2)
                 self.assertEqual({item["cert_number"] for item in multi_category["items"]}, {"123456", "654321"})
+                limited = dummy.mobile_inventory_search({"limit": 1})
+                self.assertEqual(limited["count"], 1)
 
                 duplicate = dummy.mobile_inventory_add({"cert_number": "123456", "purchase_price": "50"})
                 self.assertFalse(duplicate["ok"])

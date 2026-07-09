@@ -2809,6 +2809,11 @@ class CardPipelineApp(tk.Tk):
         person = str(payload.get("person") or "").strip().lower()
         sport_filters = self._mobile_inventory_sport_filters(payload)
         include_sold = bool(payload.get("include_sold"))
+        try:
+            limit = int(payload.get("limit") or 75)
+        except (TypeError, ValueError):
+            limit = 75
+        limit = max(1, min(limit, 1000))
         rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         results: list[dict[str, object]] = []
         for record in rows:
@@ -2829,7 +2834,7 @@ class CardPipelineApp(tk.Tk):
             if query and any(part not in haystack for part in query.split()):
                 continue
             results.append(self._mobile_inventory_json_record(record))
-            if len(results) >= 75:
+            if len(results) >= limit:
                 break
         return {"ok": True, "count": len(results), "items": results, "people": self._known_people()}
 
