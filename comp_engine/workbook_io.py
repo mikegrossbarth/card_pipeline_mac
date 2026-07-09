@@ -25,3 +25,4 @@ class WorkbookRow:
     received: bool = False
     status: str = "Ready"
     notes: str = ""
+    item_id: str = ""

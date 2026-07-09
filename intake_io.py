@@ -877,6 +877,7 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
     sheet = workbook.active
     sheet.title = DEFAULT_SHEET
     headers = [
+        "Item ID",
         "Certification Number",
         "Company",
         "Sport",
@@ -895,6 +896,7 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
     sheet.append(headers)
     for row in rows:
         sheet.append([
+            getattr(row, "item_id", ""),
             row.cert_number,
             row.grader,
             getattr(row, "category", ""),
@@ -917,7 +919,7 @@ def write_working_sheet(path: Path, rows: list[Any], source_lookup: dict[int, st
         cell.font = header_font
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    for letter, width in {"A": 22, "B": 14, "C": 14, "D": 62, "E": 16, "F": 18, "G": 14, "H": 14, "I": 16, "J": 18, "K": 18, "L": 18, "M": 38, "N": 14}.items():
+    for letter, width in {"A": 18, "B": 22, "C": 14, "D": 14, "E": 62, "F": 16, "G": 18, "H": 14, "I": 14, "J": 16, "K": 18, "L": 18, "M": 18, "N": 38, "O": 14}.items():
         sheet.column_dimensions[letter].width = width
     workbook.save(path)
     return path
