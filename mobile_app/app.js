@@ -570,6 +570,11 @@ function escapeHtml(value) {
 
 async function searchInventory() {
   let result;
+  const cached = cachedInventoryWrapper();
+  const showedCached = renderCachedInventory(
+    cached,
+    cached ? `Showing last synced inventory (${cacheAgeText(cached.saved_at)}). Checking live LUCAS...` : ""
+  );
   if (navigator.onLine === false) {
     renderCachedSearch(cacheGet(CACHE_KEYS.search), "Phone is offline.");
     return;
@@ -577,7 +582,8 @@ async function searchInventory() {
   try {
     result = await api("/inventory/search", inventorySearchPayload());
   } catch (error) {
-    renderCachedSearch(cacheGet(CACHE_KEYS.search), error);
+    if (!showedCached) renderCachedSearch(cacheGet(CACHE_KEYS.search), error);
+    else setConnectionStatus(false, `Still showing last synced inventory. Live LUCAS is not reachable yet. ${error.message || error}`);
     return;
   }
   if (!result.ok) {
