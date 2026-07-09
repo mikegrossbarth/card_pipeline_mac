@@ -6,6 +6,8 @@ const state = {
   sellRecord: null,
   people: [],
   connected: navigator.onLine !== false,
+  viewerRecord: null,
+  viewerPhoto: null,
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
 const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
@@ -364,7 +366,7 @@ async function shareInventoryPhoto(record, photo) {
     const title = record.card_title || record.cert_number || "LUCAS inventory photo";
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({ title, text: title, files: [file] });
-      status.textContent = "Photo shared.";
+      status.textContent = "Photo ready. Choose Save Image/Save to Photos from the iPhone share sheet.";
       return;
     }
     const objectUrl = URL.createObjectURL(blob);
@@ -390,6 +392,8 @@ function openInventoryPhoto(record, photo) {
   image.src = url;
   image.alt = record.card_title || record.cert_number || "Inventory photo";
   if (title) title.textContent = record.card_title || record.cert_number || photo.name || "Inventory photo";
+  state.viewerRecord = record;
+  state.viewerPhoto = photo;
   viewer.classList.remove("hidden");
   document.body.classList.add("photoViewerOpen");
 }
@@ -400,6 +404,8 @@ function closeInventoryPhoto() {
   if (!viewer || viewer.classList.contains("hidden")) return;
   viewer.classList.add("hidden");
   document.body.classList.remove("photoViewerOpen");
+  state.viewerRecord = null;
+  state.viewerPhoto = null;
   if (image) image.removeAttribute("src");
 }
 
@@ -429,7 +435,7 @@ function renderPhotoStrip(item, itemIndex) {
           <button class="photoOpenButton" data-index="${itemIndex}" data-photo-index="${photoIndex}" type="button" aria-label="Open attached photo ${photoIndex + 1}">
             <img src="${escapeHtml(photo.url || "")}" alt="${escapeHtml(item.card_title || item.cert_number || "Inventory photo")}" loading="lazy">
           </button>
-          <button class="secondary sharePhotoButton" data-index="${itemIndex}" data-photo-index="${photoIndex}" type="button">Share Photo</button>
+          <button class="secondary sharePhotoButton" data-index="${itemIndex}" data-photo-index="${photoIndex}" type="button">Save Photo</button>
         </div>
       `).join("")}
     </div>
@@ -992,6 +998,9 @@ function bind() {
     $("syncStatus").textContent = "Queue is empty.";
   });
   $("closePhotoViewer").addEventListener("click", () => closeInventoryPhoto());
+  $("savePhotoViewer").addEventListener("click", () => {
+    shareInventoryPhoto(state.viewerRecord || {}, state.viewerPhoto || {});
+  });
   $("photoViewer").addEventListener("click", (event) => {
     if (event.target === $("photoViewer") || event.target.classList.contains("photoViewerCanvas")) {
       closeInventoryPhoto();

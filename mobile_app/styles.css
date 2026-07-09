@@ -380,6 +380,7 @@ body.photoViewerOpen {
 }
 
 .photoViewerBar button {
+  flex: 0 0 auto;
   width: auto;
   min-height: 38px;
   padding: 0 14px;
