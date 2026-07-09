@@ -519,9 +519,8 @@ async function confirmSell() {
     return;
   }
   $("sellStatus").textContent = `Sold for ${result.sale?.sale_price_display || money(result.sale?.sale_price, "")}.`;
-  const query = state.sellRecord.cert_number || state.sellRecord.card_title || $("searchInput").value;
   cancelSell();
-  $("searchInput").value = query;
+  $("searchInput").value = "";
   await searchInventory();
   loadProfit();
   loadPayouts();
