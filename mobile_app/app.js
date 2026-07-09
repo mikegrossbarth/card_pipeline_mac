@@ -175,6 +175,80 @@ function updatePeople(people) {
   ["personFilter", "profitPerson", "payoutPerson"].forEach((id) => fillSelect($(id), state.people));
 }
 
+function cachedInventoryWrapper() {
+  return cacheGet(CACHE_KEYS.inventory) || cacheGet(CACHE_KEYS.search);
+}
+
+function renderCachedInventory(wrapper, note) {
+  if (!wrapper || !wrapper.payload) return false;
+  const result = filterCachedInventory(wrapper.payload);
+  updatePeople(result.people || state.people);
+  renderResults(result.items || []);
+  if (note) $("scanSearchStatus").textContent = note;
+  return true;
+}
+
+function normalizePendingInventoryRecord(action) {
+  const payload = action.payload || {};
+  const price = payload.purchase_price || "";
+  const value = payload.inventory_value || "";
+  return {
+    inventory_key: `pending:${action.id}`,
+    item_type: payload.cert_number ? "Slab" : "Raw",
+    item_id: "",
+    cert_number: payload.cert_number || "",
+    grader: payload.grader || "",
+    card_title: payload.card_title || payload.cert_number || "Queued inventory add",
+    assigned_person: payload.assigned_person || "Unassigned",
+    source: payload.source || "Mobile Offline",
+    sport: "",
+    best_company: "",
+    notes: payload.notes || "Pending mobile sync",
+    status: "Active",
+    purchase_price: price,
+    purchase_price_display: price ? money(price) : "",
+    inventory_value: value,
+    inventory_value_display: value ? money(value) : "",
+    photos: [],
+    pending_sync: true,
+  };
+}
+
+function upsertCachedInventoryRecord(record) {
+  const wrapper = cacheGet(CACHE_KEYS.inventory) || {
+    saved_at: new Date().toISOString(),
+    payload: { ok: true, count: 0, items: [], people: state.people },
+  };
+  const payload = wrapper.payload || {};
+  const items = Array.isArray(payload.items) ? payload.items.slice() : [];
+  const key = String(record.inventory_key || "");
+  const cert = String(record.cert_number || "").toLowerCase();
+  const index = items.findIndex((item) => (
+    key && item.inventory_key === key
+  ) || (
+    cert && String(item.cert_number || "").toLowerCase() === cert && item.pending_sync
+  ));
+  if (index >= 0) {
+    items[index] = { ...items[index], ...record };
+  } else {
+    items.unshift(record);
+  }
+  const people = new Set([...(payload.people || state.people || []), record.assigned_person].filter(Boolean));
+  cacheSet(CACHE_KEYS.inventory, {
+    ...payload,
+    ok: true,
+    count: items.length,
+    items,
+    people: Array.from(people).sort((a, b) => a.localeCompare(b)),
+  });
+}
+
+function hydratePendingInventoryFromQueue() {
+  state.queue
+    .filter((action) => action.type === "inventory.add")
+    .forEach((action) => upsertCachedInventoryRecord(normalizePendingInventoryRecord(action)));
+}
+
 function queueTitle(action) {
   const payload = action.payload || {};
   if (action.type === "inventory.add") {
@@ -231,7 +305,8 @@ async function syncQueuedActions() {
     saveQueue();
     $("syncStatus").textContent = `Applied ${result.applied || 0}, skipped ${result.skipped || 0}, failed ${result.failed || 0}.`;
     if (completed.size) {
-      searchInventory();
+      await refreshInventorySnapshot(true);
+      await searchInventory();
       loadProfit();
       loadPayouts();
     }
@@ -335,9 +410,7 @@ function renderCachedSearch(wrapper, error) {
     $("results").innerHTML = `<div class="hint">Desktop LUCAS is not reachable and no cached inventory search is saved on this phone yet. Add inventory and expenses can still be queued. ${escapeHtml(error?.message || error || "")}</div>`;
     return;
   }
-  const result = filterCachedInventory(source.payload);
-  updatePeople(result.people || state.people);
-  renderResults(result.items || []);
+  renderCachedInventory(source);
   const label = snapshot ? "inventory snapshot" : "inventory search";
   const note = `Showing cached ${label} (${cacheAgeText(source.saved_at)}). Live search needs desktop LUCAS online.`;
   $("scanSearchStatus").textContent = note;
@@ -545,6 +618,12 @@ async function addInventory(updateExisting = false) {
   $("updateDuplicate").classList.add("hidden");
   const result = await mutationApi("inventory.add", "/inventory/add", addPayload(updateExisting));
   if (result.queued) {
+    const action = state.queue.find((item) => item.id === result.action_id);
+    if (action) {
+      upsertCachedInventoryRecord(normalizePendingInventoryRecord(action));
+      $("searchInput").value = action.payload.cert_number || action.payload.card_title || "";
+      renderCachedInventory(cachedInventoryWrapper(), "Showing queued inventory add from this phone. Sync when desktop LUCAS is reachable.");
+    }
     $("addStatus").textContent = `Desktop not reachable. Queued inventory add ${result.action_id}.`;
     return;
   }
@@ -561,6 +640,7 @@ async function addInventory(updateExisting = false) {
   }
   $("addStatus").textContent = `${result.action === "updated" ? "Updated" : "Added"} ${result.record?.cert_number || result.record?.card_title || "card"}.`;
   updatePeople(result.people || state.people);
+  if (result.record) upsertCachedInventoryRecord(result.record);
   $("searchInput").value = result.record?.cert_number || result.record?.card_title || "";
   searchInventory();
 }
@@ -847,6 +927,7 @@ function bindPhotoInput(inputId, targetId) {
 
 function bind() {
   loadQueue();
+  hydratePendingInventoryFromQueue();
   $("pin").value = state.pin;
   $("expenseDate").value = new Date().toISOString().slice(0, 10);
   $("sellDate").value = new Date().toISOString().slice(0, 10);
@@ -929,11 +1010,16 @@ function bind() {
     navigator.serviceWorker.register(`${APP_BASE}/sw.js`, { scope: `${APP_BASE}/` }).catch(() => {});
   }
   if (state.pin) {
-    const cached = cacheGet(CACHE_KEYS.search);
+    const cached = cachedInventoryWrapper();
     if (cached && cached.payload) {
-      renderCachedSearch(cached);
+      renderCachedInventory(cached, `Showing last synced inventory (${cacheAgeText(cached.saved_at)}). Refreshing if desktop LUCAS is reachable.`);
     }
-    searchInventory();
+    if (navigator.onLine === false) {
+      setConnectionStatus(false, "Offline mode: showing last synced inventory from this phone.");
+      if (!cached || !cached.payload) renderCachedSearch(null, "Phone is offline.");
+    } else {
+      refreshInventorySnapshot(true).then(() => searchInventory()).catch(() => searchInventory());
+    }
   }
 }
 
