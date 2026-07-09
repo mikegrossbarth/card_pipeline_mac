@@ -44,6 +44,8 @@ def _photo_ocr_region_target() -> int:
 
 
 PHOTO_OCR_REGION_TARGET = max(3, min(16, _photo_ocr_region_target()))
+PHOTO_OCR_SMALL_BATCH_MIN = 3
+PHOTO_OCR_SMALL_BATCH_MAX = 6
 
 
 GRADE_WORDS_RE = re.compile(
@@ -715,7 +717,7 @@ def _crop_region_to_base64(image, bbox: list[int], padding_ratio: float = 0.03) 
     if crop.mode not in ("RGB", "L"):
         crop = crop.convert("RGB")
     buf = io.BytesIO()
-    crop.save(buf, format="PNG")
+    crop.save(buf, format="JPEG", quality=86, optimize=True)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
@@ -756,6 +758,10 @@ def _detect_best_prompt_regions(gclient: genai.Client, image_bytes: bytes, mime_
 
 def _detect_regions_sync(gclient: genai.Client, image_bytes: bytes, mime_type: str) -> list[dict]:
     regions = _detect_regions_for_prompt(gclient, image_bytes, mime_type, DETECTION_PROMPT)
+    if _small_batch_regions_are_good_enough(regions):
+        regions = _finalize_regions(regions)
+        logging.info(f"[regions detected] {len(regions)} small-batch")
+        return regions
     row_regions = []
     if len(regions) < PHOTO_OCR_REGION_TARGET:
         row_regions = _detect_best_row_regions(gclient, image_bytes, mime_type)
@@ -777,8 +783,26 @@ def _detect_regions_sync(gclient: genai.Client, image_bytes: bytes, mime_type: s
                     regions = expanded_labels
                 else:
                     regions = _merge_regions(expanded_labels, regions)
+    regions = _finalize_regions(regions, row_regions)
+    logging.info(f"[regions detected] {len(regions)}")
+    return regions
+
+
+def _small_batch_regions_are_good_enough(regions: list[dict]) -> bool:
     regions = _dedupe_regions(regions)
-    if len(regions) < PHOTO_OCR_REGION_TARGET and row_regions:
+    count = len(regions)
+    if count < PHOTO_OCR_SMALL_BATCH_MIN or count > PHOTO_OCR_SMALL_BATCH_MAX:
+        return False
+    confidences = [
+        str(region.get("detection_confidence") or region.get("confidence") or "").lower()
+        for region in regions
+    ]
+    return all(confidence in {"high", "medium"} for confidence in confidences)
+
+
+def _finalize_regions(regions: list[dict], row_regions: list[dict] | None = None) -> list[dict]:
+    regions = _dedupe_regions(regions)
+    if row_regions and len(regions) < PHOTO_OCR_REGION_TARGET:
         regions = _merge_regions(regions, row_regions)
         regions = _dedupe_regions(regions)
     regions = _add_uncovered_edge_regions(regions)
@@ -787,7 +811,6 @@ def _detect_regions_sync(gclient: genai.Client, image_bytes: bytes, mime_type: s
     regions.sort(key=lambda item: (item["bbox"][1] // 120, item["bbox"][0]))
     for index, region in enumerate(regions):
         region["card_index"] = index + 1
-    logging.info(f"[regions detected] {len(regions)}")
     return regions
 
 
