@@ -3662,12 +3662,13 @@ class CardPipelineApp(tk.Tk):
         company_keys = self._company_sheet_source_cert_keys()
         accounted_keys = self._received_inventory_accounted_source_cert_keys()
         candidates: list[dict[str, object]] = []
+        personal_default_person = self._personal_default_person() if self._is_personal_lucas() else ""
         for stage, directory in (("Received", RECEIVED_SHEETS_DIR), ("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR)):
             if not directory.exists():
                 continue
             for path in sorted(directory.glob("*.xlsx"), key=lambda item: item.name.lower()):
                 marker = self.home_sheet_markers.get(self._home_sheet_key(stage, path.name), {})
-                person = str(marker.get("assigned_person") or "").strip()
+                person = str(marker.get("assigned_person") or "").strip() or personal_default_person
                 if not person:
                     continue
                 candidates.extend(self._received_inventory_candidate_records_for_sheet(stage, path, person, company_keys, accounted_keys))

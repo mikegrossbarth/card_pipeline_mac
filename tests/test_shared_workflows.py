@@ -4867,6 +4867,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_profit_ledger = lambda self: []
             _inventory_deleted_source_cert_keys = lambda self: set()
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _is_personal_lucas = lambda self: False
+            _personal_default_person = app.CardPipelineApp._personal_default_person
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4926,6 +4928,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_profit_ledger = lambda self: []
             _inventory_deleted_source_cert_keys = lambda self: set()
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _is_personal_lucas = lambda self: False
+            _personal_default_person = app.CardPipelineApp._personal_default_person
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4955,6 +4959,55 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.WORKING_SHEETS_DIR = old_working
                 app.COMPANY_SHEETS_DIR = old_company
 
+    def test_personal_received_inventory_reconcile_defaults_blank_marker_to_mikey(self) -> None:
+        class ReconcileDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _company_sheet_source_cert_keys = lambda self: set()
+            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _load_inventory_ledger = lambda self: []
+            _load_profit_ledger = lambda self: []
+            _inventory_deleted_source_cert_keys = lambda self: set()
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _is_personal_lucas = lambda self: True
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            received_dir.mkdir()
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Grader", "Sport", "Card Description", "Purchase Price", "Comps"])
+            sheet.append(["57355243", "PSA", "football", "2020 Panini Mosaic 213 Tee Higgins Mosaic PSA 10", 30, 40])
+            workbook.save(received_dir / "cardking10x_tees.xlsx")
+
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_company = app.COMPANY_SHEETS_DIR
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.COMPANY_SHEETS_DIR = root / "COMPANY SHEETS"
+            dummy = ReconcileDummy()
+            dummy.home_sheet_markers = {"Received|cardking10x_tees.xlsx": {"all_received": True}}
+            try:
+                records = dummy._received_inventory_candidate_records()
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0]["cert_number"], "57355243")
+                self.assertEqual(records[0]["assigned_person"], "Mikey")
+            finally:
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.COMPANY_SHEETS_DIR = old_company
+
     def test_received_inventory_reconcile_skips_already_sold_profit_rows(self) -> None:
         class ReconcileDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -4969,6 +5022,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
             _inventory_deleted_source_cert_keys = lambda self: set()
+            _is_personal_lucas = lambda self: False
+            _personal_default_person = app.CardPipelineApp._personal_default_person
 
             def _load_inventory_ledger(self):
                 return []
@@ -5025,6 +5080,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
             _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _is_personal_lucas = lambda self: False
+            _personal_default_person = app.CardPipelineApp._personal_default_person
 
             def _load_inventory_ledger(self):
                 return []
