@@ -145,6 +145,7 @@ try:
 except ValueError:
     PHOTO_OCR_REQUEST_TIMEOUT_MS = 120000
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
+MIKEYS_CARDS_LOGO_PATH = ROOT / "assets" / "mikeys_cards_logo.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
 APP_TITLE = "L.U.C.A.S"
 APP_SUBTITLE = "Lot Upload, Comping & Assignment System"
@@ -1412,9 +1413,10 @@ class CardPipelineApp(tk.Tk):
         header = ttk.Frame(self, style="Header.TFrame", padding=(18, 16))
         header.pack(fill=tk.X)
         header.columnconfigure(1, weight=1)
-        if LUCAS_LOGO_PATH.exists():
+        logo_path = MIKEYS_CARDS_LOGO_PATH if self._is_personal_lucas() and MIKEYS_CARDS_LOGO_PATH.exists() else LUCAS_LOGO_PATH
+        if logo_path.exists():
             try:
-                self.logo_image = tk.PhotoImage(file=str(LUCAS_LOGO_PATH)).subsample(6, 6)
+                self.logo_image = tk.PhotoImage(file=str(logo_path)).subsample(6, 6)
                 self.iconphoto(False, self.logo_image)
                 ttk.Label(header, image=self.logo_image, style="Header.TLabel").grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 14))
             except tk.TclError:

@@ -9,6 +9,15 @@ APP_DIR="${APP_NAME}.app"
 MACOS_DIR="${APP_DIR}/Contents/MacOS"
 RESOURCES_DIR="${APP_DIR}/Contents/Resources"
 PROJECT_ROOT="$(pwd)"
+APP_ICON_SOURCE="${LUCAS_APP_ICON_PATH:-}"
+APP_ICON_FILE=""
+APP_NAME_LC="$(printf "%s %s" "$APP_NAME" "$APP_DISPLAY_NAME" | tr '[:upper:]' '[:lower:]')"
+if [[ -z "$APP_ICON_SOURCE" && ( "$APP_NAME_LC" == *"michael"* || "$APP_NAME_LC" == *"personal"* ) && -f "assets/mikeys_cards_logo.icns" ]]; then
+  APP_ICON_SOURCE="assets/mikeys_cards_logo.icns"
+fi
+if [[ -n "$APP_ICON_SOURCE" && -f "$APP_ICON_SOURCE" ]]; then
+  APP_ICON_FILE="LUCAS.icns"
+fi
 BUNDLE_SUFFIX="$(printf "%s:%s" "$PROJECT_ROOT" "$APP_NAME" | shasum | awk '{print substr($1, 1, 10)}')"
 BUNDLE_ID="com.cardpipeline.lucas.${BUNDLE_SUFFIX}"
 PROJECT_ROOT_C="${PROJECT_ROOT//\\/\\\\}"
@@ -24,6 +33,9 @@ LUCAS_PIPELINE_DIR_C="${LUCAS_PIPELINE_DIR_C//\\/\\\\}"
 LUCAS_PIPELINE_DIR_C="${LUCAS_PIPELINE_DIR_C//\"/\\\"}"
 
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+if [[ -n "$APP_ICON_FILE" ]]; then
+  cp "$APP_ICON_SOURCE" "${RESOURCES_DIR}/${APP_ICON_FILE}"
+fi
 
 cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -38,6 +50,14 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
   <string>${APP_DISPLAY_NAME}</string>
   <key>CFBundleDisplayName</key>
   <string>${APP_DISPLAY_NAME}</string>
+PLIST
+if [[ -n "$APP_ICON_FILE" ]]; then
+  cat >> "${APP_DIR}/Contents/Info.plist" <<PLIST
+  <key>CFBundleIconFile</key>
+  <string>${APP_ICON_FILE}</string>
+PLIST
+fi
+cat >> "${APP_DIR}/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleVersion</key>
