@@ -11645,9 +11645,12 @@ class CardPipelineApp(tk.Tk):
                 updated_marker["seller_deduction"] = seller_term.get("deduction")
         marker = updated_marker
         key = self.home_selected_sheet_key
+        source_kind, _ = self._split_home_sheet_key(key)
         moved = False
         inventory_rows_added = 0
         inventory_candidate_rows = 0
+        inventory_rows_reassigned = 0
+        profit_rows_reassigned = 0
         try:
             with shared_lock(CARD_PIPELINE_DIR, "receive-company-sheets", self.lucas_identity):
                 selected_kind, _selected_name = self._split_home_sheet_key(key)
@@ -11674,8 +11677,6 @@ class CardPipelineApp(tk.Tk):
                     marker = self._marker_for_stage(marker, current_kind)
                 self.home_sheet_markers[key] = marker
                 _current_kind, current_name = self._split_home_sheet_key(key)
-                inventory_rows_reassigned = 0
-                profit_rows_reassigned = 0
                 if old_assigned_person != str(marker.get("assigned_person") or "").strip():
                     inventory_rows_reassigned = self._retarget_inventory_rows_for_source(current_name, str(marker.get("assigned_person") or ""))
                     profit_rows_reassigned = self._retarget_profit_rows_for_source(current_name, str(marker.get("assigned_person") or ""))
@@ -11689,12 +11690,13 @@ class CardPipelineApp(tk.Tk):
         except Exception as error:
             messagebox.showerror("Save failed", str(error))
             return
-        self.refresh_working_sheets()
-        self.refresh_received_sheets()
-        self.refresh_incoming_index()
-        self.refresh_home()
-        if hasattr(self, "inventory_tree"):
+        refresh_marker_save = getattr(self, "_refresh_after_home_marker_save", None)
+        if callable(refresh_marker_save):
+            refresh_marker_save(current_name, _current_kind, moved=moved, source_stage=source_kind)
+        if hasattr(self, "inventory_tree") and (inventory_rows_added or inventory_rows_reassigned):
             self.refresh_inventory_tab(enrich=True)
+        if profit_rows_reassigned and hasattr(self, "profit_tree"):
+            self.refresh_profit_tab()
         if popup is not None:
             popup.destroy()
         reassigned_notes = []
@@ -11708,6 +11710,27 @@ class CardPipelineApp(tk.Tk):
         elif inventory_candidate_rows:
             inventory_note += " Inventory was already up to date."
         self.status_var.set(("Sheet markers saved and moved." if moved else "Sheet markers saved.") + inventory_note)
+
+    def _refresh_after_home_marker_save(self, sheet_name: str, stage: str, moved: bool = False, source_stage: str = "") -> None:
+        if moved:
+            self._refresh_after_home_stage_move(sheet_name, source_stage, stage)
+            return
+        key = self._home_sheet_key(stage, sheet_name)
+        path = self._sheet_path_for_stage(stage, sheet_name)
+        if path.exists():
+            try:
+                summary = self._summarize_home_workbook_cached(path)
+            except Exception:
+                summary = self.home_sheet_summaries.get(key, {})
+            self.home_sheet_summaries[key] = self._enrich_home_seller_payout_summary(
+                path,
+                self.home_sheet_markers.get(key, {}),
+                dict(summary),
+            )
+        self._refresh_home_sheet_list()
+        self._refresh_home_metrics()
+        self.refresh_payouts_tab()
+        self._update_home_sheet_tabs()
 
     def _home_sheet_key(self, kind: str, name: str) -> str:
         return f"{kind}|{name}"

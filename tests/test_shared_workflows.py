@@ -199,16 +199,16 @@ class SharedStateTests(unittest.TestCase):
                 return 0, 0
 
             def refresh_working_sheets(self):
-                pass
+                self.refresh_working_calls = getattr(self, "refresh_working_calls", 0) + 1
 
             def refresh_received_sheets(self):
-                pass
+                self.refresh_received_calls = getattr(self, "refresh_received_calls", 0) + 1
 
             def refresh_incoming_index(self):
-                pass
+                self.refresh_incoming_index_calls = getattr(self, "refresh_incoming_index_calls", 0) + 1
 
             def refresh_home(self):
-                pass
+                self.refresh_home_calls = getattr(self, "refresh_home_calls", 0) + 1
 
         dummy = PersonalMarkerDummy()
         dummy.home_selected_sheet_key = "Incoming|Personal Lot.xlsx"
@@ -234,6 +234,10 @@ class SharedStateTests(unittest.TestCase):
         self.assertEqual(marker["assigned_person"], "Mikey")
         self.assertEqual(dummy.retargeted_inventory_person, "Mikey")
         self.assertEqual(dummy.retargeted_profit_person, "Mikey")
+        self.assertEqual(getattr(dummy, "refresh_home_calls", 0), 0)
+        self.assertEqual(getattr(dummy, "refresh_incoming_index_calls", 0), 0)
+        self.assertEqual(getattr(dummy, "refresh_working_calls", 0), 0)
+        self.assertEqual(getattr(dummy, "refresh_received_calls", 0), 0)
 
     def test_home_sheet_sort_modes(self) -> None:
         class SortVar:
@@ -3142,6 +3146,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
             _marker_for_stage = app.CardPipelineApp._marker_for_stage
             save_home_sheet_markers = app.CardPipelineApp.save_home_sheet_markers
+            _is_personal_lucas = lambda self: False
 
             def _seller_terms_match(self, seller, sheet_type):
                 return {"seller": seller, "sheet_type": sheet_type, "rate": 0.85, "deduction": None}
