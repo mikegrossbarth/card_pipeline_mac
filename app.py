@@ -2744,6 +2744,7 @@ class CardPipelineApp(tk.Tk):
         existing_records.extend(self._live_sheet_raw_item_records())
         result: dict[str, object] = {"files_updated": 0, "ids_added": 0, "errors": []}
         changed_paths: set[Path] = set()
+        seen_raw_ids: set[str] = set()
         for path in paths:
             try:
                 workbook = load_workbook(path)
@@ -2764,17 +2765,31 @@ class CardPipelineApp(tk.Tk):
                     purchase_col = next((headers.get(name) for name in ("purchaseprice", "purchase", "cost", "buyprice")), None)
                     for row_index in range(2, sheet.max_row + 1):
                         item_id = str(sheet.cell(row_index, item_id_col).value or "").strip()
+                        cert = scan_to_cert(sheet.cell(row_index, cert_col).value if cert_col else "")
+                        card = str((sheet.cell(row_index, card_col).value if card_col else "") or "").strip()
                         if item_id:
+                            item_key = item_id.upper()
+                            if item_key.startswith(f"RAW-{self._raw_item_id_namespace()}-") and not cert and not card:
+                                sheet.cell(row_index, item_id_col).value = None
+                                changed = True
+                                continue
+                            if item_key.startswith(f"RAW-{self._raw_item_id_namespace()}-") and item_key in seen_raw_ids:
+                                new_item_id = self._next_raw_item_id(existing_records)
+                                sheet.cell(row_index, item_id_col).value = new_item_id
+                                existing_records.append({"item_id": new_item_id})
+                                seen_raw_ids.add(new_item_id.upper())
+                                result["ids_added"] = int(result["ids_added"]) + 1
+                                changed = True
+                                continue
+                            seen_raw_ids.add(item_key)
                             existing_records.append({"item_id": item_id})
                             continue
-                        cert = scan_to_cert(sheet.cell(row_index, cert_col).value if cert_col else "")
                         if cert:
                             continue
-                        card = str(sheet.cell(row_index, card_col).value if card_col else "").strip()
-                        grader = str(sheet.cell(row_index, grader_col).value if grader_col else "").strip()
-                        sport = str(sheet.cell(row_index, sport_col).value if sport_col else "").strip()
+                        grader = str((sheet.cell(row_index, grader_col).value if grader_col else "") or "").strip()
+                        sport = str((sheet.cell(row_index, sport_col).value if sport_col else "") or "").strip()
                         purchase = sheet.cell(row_index, purchase_col).value if purchase_col else None
-                        if not any(str(value or "").strip() for value in (card, grader, sport, purchase)):
+                        if not card:
                             continue
                         new_item_id = self._next_raw_item_id(existing_records)
                         sheet.cell(row_index, item_id_col).value = new_item_id
