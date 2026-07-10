@@ -2617,6 +2617,163 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INCOMING_SHEETS_DIR = old_incoming
                 app.WORKING_SHEETS_DIR = old_working
 
+    def test_receive_scan_accepts_duplicate_raw_item_id_and_adds_all_matches(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            add_review_scanned_row = app.CardPipelineApp.add_review_scanned_row
+            _append_review_rows = app.CardPipelineApp._append_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _incoming_raw_matches = app.CardPipelineApp._incoming_raw_matches
+            _incoming_index_candidates = app.CardPipelineApp._incoming_index_candidates
+            _normalize_receive_search_text = app.CardPipelineApp._normalize_receive_search_text
+            _receive_match_to_review_payload = app.CardPipelineApp._receive_match_to_review_payload
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+
+            def refresh_incoming_index(self):
+                self.refresh_count += 1
+
+            def _incoming_title_matches(self, query, limit=25):
+                return []
+
+            def _arm_review_scanner(self):
+                self.armed = True
+
+            def _refresh_table(self, schedule_recommendations=False):
+                self.refreshed = True
+
+        raw_id = "RAW-MIKEY-20260710-0001"
+        dummy = Dummy()
+        dummy.assignment_engine = types.SimpleNamespace(
+            recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("", None, None)
+        )
+        dummy.review_scanning_active = True
+        dummy.review_scan_cert = FieldVar(raw_id)
+        dummy.review_status = FieldVar()
+        dummy.review_rows = []
+        dummy.review_sources = {}
+        dummy.review_sheet_sources = {}
+        dummy.refresh_count = 0
+        dummy.armed = False
+        dummy.refreshed = False
+        dummy.incoming_cert_index = {
+            "raw:caliken.xlsx:cards:2": {
+                "item_id": raw_id,
+                "sheet": "caliken.xlsx",
+                "workbook_sheet": "Cards",
+                "workbook_row": 2,
+                "card_title": "2024 Topps Dynasty Gunnar Henderson Rookie Nike Patch Auto 1/1",
+                "sport": "baseball",
+                "receive_key": "raw:caliken.xlsx:cards:2",
+            },
+            "raw:owen.xlsx:cards:2": {
+                "item_id": raw_id,
+                "sheet": "owen.xlsx",
+                "workbook_sheet": "Cards",
+                "workbook_row": 2,
+                "card_title": "2015 Panini Immaculate Kobe Bryant Auto /60",
+                "sport": "basketball",
+                "receive_key": "raw:owen.xlsx:cards:2",
+            },
+        }
+
+        dummy.add_review_scanned_row()
+
+        self.assertEqual(len(dummy.review_rows), 2)
+        self.assertEqual(dummy.review_rows[0].card_title, "2024 Topps Dynasty Gunnar Henderson Rookie Nike Patch Auto 1/1")
+        self.assertEqual(dummy.review_rows[1].card_title, "2015 Panini Immaculate Kobe Bryant Auto /60")
+        self.assertEqual(dummy.review_sheet_sources[2], "caliken.xlsx")
+        self.assertEqual(dummy.review_sheet_sources[3], "owen.xlsx")
+        self.assertIn("Matched 2 incoming row", dummy.review_status.value)
+        self.assertEqual(dummy.review_scan_cert.value, "")
+
+    def test_receive_scan_accepts_card_description_search(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            add_review_scanned_row = app.CardPipelineApp.add_review_scanned_row
+            _append_review_rows = app.CardPipelineApp._append_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _incoming_raw_matches = app.CardPipelineApp._incoming_raw_matches
+            _incoming_index_candidates = app.CardPipelineApp._incoming_index_candidates
+            _normalize_receive_search_text = app.CardPipelineApp._normalize_receive_search_text
+            _incoming_title_matches = app.CardPipelineApp._incoming_title_matches
+            _receive_match_to_review_payload = app.CardPipelineApp._receive_match_to_review_payload
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+
+            def refresh_incoming_index(self):
+                self.refresh_count += 1
+
+            def _arm_review_scanner(self):
+                self.armed = True
+
+            def _refresh_table(self, schedule_recommendations=False):
+                self.refreshed = True
+
+        dummy = Dummy()
+        dummy.assignment_engine = types.SimpleNamespace(
+            recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("", None, None)
+        )
+        dummy.review_scanning_active = True
+        dummy.review_scan_cert = FieldVar("gunnar henderson")
+        dummy.review_status = FieldVar()
+        dummy.review_rows = []
+        dummy.review_sources = {}
+        dummy.review_sheet_sources = {}
+        dummy.refresh_count = 0
+        dummy.armed = False
+        dummy.refreshed = False
+        dummy.incoming_cert_index = {
+            "raw:gunnar.xlsx:cards:2": {
+                "item_id": "RAW-MIKEY-20260710-0007",
+                "sheet": "gunnar.xlsx",
+                "workbook_sheet": "Cards",
+                "workbook_row": 2,
+                "card_title": "2024 Topps Dynasty Gunnar Henderson Rookie Nike Patch Auto 1/1",
+                "sport": "baseball",
+                "receive_key": "raw:gunnar.xlsx:cards:2",
+            },
+            "raw:kobe.xlsx:cards:2": {
+                "item_id": "RAW-MIKEY-20260710-0008",
+                "sheet": "kobe.xlsx",
+                "workbook_sheet": "Cards",
+                "workbook_row": 2,
+                "card_title": "2015 Panini Immaculate Kobe Bryant Auto /60",
+                "sport": "basketball",
+                "receive_key": "raw:kobe.xlsx:cards:2",
+            },
+        }
+
+        dummy.add_review_scanned_row()
+
+        self.assertEqual(len(dummy.review_rows), 1)
+        self.assertEqual(dummy.review_rows[0].item_id, "RAW-MIKEY-20260710-0007")
+        self.assertEqual(dummy.review_rows[0].card_title, "2024 Topps Dynasty Gunnar Henderson Rookie Nike Patch Auto 1/1")
+        self.assertEqual(dummy.review_sheet_sources[2], "gunnar.xlsx")
+        self.assertIn("Matched 1 incoming row", dummy.review_status.value)
+
     def test_receive_barcode_refreshes_stale_match_without_assignment_values(self) -> None:
         class Dummy:
             _append_review_rows = app.CardPipelineApp._append_review_rows
@@ -5266,6 +5423,26 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(team_id, f"RAW-TEAM-{today}-0001")
         self.assertEqual(personal_id, f"RAW-MIKEY-{today}-0001")
         self.assertNotEqual(team_id, personal_id)
+
+    def test_create_raw_ids_skip_live_incoming_sheet_ids(self) -> None:
+        class RawIdDummy:
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _ensure_raw_item_ids_for_rows = app.CardPipelineApp._ensure_raw_item_ids_for_rows
+            _raw_item_id_namespace = lambda self: "MIKEY"
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _live_sheet_raw_item_records(self):
+                today = datetime.now().strftime("%Y%m%d")
+                return [{"item_id": f"RAW-MIKEY-{today}-0001"}]
+
+        today = datetime.now().strftime("%Y%m%d")
+        row = WorkbookRow(excel_row=2, cert_number="", grader="", card_title="Raw New Card", category="baseball")
+
+        RawIdDummy()._ensure_raw_item_ids_for_rows([row])
+
+        self.assertEqual(row.item_id, f"RAW-MIKEY-{today}-0002")
 
     def test_working_sheet_writer_persists_raw_item_id_column(self) -> None:
         with TemporaryDirectory() as tmp:

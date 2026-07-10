@@ -2662,8 +2662,28 @@ class CardPipelineApp(tk.Tk):
                 max_sequence = max(max_sequence, int(suffix))
         return f"{prefix}{max_sequence + 1:04d}"
 
+    def _live_sheet_raw_item_records(self) -> list[dict[str, object]]:
+        records: list[dict[str, object]] = []
+        for folder in (INCOMING_SHEETS_DIR, WORKING_SHEETS_DIR, RECEIVED_SHEETS_DIR):
+            try:
+                paths = sorted(folder.glob("*.xlsx"), key=lambda path: path.name.lower())
+            except Exception:
+                continue
+            for path in paths:
+                try:
+                    rows = read_simple_spreadsheet(path)
+                except Exception:
+                    continue
+                for row in rows:
+                    item_id = str(row.get("item_id") or "").strip()
+                    if item_id.upper().startswith("RAW-"):
+                        records.append({"item_id": item_id})
+        return records
+
     def _ensure_raw_item_ids_for_rows(self, rows: list[WorkbookRow]) -> int:
         existing_records = list(self._load_inventory_ledger())
+        if hasattr(self, "_live_sheet_raw_item_records"):
+            existing_records.extend(self._live_sheet_raw_item_records())
         for row in rows:
             item_id = str(getattr(row, "item_id", "") or "").strip()
             if item_id:
@@ -13266,6 +13286,7 @@ class CardPipelineApp(tk.Tk):
                 cert = scan_to_cert(row.get("cert_number"))
                 candidate = {
                     "item_id": row.get("item_id") or "",
+                    "cert_number": cert,
                     "sheet": path.name,
                     "path": path,
                     "workbook_sheet": row.get("workbook_sheet") or "",
@@ -13408,9 +13429,30 @@ class CardPipelineApp(tk.Tk):
         if not self.review_scanning_active:
             self.review_status.set("Click Enter Receive Scanning Mode before scanning.")
             return
-        cert = scan_to_cert(self.review_scan_cert.get())
+        raw_input = str(self.review_scan_cert.get() or "").strip()
+        cert_candidate = "" if raw_input.upper().startswith("RAW-") else scan_to_cert(raw_input)
+        cert = cert_candidate if re.search(r"\d", cert_candidate) else ""
         if not cert:
-            self.review_status.set("No cert detected. Scan again.")
+            matches: list[dict[str, object]] = []
+            if raw_input.upper().startswith("RAW-"):
+                matches = self._incoming_raw_matches({"item_id": raw_input})
+                if not matches:
+                    self.refresh_incoming_index()
+                    matches = self._incoming_raw_matches({"item_id": raw_input})
+            elif raw_input:
+                matches = self._incoming_title_matches(raw_input)
+                if not matches:
+                    self.refresh_incoming_index()
+                    matches = self._incoming_title_matches(raw_input)
+            if matches:
+                rows = [self._receive_match_to_review_payload(match, "Receive Search") for match in matches]
+                self._append_review_rows(rows)
+                self.review_scan_cert.set("")
+                label = raw_input if len(raw_input) <= 60 else f"{raw_input[:57]}..."
+                self.review_status.set(f"Matched {len(matches)} incoming row(s) for {label}. Ready for next scan.")
+                self._arm_review_scanner()
+                return
+            self.review_status.set("No cert, raw ID, or matching incoming card found. Scan or type again.")
             self._arm_review_scanner()
             return
         self._append_review_rows([
@@ -13565,6 +13607,84 @@ class CardPipelineApp(tk.Tk):
     def _incoming_match(self, cert: str) -> dict[str, object]:
         return self.incoming_cert_index.get(scan_to_cert(cert), {})
 
+    def _incoming_index_candidates(self) -> list[dict[str, object]]:
+        seen: set[str] = set()
+        candidates: list[dict[str, object]] = []
+        for key, candidate in self.incoming_cert_index.items():
+            if not isinstance(candidate, dict):
+                continue
+            candidate_key = str(candidate.get("receive_key") or key or self._receive_row_ref_key(candidate)).strip().lower()
+            if candidate_key in seen:
+                continue
+            seen.add(candidate_key)
+            candidates.append(candidate)
+        return candidates
+
+    def _normalize_receive_search_text(self, value: object) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+    def _incoming_title_matches(self, query: str, limit: int = 25) -> list[dict[str, object]]:
+        normalized_query = self._normalize_receive_search_text(query)
+        if not normalized_query:
+            return []
+        query_tokens = [token for token in re.split(r"[^a-z0-9]+", normalized_query) if token]
+        matches: list[dict[str, object]] = []
+        for candidate in self._incoming_index_candidates():
+            title = self._normalize_receive_search_text(candidate.get("card_title"))
+            if not title:
+                continue
+            if normalized_query in title or (query_tokens and all(token in title for token in query_tokens)):
+                matches.append(candidate)
+                if len(matches) >= limit:
+                    break
+        return matches
+
+    def _incoming_raw_matches(self, row: dict[str, object]) -> list[dict[str, object]]:
+        explicit_key = str(row.get("receive_key") or "").strip().lower()
+        if explicit_key and explicit_key in self.incoming_cert_index:
+            return [self.incoming_cert_index[explicit_key]]
+        item_id = str(row.get("item_id") or "").strip().lower()
+        if item_id:
+            matches = [
+                candidate
+                for candidate in self._incoming_index_candidates()
+                if str(candidate.get("item_id") or "").strip().lower() == item_id
+            ]
+            if matches:
+                return matches
+        sheet_source = Path(str(row.get("sheet_source") or "")).name.strip().lower()
+        title = self._normalize_receive_search_text(row.get("card_title"))
+        if not title:
+            return []
+        matches = []
+        for candidate in self._incoming_index_candidates():
+            if sheet_source and Path(str(candidate.get("sheet") or "")).name.strip().lower() != sheet_source:
+                continue
+            if self._normalize_receive_search_text(candidate.get("card_title")) == title:
+                matches.append(candidate)
+        return matches
+
+    def _receive_match_to_review_payload(self, match: dict[str, object], source: str) -> dict[str, object]:
+        return {
+            "item_id": match.get("item_id") or "",
+            "cert_number": match.get("cert_number") or "",
+            "grader": match.get("grader") or "",
+            "sport": match.get("sport") or match.get("category") or "",
+            "card_title": match.get("card_title") or "",
+            "purchase_price": match.get("purchase_price"),
+            "card_ladder_value": match.get("card_ladder_value"),
+            "card_ladder_comps_average": match.get("card_ladder_comps_average"),
+            "cy_value": match.get("cy_value"),
+            "cy_confidence": match.get("cy_confidence"),
+            "card_ladder_comps": match.get("card_ladder_comps") or "",
+            "best_company": match.get("best_company") or "",
+            "estimated_payout": match.get("estimated_payout"),
+            "sheet_source": match.get("sheet") or "",
+            "receive_key": match.get("receive_key") or self._receive_row_ref_key(match),
+            "source": source,
+            "notes": "Received",
+        }
+
     def _receive_row_ref_key(self, match: dict[str, object]) -> str:
         sheet_name = str(match.get("sheet") or "").strip()
         workbook_sheet = str(match.get("workbook_sheet") or "").strip()
@@ -13577,32 +13697,35 @@ class CardPipelineApp(tk.Tk):
         return f"raw:{sheet_name.lower()}:{workbook_sheet.lower()}:{workbook_row}"
 
     def _incoming_raw_match(self, row: dict[str, object]) -> dict[str, object]:
-        item_id = str(row.get("item_id") or "").strip().lower()
-        if item_id:
-            matches = [
-                candidate
-                for key, candidate in self.incoming_cert_index.items()
-                if str(key).startswith("raw:")
-                and str(candidate.get("item_id") or "").strip().lower() == item_id
-            ]
-            if len(matches) == 1:
-                return matches[0]
-        explicit_key = str(row.get("receive_key") or "").strip().lower()
-        if explicit_key and explicit_key in self.incoming_cert_index:
-            return self.incoming_cert_index[explicit_key]
-        sheet_source = Path(str(row.get("sheet_source") or "")).name.strip().lower()
-        title = re.sub(r"\s+", " ", str(row.get("card_title") or "").strip().lower())
-        if not title:
-            return {}
-        matches: list[dict[str, object]] = []
-        for key, candidate in self.incoming_cert_index.items():
-            if not str(key).startswith("raw:"):
-                continue
-            if sheet_source and Path(str(candidate.get("sheet") or "")).name.strip().lower() != sheet_source:
-                continue
-            candidate_title = re.sub(r"\s+", " ", str(candidate.get("card_title") or "").strip().lower())
-            if candidate_title == title:
-                matches.append(candidate)
+        if not hasattr(self, "_incoming_raw_matches"):
+            explicit_key = str(row.get("receive_key") or "").strip().lower()
+            if explicit_key and explicit_key in self.incoming_cert_index:
+                return self.incoming_cert_index[explicit_key]
+            item_id = str(row.get("item_id") or "").strip().lower()
+            if item_id:
+                matches = [
+                    candidate
+                    for key, candidate in self.incoming_cert_index.items()
+                    if str(key).startswith("raw:")
+                    and str(candidate.get("item_id") or "").strip().lower() == item_id
+                ]
+                if len(matches) == 1:
+                    return matches[0]
+            sheet_source = Path(str(row.get("sheet_source") or "")).name.strip().lower()
+            title = re.sub(r"\s+", " ", str(row.get("card_title") or "").strip().lower())
+            if not title:
+                return {}
+            matches = []
+            for key, candidate in self.incoming_cert_index.items():
+                if not str(key).startswith("raw:"):
+                    continue
+                if sheet_source and Path(str(candidate.get("sheet") or "")).name.strip().lower() != sheet_source:
+                    continue
+                candidate_title = re.sub(r"\s+", " ", str(candidate.get("card_title") or "").strip().lower())
+                if candidate_title == title:
+                    matches.append(candidate)
+            return matches[0] if len(matches) == 1 else {}
+        matches = self._incoming_raw_matches(row)
         return matches[0] if len(matches) == 1 else {}
 
     def _attach_receive_match_to_row(self, row: WorkbookRow, match: dict[str, object]) -> None:
@@ -15583,15 +15706,22 @@ class CardPipelineApp(tk.Tk):
             if self._is_review_row_tree(tree) and (
                 (column == "cert_number" and scan_to_cert(row.cert_number) != previous_cert)
                 or column == "item_id"
+                or (column == "card_title" and not scan_to_cert(row.cert_number) and not row.item_id and clean_value)
             ):
-                match = self._incoming_match(row.cert_number) if scan_to_cert(row.cert_number) else self._incoming_raw_match(
-                    {
+                if scan_to_cert(row.cert_number):
+                    match = self._incoming_match(row.cert_number)
+                else:
+                    raw_match_query = {
                         "item_id": row.item_id,
                         "card_title": row.card_title,
                         "sheet_source": target_sheet_sources.get(excel_row, ""),
-                        "receive_key": "" if column == "item_id" else getattr(row, "_receive_key", ""),
+                        "receive_key": "" if column in {"item_id", "card_title"} else getattr(row, "_receive_key", ""),
                     }
-                )
+                    match = self._incoming_raw_match(raw_match_query)
+                    if not match and column == "card_title":
+                        title_matches = self._incoming_title_matches(row.card_title, limit=2)
+                        if len(title_matches) == 1:
+                            match = title_matches[0]
                 target_sheet_sources[excel_row] = str(match.get("sheet") or "NO SHEET FOUND")
                 if match:
                     self._attach_receive_match_to_row(row, match)
