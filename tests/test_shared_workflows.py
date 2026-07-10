@@ -6637,6 +6637,66 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
+    def test_unattached_photo_picker_hides_stale_linked_state_records(self) -> None:
+        class PhotoPickerDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _inventory_photo_paths = app.CardPipelineApp._inventory_photo_paths
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
+            _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
+            _inventory_photo_state_used_keys = app.CardPipelineApp._inventory_photo_state_used_keys
+            _inventory_unattached_photo_paths = app.CardPipelineApp._inventory_unattached_photo_paths
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            photo = app.INVENTORY_PHOTOS_DIR / "[20260708-0246]-Card[10]-[1]-[].jpg"
+            photo.write_bytes(b"fake image")
+            dummy = PhotoPickerDummy()
+            dummy.app_settings = {}
+            dummy._save_inventory_ledger([])
+            sha = dummy._inventory_photo_file_hash(photo)
+            app.INVENTORY_PHOTO_STATE_PATH.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "photos": {
+                            sha: {
+                                "path": str(Path(tmp) / "missing-phone-album" / photo.name),
+                                "filename": photo.name,
+                                "linked_keys": ["old-cert|old-file.xlsx|mikey"],
+                                "status": "missing_from_album",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                self.assertEqual(dummy._inventory_unattached_photo_paths(), [])
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+
     def test_inventory_sold_archives_unshared_photo_file_for_two_weeks(self) -> None:
         class PhotoSoldDummy:
             _money_value = app.CardPipelineApp._money_value

@@ -6771,13 +6771,60 @@ class CardPipelineApp(tk.Tk):
                         continue
         return used_hashes
 
+    def _inventory_photo_state_used_keys(self) -> tuple[set[str], set[str], set[str]]:
+        state = self._load_inventory_photo_state()
+        photos = state.get("photos") if isinstance(state, dict) else {}
+        if not isinstance(photos, dict):
+            return set(), set(), set()
+        used_names: set[str] = set()
+        used_paths: set[str] = set()
+        used_hashes: set[str] = set()
+        used_statuses = {"linked", "missing_from_album", "archived_from_album"}
+        for sha, record in photos.items():
+            if not isinstance(record, dict):
+                continue
+            status = str(record.get("status") or "").strip()
+            linked_keys = [str(key).strip() for key in (record.get("linked_keys") or []) if str(key).strip()]
+            if status not in used_statuses and not linked_keys:
+                continue
+            sha_text = str(sha or "").strip()
+            if sha_text:
+                used_hashes.add(sha_text)
+            for value in (
+                record.get("path"),
+                record.get("relative_path"),
+                record.get("filename"),
+                record.get("archived_path"),
+                record.get("original_path"),
+            ):
+                text = str(value or "").strip()
+                if not text:
+                    continue
+                used_paths.add(text)
+                try:
+                    path = Path(text).expanduser()
+                    used_names.add(path.name)
+                    used_paths.add(str(path))
+                    if path.exists() and path.is_file():
+                        used_hashes.add(self._inventory_photo_file_hash(path))
+                    try:
+                        used_paths.add(str(path.resolve()))
+                    except Exception:
+                        pass
+                except Exception:
+                    used_names.add(Path(text).name)
+        return used_names, used_paths, used_hashes
+
     def _inventory_unattached_photo_paths(self) -> list[Path]:
         used = self._inventory_photo_used_path_keys()
         used_hashes = self._inventory_photo_used_hashes()
+        state_used_names, state_used_paths, state_used_hashes = self._inventory_photo_state_used_keys()
         paths: list[Path] = []
         seen: set[str] = set()
         for folder in (self._inventory_photo_shared_folder(), self._inventory_photo_source_folder()):
             for path in self._inventory_photo_paths(folder):
+                if path.name in state_used_names:
+                    continue
                 keys = {str(path)}
                 try:
                     keys.add(str(path.resolve()))
@@ -6786,14 +6833,14 @@ class CardPipelineApp(tk.Tk):
                 storage = self._inventory_photo_storage_value(path)
                 if storage:
                     keys.add(storage)
-                if keys & used:
+                if keys & used or keys & state_used_paths:
                     continue
                 unique_key = ""
                 try:
                     unique_key = self._inventory_photo_file_hash(path)
                 except Exception:
                     unique_key = ""
-                if unique_key and unique_key in used_hashes:
+                if unique_key and (unique_key in used_hashes or unique_key in state_used_hashes):
                     continue
                 if not unique_key:
                     unique_key = next(iter(keys))
