@@ -8883,6 +8883,24 @@ class PhotoOcrSpeedTests(unittest.TestCase):
         self.assertTrue(cards[1]["is_graded_slab"])
         self.assertIn("label unreadable", cards[1]["error"])
 
+    def test_bgs_blank_cert_runs_cert_only_fallback(self) -> None:
+        responses = [
+            '{"mode":"crop","is_graded_slab":true,"grading_company":"BGS","cert_number":"","player":"","year":"","set":"","card_number":"","parallel":"","subset":"","attributes":"AUTOGRAPH","grade":"10","category":"","confidence":"high","label_text":"BECKETT 10 AUTOGRAPH"}',
+            '{"mode":"cert_verify","grading_company":"BGS","cert_number":"0010133787","confidence":"medium","label_text":"CERT 0010133787"}',
+        ]
+
+        class Response:
+            def __init__(self, text):
+                self.text = text
+
+        with patch.object(multi_card_extraction, "_prepare_image", return_value=(b"image", "image/jpeg")), \
+                patch.object(multi_card_extraction, "_generate_with_retry", side_effect=[Response(text) for text in responses]):
+            card = multi_card_extraction._identify_crop_sync(object(), "fake-b64")
+
+        self.assertEqual(card["grading_company"], "BGS")
+        self.assertEqual(card["cert_number"], "0010133787")
+        self.assertEqual(card["cert_verified"], "YES")
+
     def test_photo_table_accepts_detected_slab_without_readable_inventory(self) -> None:
         card = {
             "card_index": 2,

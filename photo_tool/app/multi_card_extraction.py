@@ -151,6 +151,9 @@ CROP_CARD_PROMPT = (
     "CGC labels often show CGC text/logo and blue/green/white certification styling. "
     "Do not mark a card PSA just because the slab label is red; read visible company text or use unknown when uncertain. "
     "Normalize cert_number to digits only when possible. "
+    "For BGS/Beckett slabs, spend extra attention on the small certification number printed on the Beckett label, often near a barcode/QR code or CERT/Certification line. "
+    "BGS certs can include leading zeros and are commonly 8 to 10 digits; preserve leading zeros. "
+    "Do not confuse the BGS cert with the overall grade, subgrades, serial numbering, card number, or autograph grade. "
     "For BGS/Beckett slabs, grade must be the overall slab grade from the main grade box only. "
     "Never use BGS subgrades such as Centering, Corners, Edges, Surface, Auto, or Autograph as grade. "
     "If only BGS subgrades are readable and the overall slab grade is not visible, return grade as an empty string and preserve the subgrade text in label_text or attributes. "
@@ -166,7 +169,8 @@ CERT_ONLY_PROMPT = (
     "Only read the main/central slab label in this crop. Ignore neighboring labels, handwritten prices, sticky notes, price stickers, and marker writing. "
     "Read the grading company and the complete certification number printed on the slab label. "
     "For PSA labels, the cert number is usually at the far right or bottom-right of the label; pay special attention to the rightmost digits and do not drop a trailing digit. "
-    "For BGS/Beckett labels, ignore subgrade numbers such as Centering, Corners, Edges, Surface, Auto, and Autograph; this task is cert verification only. "
+    "For BGS/Beckett labels, the cert is usually a small 8 to 10 digit number on the Beckett label, often near a barcode/QR code or CERT/Certification line. "
+    "Preserve leading zeros on BGS certs. Ignore subgrade numbers such as Centering, Corners, Edges, Surface, Auto, and Autograph, and ignore the overall grade/auto grade; this task is cert verification only. "
     "Do not guess. If every digit of the cert is not clearly readable, return an empty cert_number and low confidence. "
     "Return JSON only with this exact shape: "
     '{"mode":"cert_verify","grading_company":str,"cert_number":str,"confidence":str,"label_text":str}. '
@@ -542,6 +546,25 @@ def _identify_crop_sync(gclient: genai.Client, crop_b64: str) -> dict:
 
 def _verify_crop_cert(gclient: genai.Client, crop_b64: str, result: dict) -> None:
     cert = str(result.get("cert_number", "") or "")
+    company = str(result.get("grading_company", "") or "").strip().upper()
+    label_upper = str(result.get("label_text", "") or "").upper()
+    if not cert and (company == "BGS" or "BGS" in label_upper or "BECKETT" in label_upper):
+        try:
+            verification = _verify_cert_only_sync(gclient, crop_b64)
+        except Exception as error:
+            logging.info(f"[bgs cert verification skipped] error={str(error)[:140]}")
+            result["cert_verified"] = ""
+            return
+        verified_cert = "".join(ch for ch in str(verification.get("cert_number", "") or "") if ch.isdigit())
+        verified_company = str(verification.get("grading_company", "") or "").strip().upper()
+        company_ok = not verified_company or verified_company == "UNKNOWN" or verified_company == company
+        if verified_cert and company_ok:
+            result["cert_number"] = verified_cert
+            result["cert_verified"] = "YES"
+            result["confidence"] = "medium" if result.get("confidence") == "low" else result.get("confidence", "medium")
+        else:
+            result["cert_verified"] = ""
+        return
     if not cert:
         result["cert_verified"] = ""
         return
@@ -555,7 +578,6 @@ def _verify_crop_cert(gclient: genai.Client, crop_b64: str, result: dict) -> Non
 
     verified_cert = "".join(ch for ch in str(verification.get("cert_number", "") or "") if ch.isdigit())
     verified_company = str(verification.get("grading_company", "") or "").strip().upper()
-    company = str(result.get("grading_company", "") or "").strip().upper()
     company_ok = not verified_company or verified_company == "UNKNOWN" or verified_company == company
     rotated_cert = ""
     rotated_company = ""
