@@ -13126,7 +13126,8 @@ class CardPipelineApp(tk.Tk):
                     record["removed_at"] = datetime.now().isoformat(timespec="seconds")
             rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
             keys_by_cert = self._active_inventory_keys_by_cert(rows)
-            records_by_key = {str(record.get("inventory_key") or ""): record for record in rows if str(record.get("status") or "").lower() == "active"}
+            active_records = [record for record in rows if str(record.get("status") or "").lower() == "active"]
+            records_by_key = {str(record.get("inventory_key") or ""): record for record in active_records}
             sold_certs = self._sold_inventory_cert_numbers()
             last_background_status = 0.0
             for index, image in enumerate(images, start=1):
@@ -13144,11 +13145,21 @@ class CardPipelineApp(tk.Tk):
                 image_path = Path(str(image.get("path") or ""))
                 can_skip = getattr(self, "_inventory_photo_scan_can_skip", None)
                 sold_cert_skip = self._inventory_photo_state_matches_sold_cert(existing, sold_certs)
-                if (callable(can_skip) and can_skip(existing, records_by_key, image_path)) or sold_cert_skip:
+                attached_records = [record for record in active_records if self._inventory_record_references_photo(record, image_path)]
+                if (callable(can_skip) and can_skip(existing, records_by_key, image_path)) or sold_cert_skip or attached_records:
                     skipped += 1
                     existing["last_seen"] = datetime.now().isoformat(timespec="seconds")
                     if sold_cert_skip:
                         existing["status"] = "sold_inventory"
+                    elif attached_records:
+                        existing["status"] = "linked"
+                        existing["linked_keys"] = sorted(
+                            {
+                                str(record.get("inventory_key") or "")
+                                for record in attached_records
+                                if str(record.get("inventory_key") or "").strip()
+                            }
+                        )
                     photos[sha] = existing
                     self._save_inventory_photo_state(state)
                     continue

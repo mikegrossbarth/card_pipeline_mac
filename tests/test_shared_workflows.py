@@ -6410,10 +6410,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             linked_photo = app.INVENTORY_PHOTOS_DIR / "linked.jpg"
             stale_linked_photo = app.INVENTORY_PHOTOS_DIR / "stale-linked.jpg"
             sold_photo = app.INVENTORY_PHOTOS_DIR / "sold.jpg"
+            attached_stale_photo = app.INVENTORY_PHOTOS_DIR / "attached-stale.jpg"
             retry_photo.write_bytes(b"retry image")
             linked_photo.write_bytes(b"linked image")
             stale_linked_photo.write_bytes(b"stale linked image")
             sold_photo.write_bytes(b"sold image")
+            attached_stale_photo.write_bytes(b"attached stale image")
             dummy = PhotoDummy()
             dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
             dummy.app_settings = {}
@@ -6421,12 +6423,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy.events = __import__("queue").Queue()
             retry_record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "12345678", "card_title": "Retry Card", "status": "Active"})
             linked_record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "87654321", "card_title": "Linked Card", "status": "Active", "photo_paths": [str(linked_photo)]})
-            dummy._save_inventory_ledger([retry_record, linked_record])
+            attached_stale_record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "22222222", "card_title": "Already Attached", "status": "Active", "photo_paths": [str(attached_stale_photo)]})
+            dummy._save_inventory_ledger([retry_record, linked_record, attached_stale_record])
             dummy._save_profit_ledger([{"cert_number": "55555555", "card_title": "Sold Card", "sale_price": 20}])
             retry_sha = dummy._inventory_photo_file_hash(retry_photo)
             linked_sha = dummy._inventory_photo_file_hash(linked_photo)
             stale_linked_sha = dummy._inventory_photo_file_hash(stale_linked_photo)
             sold_sha = dummy._inventory_photo_file_hash(sold_photo)
+            attached_stale_sha = dummy._inventory_photo_file_hash(attached_stale_photo)
             dummy._save_inventory_photo_state(
                 {
                     "version": 1,
@@ -6435,6 +6439,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                         linked_sha: {"filename": linked_photo.name, "relative_path": linked_photo.name, "cards": [{"cert_number": "87654321"}], "certs": ["87654321"], "linked_keys": [linked_record["inventory_key"]], "status": "linked"},
                         stale_linked_sha: {"filename": stale_linked_photo.name, "relative_path": stale_linked_photo.name, "cards": [{"cert_number": "11111111"}], "certs": ["11111111"], "linked_keys": ["old-key"], "status": "missing_from_album"},
                         sold_sha: {"filename": sold_photo.name, "relative_path": sold_photo.name, "cards": [{"cert_number": "55555555"}], "certs": ["55555555"], "linked_keys": [], "status": "no_matching_inventory"},
+                        attached_stale_sha: {"filename": attached_stale_photo.name, "relative_path": attached_stale_photo.name, "cards": [{"cert_number": "22222222"}], "certs": ["22222222"], "linked_keys": [], "status": "no_matching_inventory"},
                     },
                 }
             )
@@ -6453,6 +6458,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertIn("last_seen", state["photos"][stale_linked_sha])
                 self.assertEqual(state["photos"][sold_sha]["status"], "sold_inventory")
                 self.assertIn("last_seen", state["photos"][sold_sha])
+                self.assertEqual(state["photos"][attached_stale_sha]["status"], "linked")
+                self.assertEqual(state["photos"][attached_stale_sha]["linked_keys"], [attached_stale_record["inventory_key"]])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
