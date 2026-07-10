@@ -6750,6 +6750,40 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
+    def test_create_photo_ocr_rescues_single_bgs_cert_from_full_photo(self) -> None:
+        class PhotoCreateDummy:
+            _inventory_photo_rescue_single_bgs_cert = app.CardPipelineApp._inventory_photo_rescue_single_bgs_cert
+            _photo_card_to_row = app.CardPipelineApp._photo_card_to_row
+            _photo_card_has_inventory = app.CardPipelineApp._photo_card_has_inventory
+            _photo_scan_worker = app.CardPipelineApp._photo_scan_worker
+
+        class Verification:
+            def get(self, key, default=None):
+                return {"cert_number": "0010133787", "grading_company": "BGS", "label_text": "CERT 0010133787"}.get(key, default)
+
+        with TemporaryDirectory() as tmp:
+            old_verify = app._verify_cert_only_sync
+            photo = Path(tmp) / "kobe-bgs.jpg"
+            photo.write_bytes(b"fake image")
+            dummy = PhotoCreateDummy()
+            dummy.photo_paths = [photo]
+            dummy.photo_client = object()
+            dummy.events = __import__("queue").Queue()
+            try:
+                app._verify_cert_only_sync = lambda _client, _image_b64: Verification()
+                with patch.object(app, "identify_cards_sync", return_value=[{"grading_company": "BGS", "cert_number": "", "label_text": "BECKETT 10 AUTOGRAPH", "grade": "10"}]):
+                    dummy._photo_scan_worker()
+                rows = []
+                while not dummy.events.empty():
+                    event, payload = dummy.events.get()
+                    if event == "photo_rows":
+                        rows.extend(payload)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["cert_number"], "0010133787")
+                self.assertEqual(rows[0]["grader"], "BGS")
+            finally:
+                app._verify_cert_only_sync = old_verify
+
     def test_unattached_photo_picker_hides_stale_linked_state_records(self) -> None:
         class PhotoPickerDummy:
             _money_value = app.CardPipelineApp._money_value

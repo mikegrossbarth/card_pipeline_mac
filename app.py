@@ -3485,6 +3485,7 @@ class CardPipelineApp(tk.Tk):
             row = self._mobile_single_card_quick_read(client, mime_type, image_bytes)
             if row is None:
                 cards = identify_cards_sync(client, image_b64)
+                self._inventory_photo_rescue_single_bgs_cert(cards, image_b64, client=client)
                 rows = [
                     self._photo_card_to_row(Path("mobile-photo.jpg"), card)
                     for card in cards
@@ -12455,6 +12456,7 @@ class CardPipelineApp(tk.Tk):
                         ("photo_status", f"Scanning {i}/{n}: {p.name} - {message}")
                     ),
                 )
+                self._inventory_photo_rescue_single_bgs_cert(cards, image_b64, client=self.photo_client)
                 rows = [self._photo_card_to_row(path, card) for card in cards if self._photo_card_has_inventory(card)]
                 detected_total += len(rows)
                 self.events.put(("photo_rows", rows))
@@ -12738,7 +12740,7 @@ class CardPipelineApp(tk.Tk):
                     certs.add(cert)
         return certs
 
-    def _inventory_photo_rescue_single_bgs_cert(self, cards: list[dict], image_b64: str) -> set[str]:
+    def _inventory_photo_rescue_single_bgs_cert(self, cards: list[dict], image_b64: str, client: object | None = None) -> set[str]:
         if _verify_cert_only_sync is None or len(cards) != 1 or not isinstance(cards[0], dict):
             return set()
         card = cards[0]
@@ -12748,8 +12750,11 @@ class CardPipelineApp(tk.Tk):
         label_text = str(card.get("label_text") or "")
         if company != "BGS" and "BGS" not in label_text.upper() and "BECKETT" not in label_text.upper():
             return set()
+        ocr_client = client or getattr(self, "inventory_photo_client", None) or getattr(self, "photo_client", None)
+        if ocr_client is None:
+            return set()
         try:
-            verification = _verify_cert_only_sync(self.inventory_photo_client, image_b64)
+            verification = _verify_cert_only_sync(ocr_client, image_b64)
         except Exception as error:
             app_debug_log(f"BGS full-photo cert rescue skipped: {error}")
             return set()
@@ -13481,6 +13486,7 @@ class CardPipelineApp(tk.Tk):
                         ("review_status", f"Scanning {i}/{n}: {p.name} - {message}")
                     ),
                 )
+                self._inventory_photo_rescue_single_bgs_cert(cards, image_b64, client=self.photo_client)
                 rows = [self._photo_card_to_review_row(path, card) for card in cards if self._photo_card_has_inventory(card)]
                 detected_total += len(rows)
                 self.events.put(("review_rows", rows))
