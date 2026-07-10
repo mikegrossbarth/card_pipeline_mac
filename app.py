@@ -733,6 +733,7 @@ BUTTON_TOOLTIPS = {
     "run all comps": "Run selected comp sources for the loaded rows.",
     "stop run": "Stop the active comp run after the current work finishes.",
     "clear comp rows": "Clear the Comp table from the screen without changing source sheets.",
+    "add row": "Add a blank editable row to the loaded Comp sheet. Save back to persist it.",
     "mark received in sheets": "Mark scanned or loaded receive rows as received in their matching sheets.",
     "refresh incoming index": "Rebuild the lookup index from Incoming and Working sheets.",
     "load": "Load the selected sheet.",
@@ -829,6 +830,7 @@ class CardPipelineApp(tk.Tk):
         self.intake_sheet_sources: dict[int, str] = {}
         self.row_sources: dict[int, str] = {}
         self.comp_sheet_sources: dict[int, str] = {}
+        self.loaded_comp_sheet_label = ""
         self.review_rows: list[WorkbookRow] = []
         self.review_sources: dict[int, str] = {}
         self.review_sheet_sources: dict[int, str] = {}
@@ -1596,6 +1598,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(comp_actions, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(comp_actions, text="Add Row", command=self.add_comp_row, style="Soft.TButton").pack(side=tk.LEFT)
         self.comp_scope_combo = ttk.Combobox(
             comp_options,
             textvariable=self.comp_scope_label,
@@ -6639,6 +6642,7 @@ class CardPipelineApp(tk.Tk):
         menu.add_command(label="Copy Cell", command=lambda row=row_id, column=column_id: self.copy_tree_cell_value(self.comp_tree, row, column, "comp cell"))
         menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_tree_row_values(self.comp_tree, row, "comp row"))
         menu.add_separator()
+        menu.add_command(label="Add Row", command=self.add_comp_row)
         menu.add_command(label="Delete Selected", command=self.delete_selected_comp_rows)
         try:
             menu.tk_popup(event.x_root, event.y_root)
@@ -9700,7 +9704,8 @@ class CardPipelineApp(tk.Tk):
             for name in self.home_sheet_paths.get(kind, {})
             if self._home_sheet_matches_person_filter(self._home_sheet_key(kind, name))
         ]
-        return self._sorted_home_sheet_names(kind, names)
+        sorter = getattr(self, "_sorted_home_sheet_names", None)
+        return sorter(kind, names) if callable(sorter) else sorted(names, key=lambda name: name.lower())
 
     def _sorted_home_sheet_names(self, kind: str, names: list[str]) -> list[str]:
         mode = self.home_sheet_sort_var.get().strip().lower() if hasattr(self, "home_sheet_sort_var") else "date created"
@@ -13379,7 +13384,8 @@ class CardPipelineApp(tk.Tk):
                 [*INCOMING_SHEETS_DIR.glob("*.xlsx"), *WORKING_SHEETS_DIR.glob("*.xlsx")],
                 key=lambda path: (path.parent.name.lower(), path.name.lower()),
             )
-            raw_id_result = self._ensure_raw_item_ids_in_sheet_paths(paths)
+            ensure_raw_ids = getattr(self, "_ensure_raw_item_ids_in_sheet_paths", None)
+            raw_id_result = ensure_raw_ids(paths) if callable(ensure_raw_ids) else {"ids_added": 0}
         except Exception as error:
             self.incoming_cert_index = {}
             self.review_status.set(f"Incoming sheets unavailable: {error}")
@@ -14418,6 +14424,7 @@ class CardPipelineApp(tk.Tk):
         self.comp_sheet_sources = {}
         self.pending_comp_assignment_row_ids = set()
         self.selected_working_sheet.set("")
+        self.loaded_comp_sheet_label = ""
         self.comp_output_saved = True
         self._cancel_cell_edit()
         try:
@@ -14711,8 +14718,9 @@ class CardPipelineApp(tk.Tk):
         self.row_sources = sources
         self.comp_sheet_sources = {}
         self.comp_output_saved = True
+        self.loaded_comp_sheet_label = label or self._comp_sheet_label(stage, name)
         self._refresh_table(schedule_recommendations=any(row.card_ladder_comps_average is not None for row in workbook_rows))
-        self.selected_working_sheet.set(label or self._comp_sheet_label(stage, name))
+        self.selected_working_sheet.set(self.loaded_comp_sheet_label)
         self._select_working_sheet_in_list()
         self.status_var.set(f"Loaded {stage.lower()} sheet: {name}")
 
@@ -14767,6 +14775,41 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(f"Deleted {deleted} comp row(s). Save back to source sheet to persist.")
         else:
             self.status_var.set("Select comp rows to delete.")
+
+    def add_comp_row(self) -> None:
+        label = str(getattr(self, "loaded_comp_sheet_label", "") or "").strip()
+        if not label:
+            messagebox.showinfo("No comp sheet loaded", "Load an incoming or working sheet in the Comp tab before adding rows.")
+            return
+        stage, name, path = self._comp_sheet_info(label)
+        if not path:
+            messagebox.showinfo("No source sheet", "Load an incoming or working sheet in the Comp tab before adding rows.")
+            return
+        with self.state.lock:
+            rows = list(self.state.rows)
+            excel_row = max((int(getattr(row, "excel_row", 1) or 1) for row in rows), default=1) + 1
+            rows.append(
+                WorkbookRow(
+                    excel_row=excel_row,
+                    cert_number="",
+                    card_title="",
+                    grader="",
+                    status="Needs setup",
+                )
+            )
+            self.state.set_rows(rows)
+        self.row_sources[excel_row] = name or path.name
+        self.comp_sheet_sources.pop(excel_row, None)
+        self.comp_output_saved = False
+        self._cancel_cell_edit()
+        self._refresh_comp_table(schedule_recommendations=False)
+        try:
+            self.comp_tree.selection_set(str(excel_row))
+            self.comp_tree.focus(str(excel_row))
+            self.comp_tree.see(str(excel_row))
+        except tk.TclError:
+            pass
+        self.status_var.set("Added blank comp row. Edit it, then Save Back to Source Sheet to persist.")
 
     def _append_rows(self, rows: list[dict[str, object]]) -> list[int]:
         existing = list(self.intake_rows)
