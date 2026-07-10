@@ -5505,6 +5505,61 @@ class CardPipelineApp(tk.Tk):
             self._append_activity("Inventory Photo Archive", f"Archived {len(archived_paths)} inventory photo file(s) for {DELETED_ARCHIVE_RETENTION_DAYS} days.", {"paths": archived_paths[:20]})
         return len(archived_paths)
 
+    def _restore_inventory_photo_files_for_records(self, records: list[dict[str, object]]) -> int:
+        if not records or not DELETED_INVENTORY_PHOTOS_DIR.exists():
+            return 0
+        metadata_by_original: dict[str, dict[str, object]] = {}
+        for metadata_path in DELETED_INVENTORY_PHOTOS_DIR.rglob("*.archive.json"):
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            original = str(metadata.get("original_path") or "").strip()
+            archive = str(metadata.get("archive_path") or "").strip()
+            if original and archive:
+                metadata_by_original[original] = metadata
+                try:
+                    metadata_by_original[str(Path(original).expanduser().resolve())] = metadata
+                except Exception:
+                    pass
+        restored = 0
+        restored_paths: list[str] = []
+        for record in records:
+            for path_value in record.get("photo_paths") or []:
+                candidates = self._inventory_photo_path_candidates(path_value)
+                if any(candidate.exists() for candidate in candidates):
+                    continue
+                metadata = None
+                for candidate in candidates:
+                    metadata = metadata_by_original.get(str(candidate))
+                    if metadata is not None:
+                        break
+                    try:
+                        metadata = metadata_by_original.get(str(candidate.resolve()))
+                    except Exception:
+                        metadata = None
+                    if metadata is not None:
+                        break
+                if metadata is None:
+                    continue
+                original_path = Path(str(metadata.get("original_path") or "")).expanduser()
+                archive_path = Path(str(metadata.get("archive_path") or "")).expanduser()
+                if not archive_path.exists() or original_path.exists():
+                    continue
+                try:
+                    original_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(archive_path), str(original_path))
+                    metadata_path = self._deleted_archive_metadata_path(archive_path)
+                    if metadata_path.exists():
+                        metadata_path.unlink()
+                    restored += 1
+                    restored_paths.append(str(original_path))
+                except Exception:
+                    continue
+        if restored:
+            self._append_activity("Inventory Photo Restore", f"Restored {restored} archived inventory photo file(s).", {"paths": restored_paths[:20]})
+        return restored
+
     def _mark_inventory_record_sold(self, inventory_key: str, company: str, sale_price: float) -> int:
         if not inventory_key:
             return 0
@@ -5514,6 +5569,9 @@ class CardPipelineApp(tk.Tk):
         changed = len(ledger) - len(kept)
         if changed:
             self._save_inventory_ledger(kept)
+            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
+            if callable(cleanup):
+                cleanup(removed, kept)
         return changed
 
     def _general_sold_sheet_name(self, person: str) -> str:
@@ -8839,6 +8897,9 @@ class CardPipelineApp(tk.Tk):
                         }
                     )
                 )
+            restore_photos = getattr(self, "_restore_inventory_photo_files_for_records", None)
+            if callable(restore_photos):
+                restore_photos(inventory_records)
             self.add_inventory_records(inventory_records)
         self.refresh_profit_tab()
         self.refresh_inventory_tab()

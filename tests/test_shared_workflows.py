@@ -6007,8 +6007,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             record_profit_sales = app.CardPipelineApp.record_profit_sales
             refresh_profit_tab = lambda self: None
             _append_activity = lambda self, action, summary, details=None: None
-            def _delete_inventory_photo_files_for_removed_records(self, *args, **kwargs):
-                raise AssertionError("Sold inventory photos should remain available for refunds.")
 
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR
@@ -6695,6 +6693,52 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+                app.DELETED_ARCHIVE_DIR = old_deleted_archive
+                app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
+
+    def test_refund_restore_brings_archived_inventory_photo_back(self) -> None:
+        class PhotoRestoreDummy:
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
+            _restore_inventory_photo_files_for_records = app.CardPipelineApp._restore_inventory_photo_files_for_records
+            _append_activity = lambda self, action, summary, details=None: None
+
+        with TemporaryDirectory() as tmp:
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_deleted_archive = app.DELETED_ARCHIVE_DIR
+            old_deleted_photos = app.DELETED_INVENTORY_PHOTOS_DIR
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
+            app.DELETED_ARCHIVE_DIR = Path(tmp) / "DELETED ARCHIVE"
+            app.DELETED_INVENTORY_PHOTOS_DIR = app.DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
+            archive_dir = app.DELETED_INVENTORY_PHOTOS_DIR / "2026-07-10"
+            archive_dir.mkdir(parents=True)
+            original = app.INVENTORY_PHOTOS_DIR / "card.jpg"
+            archived = archive_dir / "card.jpg"
+            archived.write_bytes(b"fake image")
+            archived.with_name("card.jpg.archive.json").write_text(
+                json.dumps(
+                    {
+                        "original_path": str(original),
+                        "archive_path": str(archived),
+                        "reason": "inventory_photo_removed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                dummy = PhotoRestoreDummy()
+                dummy.app_settings = {}
+                restored = dummy._restore_inventory_photo_files_for_records([{"photo_paths": [str(original)]}])
+
+                self.assertEqual(restored, 1)
+                self.assertTrue(original.exists())
+                self.assertFalse(archived.exists())
+                self.assertFalse(archived.with_name("card.jpg.archive.json").exists())
+            finally:
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.DELETED_ARCHIVE_DIR = old_deleted_archive
                 app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
 
