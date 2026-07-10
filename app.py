@@ -12932,13 +12932,17 @@ class CardPipelineApp(tk.Tk):
         return False
 
     def _inventory_photo_scan_can_skip(self, existing: dict[str, object], records_by_key: dict[str, dict[str, object]], photo_path: Path) -> bool:
-        if not existing or str(existing.get("status") or "") != "linked":
+        if not existing:
             return False
-        for key in existing.get("linked_keys") or []:
+        status = str(existing.get("status") or "").strip()
+        linked_keys = [str(key).strip() for key in (existing.get("linked_keys") or []) if str(key).strip()]
+        if status not in {"linked", "missing_from_album", "archived_from_album"} or not linked_keys:
+            return False
+        for key in linked_keys:
             record = records_by_key.get(str(key))
             if record and self._inventory_record_references_photo(record, photo_path):
                 return True
-        return False
+        return True
 
     def _inventory_photo_capture_group_key(self, image: dict[str, object]) -> str:
         stem = Path(str(image.get("relative_path") or image.get("filename") or "")).stem.strip()

@@ -6392,8 +6392,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
             retry_photo = app.INVENTORY_PHOTOS_DIR / "retry.jpg"
             linked_photo = app.INVENTORY_PHOTOS_DIR / "linked.jpg"
+            stale_linked_photo = app.INVENTORY_PHOTOS_DIR / "stale-linked.jpg"
             retry_photo.write_bytes(b"retry image")
             linked_photo.write_bytes(b"linked image")
+            stale_linked_photo.write_bytes(b"stale linked image")
             dummy = PhotoDummy()
             dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
             dummy.app_settings = {}
@@ -6404,12 +6406,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy._save_inventory_ledger([retry_record, linked_record])
             retry_sha = dummy._inventory_photo_file_hash(retry_photo)
             linked_sha = dummy._inventory_photo_file_hash(linked_photo)
+            stale_linked_sha = dummy._inventory_photo_file_hash(stale_linked_photo)
             dummy._save_inventory_photo_state(
                 {
                     "version": 1,
                     "photos": {
                         retry_sha: {"filename": retry_photo.name, "relative_path": retry_photo.name, "cards": [{"cert_number": "99999999"}], "certs": ["99999999"], "linked_keys": [], "status": "no_matching_inventory"},
                         linked_sha: {"filename": linked_photo.name, "relative_path": linked_photo.name, "cards": [{"cert_number": "87654321"}], "certs": ["87654321"], "linked_keys": [linked_record["inventory_key"]], "status": "linked"},
+                        stale_linked_sha: {"filename": stale_linked_photo.name, "relative_path": stale_linked_photo.name, "cards": [{"cert_number": "11111111"}], "certs": ["11111111"], "linked_keys": ["old-key"], "status": "missing_from_album"},
                     },
                 }
             )
@@ -6424,6 +6428,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
                 self.assertEqual(state["photos"][retry_sha]["status"], "linked")
                 self.assertEqual(state["photos"][retry_sha]["certs"], ["12345678"])
+                self.assertEqual(state["photos"][stale_linked_sha]["status"], "missing_from_album")
+                self.assertIn("last_seen", state["photos"][stale_linked_sha])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
