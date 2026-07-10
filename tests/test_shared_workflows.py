@@ -6069,8 +6069,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _profit_record_key = app.CardPipelineApp._profit_record_key
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
@@ -6128,9 +6132,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class PhotoDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _profit_record_key = app.CardPipelineApp._profit_record_key
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
@@ -6352,9 +6360,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class PhotoDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _profit_record_key = app.CardPipelineApp._profit_record_key
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
@@ -6376,6 +6388,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _inventory_record_references_photo = app.CardPipelineApp._inventory_record_references_photo
             _inventory_photo_scan_can_skip = app.CardPipelineApp._inventory_photo_scan_can_skip
+            _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
+            _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
             _inventory_photo_base64 = lambda self, path: "stub"
             _inventory_photo_scan_group_nearby_unmatched = app.CardPipelineApp._inventory_photo_scan_group_nearby_unmatched
             _inventory_photo_scan_worker = app.CardPipelineApp._inventory_photo_scan_worker
@@ -6383,19 +6397,23 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR
             old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
             old_photo_dir = app.INVENTORY_PHOTOS_DIR
             old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
             app.CARD_PIPELINE_DIR = Path(tmp)
             app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
             app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
             app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
             app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
             retry_photo = app.INVENTORY_PHOTOS_DIR / "retry.jpg"
             linked_photo = app.INVENTORY_PHOTOS_DIR / "linked.jpg"
             stale_linked_photo = app.INVENTORY_PHOTOS_DIR / "stale-linked.jpg"
+            sold_photo = app.INVENTORY_PHOTOS_DIR / "sold.jpg"
             retry_photo.write_bytes(b"retry image")
             linked_photo.write_bytes(b"linked image")
             stale_linked_photo.write_bytes(b"stale linked image")
+            sold_photo.write_bytes(b"sold image")
             dummy = PhotoDummy()
             dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
             dummy.app_settings = {}
@@ -6404,9 +6422,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             retry_record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "12345678", "card_title": "Retry Card", "status": "Active"})
             linked_record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "87654321", "card_title": "Linked Card", "status": "Active", "photo_paths": [str(linked_photo)]})
             dummy._save_inventory_ledger([retry_record, linked_record])
+            dummy._save_profit_ledger([{"cert_number": "55555555", "card_title": "Sold Card", "sale_price": 20}])
             retry_sha = dummy._inventory_photo_file_hash(retry_photo)
             linked_sha = dummy._inventory_photo_file_hash(linked_photo)
             stale_linked_sha = dummy._inventory_photo_file_hash(stale_linked_photo)
+            sold_sha = dummy._inventory_photo_file_hash(sold_photo)
             dummy._save_inventory_photo_state(
                 {
                     "version": 1,
@@ -6414,6 +6434,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                         retry_sha: {"filename": retry_photo.name, "relative_path": retry_photo.name, "cards": [{"cert_number": "99999999"}], "certs": ["99999999"], "linked_keys": [], "status": "no_matching_inventory"},
                         linked_sha: {"filename": linked_photo.name, "relative_path": linked_photo.name, "cards": [{"cert_number": "87654321"}], "certs": ["87654321"], "linked_keys": [linked_record["inventory_key"]], "status": "linked"},
                         stale_linked_sha: {"filename": stale_linked_photo.name, "relative_path": stale_linked_photo.name, "cards": [{"cert_number": "11111111"}], "certs": ["11111111"], "linked_keys": ["old-key"], "status": "missing_from_album"},
+                        sold_sha: {"filename": sold_photo.name, "relative_path": sold_photo.name, "cards": [{"cert_number": "55555555"}], "certs": ["55555555"], "linked_keys": [], "status": "no_matching_inventory"},
                     },
                 }
             )
@@ -6430,9 +6451,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(state["photos"][retry_sha]["certs"], ["12345678"])
                 self.assertEqual(state["photos"][stale_linked_sha]["status"], "missing_from_album")
                 self.assertIn("last_seen", state["photos"][stale_linked_sha])
+                self.assertEqual(state["photos"][sold_sha]["status"], "sold_inventory")
+                self.assertIn("last_seen", state["photos"][sold_sha])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
@@ -6647,9 +6671,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class PhotoPickerDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _profit_record_key = app.CardPipelineApp._profit_record_key
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
             _inventory_photo_paths = app.CardPipelineApp._inventory_photo_paths
@@ -6661,15 +6689,19 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
             _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
             _inventory_photo_state_used_keys = app.CardPipelineApp._inventory_photo_state_used_keys
+            _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
+            _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
             _inventory_unattached_photo_paths = app.CardPipelineApp._inventory_unattached_photo_paths
 
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR
             old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
             old_photo_dir = app.INVENTORY_PHOTOS_DIR
             old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
             app.CARD_PIPELINE_DIR = Path(tmp)
             app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
             app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
             app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
             app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
@@ -6678,6 +6710,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy = PhotoPickerDummy()
             dummy.app_settings = {}
             dummy._save_inventory_ledger([])
+            dummy._save_profit_ledger([{"cert_number": "65774395", "card_title": "Sold Card", "sale_price": 20}])
             sha = dummy._inventory_photo_file_hash(photo)
             app.INVENTORY_PHOTO_STATE_PATH.write_text(
                 json.dumps(
@@ -6687,8 +6720,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                             sha: {
                                 "path": str(Path(tmp) / "missing-phone-album" / photo.name),
                                 "filename": photo.name,
-                                "linked_keys": ["old-cert|old-file.xlsx|mikey"],
-                                "status": "missing_from_album",
+                                "certs": ["65774395"],
+                                "linked_keys": [],
+                                "status": "no_matching_inventory",
                             }
                         },
                     }
@@ -6700,6 +6734,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 

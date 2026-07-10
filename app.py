@@ -6815,10 +6815,32 @@ class CardPipelineApp(tk.Tk):
                     used_names.add(Path(text).name)
         return used_names, used_paths, used_hashes
 
+    def _sold_inventory_cert_numbers(self) -> set[str]:
+        certs: set[str] = set()
+        for record in self._load_profit_ledger():
+            normalized = self._normalize_profit_record(record)
+            cert = scan_to_cert(normalized.get("cert_number"))
+            if cert:
+                certs.add(cert)
+        return certs
+
+    def _inventory_photo_state_matches_sold_cert(self, existing: dict[str, object], sold_certs: set[str] | None = None) -> bool:
+        if not existing:
+            return False
+        sold_certs = sold_certs if sold_certs is not None else self._sold_inventory_cert_numbers()
+        if not sold_certs:
+            return False
+        photo_certs = {scan_to_cert(cert) for cert in (existing.get("certs") or []) if scan_to_cert(cert)}
+        return bool(photo_certs & sold_certs)
+
     def _inventory_unattached_photo_paths(self) -> list[Path]:
         used = self._inventory_photo_used_path_keys()
         used_hashes = self._inventory_photo_used_hashes()
         state_used_names, state_used_paths, state_used_hashes = self._inventory_photo_state_used_keys()
+        sold_certs = self._sold_inventory_cert_numbers()
+        state = self._load_inventory_photo_state()
+        photos = state.get("photos") if isinstance(state, dict) else {}
+        photos = photos if isinstance(photos, dict) else {}
         paths: list[Path] = []
         seen: set[str] = set()
         for folder in (self._inventory_photo_shared_folder(), self._inventory_photo_source_folder()):
@@ -6841,6 +6863,9 @@ class CardPipelineApp(tk.Tk):
                 except Exception:
                     unique_key = ""
                 if unique_key and (unique_key in used_hashes or unique_key in state_used_hashes):
+                    continue
+                existing_state = photos.get(unique_key) if unique_key and isinstance(photos.get(unique_key), dict) else {}
+                if existing_state and self._inventory_photo_state_matches_sold_cert(existing_state, sold_certs):
                     continue
                 if not unique_key:
                     unique_key = next(iter(keys))
@@ -13102,6 +13127,7 @@ class CardPipelineApp(tk.Tk):
             rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
             keys_by_cert = self._active_inventory_keys_by_cert(rows)
             records_by_key = {str(record.get("inventory_key") or ""): record for record in rows if str(record.get("status") or "").lower() == "active"}
+            sold_certs = self._sold_inventory_cert_numbers()
             last_background_status = 0.0
             for index, image in enumerate(images, start=1):
                 image_label = str(image.get("relative_path") or image.get("filename") or "photo")
@@ -13117,9 +13143,12 @@ class CardPipelineApp(tk.Tk):
                 existing = photos.get(sha) if isinstance(photos.get(sha), dict) else {}
                 image_path = Path(str(image.get("path") or ""))
                 can_skip = getattr(self, "_inventory_photo_scan_can_skip", None)
-                if callable(can_skip) and can_skip(existing, records_by_key, image_path):
+                sold_cert_skip = self._inventory_photo_state_matches_sold_cert(existing, sold_certs)
+                if (callable(can_skip) and can_skip(existing, records_by_key, image_path)) or sold_cert_skip:
                     skipped += 1
                     existing["last_seen"] = datetime.now().isoformat(timespec="seconds")
+                    if sold_cert_skip:
+                        existing["status"] = "sold_inventory"
                     photos[sha] = existing
                     self._save_inventory_photo_state(state)
                     continue
