@@ -2774,6 +2774,76 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.review_sheet_sources[2], "gunnar.xlsx")
         self.assertIn("Matched 1 incoming row", dummy.review_status.value)
 
+    def test_receive_autocomplete_labels_and_resolves_selected_match(self) -> None:
+        class Dummy:
+            _incoming_index_candidates = app.CardPipelineApp._incoming_index_candidates
+            _incoming_title_matches = app.CardPipelineApp._incoming_title_matches
+            _normalize_receive_search_text = app.CardPipelineApp._normalize_receive_search_text
+            _receive_match_option_label = app.CardPipelineApp._receive_match_option_label
+            _selected_receive_autocomplete_match = app.CardPipelineApp._selected_receive_autocomplete_match
+
+        dummy = Dummy()
+        dummy.receive_cell_autocomplete_matches = {}
+        match = {
+            "item_id": "RAW-MIKEY-20260710-0007",
+            "sheet": "gunnar.xlsx",
+            "card_title": "2024 Topps Dynasty Gunnar Henderson Rookie Nike Patch Auto 1/1",
+            "sport": "baseball",
+            "receive_key": "raw:gunnar.xlsx:cards:2",
+        }
+        label = dummy._receive_match_option_label(match)
+        dummy.receive_cell_autocomplete_matches[label] = match
+        dummy.incoming_cert_index = {"raw:gunnar.xlsx:cards:2": match}
+
+        self.assertEqual(label, "2024 Topps Dynasty Gunnar Henderson Rookie Nike Patch Auto 1/1 | gunnar.xlsx | RAW-MIKEY-20260710-0007")
+        self.assertEqual(dummy._selected_receive_autocomplete_match(label), match)
+
+    def test_receive_autocomplete_applies_selected_match_to_existing_row(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            _apply_receive_match_to_existing_row = app.CardPipelineApp._apply_receive_match_to_existing_row
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+            _is_review_row_tree = lambda self, tree: True
+
+        row = WorkbookRow(excel_row=2, cert_number="", item_id="", grader="", card_title="")
+        dummy = Dummy()
+        dummy.review_rows = [row]
+        dummy.review_sheet_sources = {}
+        dummy.review_status = FieldVar()
+        dummy.assignment_engine = types.SimpleNamespace(
+            recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("", None, None)
+        )
+        match = {
+            "item_id": "RAW-MIKEY-20260710-0007",
+            "sheet": "gunnar.xlsx",
+            "workbook_sheet": "Cards",
+            "workbook_row": 2,
+            "card_title": "2024 Topps Dynasty Gunnar Henderson Rookie Nike Patch Auto 1/1",
+            "sport": "baseball",
+            "purchase_price": 400,
+            "best_company": "Arena Club",
+            "estimated_payout": 380,
+        }
+
+        dummy._apply_receive_match_to_existing_row(object(), 2, match)
+
+        self.assertEqual(row.item_id, "RAW-MIKEY-20260710-0007")
+        self.assertEqual(row.card_title, "2024 Topps Dynasty Gunnar Henderson Rookie Nike Patch Auto 1/1")
+        self.assertEqual(row.category, "baseball")
+        self.assertEqual(row.existing_value, 400)
+        self.assertEqual(row.best_company, "Arena Club")
+        self.assertEqual(row.estimated_payout, 380)
+        self.assertEqual(dummy.review_sheet_sources[2], "gunnar.xlsx")
+        self.assertEqual(getattr(row, "_receive_workbook_row"), 2)
+
     def test_receive_barcode_refreshes_stale_match_without_assignment_values(self) -> None:
         class Dummy:
             _append_review_rows = app.CardPipelineApp._append_review_rows

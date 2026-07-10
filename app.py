@@ -885,8 +885,9 @@ class CardPipelineApp(tk.Tk):
         self.scan_card = tk.StringVar()
         self.scan_status = tk.StringVar(value="Scanning station is off.")
         self.scan_entry: ttk.Entry | None = None
-        self.cell_editor: ttk.Entry | None = None
+        self.cell_editor: ttk.Entry | ttk.Combobox | None = None
         self.cell_edit: tuple[ttk.Treeview, str, str] | None = None
+        self.receive_cell_autocomplete_matches: dict[str, dict[str, object]] = {}
         self.column_widths_by_tree: dict[int, dict[str, int]] = {}
         self.scanning_station_active = False
 
@@ -13685,6 +13686,45 @@ class CardPipelineApp(tk.Tk):
             "notes": "Received",
         }
 
+    def _receive_match_option_label(self, match: dict[str, object]) -> str:
+        title = str(match.get("card_title") or "").strip() or "(no title)"
+        sheet = Path(str(match.get("sheet") or "")).name
+        identifier = str(match.get("cert_number") or match.get("item_id") or "").strip()
+        parts = [title]
+        if sheet:
+            parts.append(sheet)
+        if identifier:
+            parts.append(identifier)
+        return " | ".join(parts)
+
+    def _refresh_receive_card_autocomplete(self, editor: ttk.Combobox, query: str) -> None:
+        matches = self._incoming_title_matches(query, limit=30) if query.strip() else []
+        labels: list[str] = []
+        label_counts: dict[str, int] = {}
+        self.receive_cell_autocomplete_matches = {}
+        for match in matches:
+            label = self._receive_match_option_label(match)
+            label_counts[label] = label_counts.get(label, 0) + 1
+            if label_counts[label] > 1:
+                label = f"{label} #{label_counts[label]}"
+            labels.append(label)
+            self.receive_cell_autocomplete_matches[label] = match
+        editor.configure(values=labels)
+
+    def _selected_receive_autocomplete_match(self, value: str) -> dict[str, object]:
+        match = self.receive_cell_autocomplete_matches.get(value)
+        if match:
+            return match
+        title = str(value or "").split(" | ", 1)[0].strip()
+        if not title:
+            return {}
+        matches = [
+            candidate
+            for candidate in self._incoming_title_matches(title, limit=2)
+            if self._normalize_receive_search_text(candidate.get("card_title")) == self._normalize_receive_search_text(title)
+        ]
+        return matches[0] if len(matches) == 1 else {}
+
     def _receive_row_ref_key(self, match: dict[str, object]) -> str:
         sheet_name = str(match.get("sheet") or "").strip()
         workbook_sheet = str(match.get("workbook_sheet") or "").strip()
@@ -15591,7 +15631,13 @@ class CardPipelineApp(tk.Tk):
         self._cancel_cell_edit()
         x, y, width, height = bbox
         current = tree.set(row_id, column)
-        editor = ttk.Entry(tree)
+        is_receive_card_autocomplete = self._is_review_row_tree(tree) and column == "card_title"
+        editor: ttk.Entry | ttk.Combobox
+        if is_receive_card_autocomplete:
+            editor = ttk.Combobox(tree, values=(), width=max(24, width // 8))
+            self._refresh_receive_card_autocomplete(editor, current)
+        else:
+            editor = ttk.Entry(tree)
         editor.insert(0, current)
         editor.select_range(0, tk.END)
         editor.place(x=x, y=y, width=width, height=height)
@@ -15602,6 +15648,9 @@ class CardPipelineApp(tk.Tk):
         editor.bind("<KP_Enter>", lambda _event: self._commit_cell_edit())
         editor.bind("<Escape>", lambda _event: self._cancel_cell_edit())
         editor.bind("<FocusOut>", lambda _event: self._commit_cell_edit())
+        if is_receive_card_autocomplete:
+            editor.bind("<KeyRelease>", lambda event, widget=editor: self._on_receive_card_autocomplete_key(event, widget), add="+")
+            editor.bind("<<ComboboxSelected>>", lambda _event: self._commit_cell_edit(), add="+")
 
     def _commit_cell_edit(self) -> None:
         if not self.cell_editor or not self.cell_edit:
@@ -15609,11 +15658,16 @@ class CardPipelineApp(tk.Tk):
         tree, row_id, column = self.cell_edit
         value = self.cell_editor.get()
         current = tree.set(row_id, column)
+        selected_match = self._selected_receive_autocomplete_match(value) if self._is_review_row_tree(tree) and column == "card_title" else {}
+        if selected_match:
+            value = str(selected_match.get("card_title") or value)
         self._destroy_cell_editor()
-        if value.strip() == str(current or "").strip():
+        if value.strip() == str(current or "").strip() and not selected_match:
             return
         excel_row = int(row_id)
         self._apply_cell_value(tree, excel_row, column, value)
+        if selected_match:
+            self._apply_receive_match_to_existing_row(tree, excel_row, selected_match)
         if tree is self.comp_tree:
             self.comp_output_saved = False
         self._refresh_table(schedule_recommendations=self._edit_affects_assignment(tree, column))
@@ -15622,6 +15676,50 @@ class CardPipelineApp(tk.Tk):
             tree.focus(row_id)
             tree.see(row_id)
         self.status_var.set(f"Updated row {excel_row}.")
+
+    def _on_receive_card_autocomplete_key(self, event, editor: ttk.Combobox) -> None:
+        if event.keysym in {"Return", "KP_Enter", "Escape", "Up", "Down", "Left", "Right", "Tab", "Shift_L", "Shift_R", "Control_L", "Control_R"}:
+            return
+        self._refresh_receive_card_autocomplete(editor, editor.get())
+
+    def _apply_receive_match_to_existing_row(self, tree: ttk.Treeview, excel_row: int, match: dict[str, object]) -> None:
+        if not self._is_review_row_tree(tree) or not match:
+            return
+        self.review_sheet_sources[excel_row] = str(match.get("sheet") or "NO SHEET FOUND")
+        for row in self.review_rows:
+            if row.excel_row != excel_row:
+                continue
+            self._attach_receive_match_to_row(row, match)
+            row.status = "Received"
+            if match.get("item_id"):
+                row.item_id = str(match.get("item_id") or "")
+            if match.get("cert_number"):
+                row.cert_number = str(match.get("cert_number") or "")
+            if match.get("card_title"):
+                row.card_title = str(match.get("card_title") or "")
+            if match.get("grader"):
+                row.grader = str(match.get("grader") or "")
+            if match.get("sport") or match.get("category"):
+                row.category = str(match.get("sport") or match.get("category") or "")
+            if match.get("purchase_price") is not None:
+                row.existing_value = match.get("purchase_price")
+            if match.get("card_ladder_value") is not None:
+                row.card_ladder_value = match.get("card_ladder_value")
+            if match.get("card_ladder_comps_average") is not None:
+                row.card_ladder_comps_average = match.get("card_ladder_comps_average")
+            if match.get("cy_value") is not None:
+                row.cy_value = match.get("cy_value")
+            if match.get("cy_confidence") is not None:
+                row.cy_confidence = match.get("cy_confidence")
+            if match.get("card_ladder_comps"):
+                row.card_ladder_comps = str(match.get("card_ladder_comps") or "")
+            if match.get("best_company"):
+                row.best_company = str(match.get("best_company") or "")
+            if match.get("estimated_payout") is not None:
+                row.estimated_payout = match.get("estimated_payout")
+            self._ensure_receive_row_assignment(row)
+            self.review_status.set(f"Matched receive row to {match.get('sheet') or 'incoming sheet'}.")
+            return
 
     def _edit_affects_assignment(self, tree: ttk.Treeview, column: str) -> bool:
         if tree is not self.comp_tree and tree is not self.review_tree:
