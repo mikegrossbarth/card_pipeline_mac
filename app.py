@@ -2713,6 +2713,97 @@ class CardPipelineApp(tk.Tk):
             added += 1
         return added
 
+    def _workbook_header_lookup(self, sheet) -> dict[str, int]:
+        headers: dict[str, int] = {}
+        for cell in sheet[1]:
+            value = re.sub(r"[^a-z0-9]+", "", str(cell.value or "").strip().lower())
+            if value:
+                headers[value] = int(cell.column)
+        return headers
+
+    def _sheet_cell_by_any_header(self, sheet, row_index: int, headers: dict[str, int], names: tuple[str, ...], fallback_col: int | None = None):
+        for name in names:
+            col = headers.get(re.sub(r"[^a-z0-9]+", "", name.strip().lower()))
+            if col:
+                return sheet.cell(row_index, col).value
+        if fallback_col:
+            return sheet.cell(row_index, fallback_col).value
+        return None
+
+    def _ensure_workbook_item_id_column(self, sheet, headers: dict[str, int]) -> tuple[dict[str, int], int]:
+        for name in ("itemid", "rawitemid", "inventoryitemid", "inventoryid"):
+            if name in headers:
+                return headers, headers[name]
+        sheet.insert_cols(1)
+        sheet.cell(1, 1).value = "Item ID"
+        headers = self._workbook_header_lookup(sheet)
+        return headers, 1
+
+    def _ensure_raw_item_ids_in_sheet_paths(self, paths: list[Path]) -> dict[str, object]:
+        existing_records = list(self._load_inventory_ledger())
+        existing_records.extend(self._live_sheet_raw_item_records())
+        result: dict[str, object] = {"files_updated": 0, "ids_added": 0, "errors": []}
+        changed_paths: set[Path] = set()
+        for path in paths:
+            try:
+                workbook = load_workbook(path)
+            except Exception as error:
+                result["errors"].append(f"{path.name}: {error}")  # type: ignore[index]
+                continue
+            changed = False
+            try:
+                for sheet in workbook.worksheets:
+                    if sheet.max_row < 2:
+                        continue
+                    headers = self._workbook_header_lookup(sheet)
+                    headers, item_id_col = self._ensure_workbook_item_id_column(sheet, headers)
+                    cert_col = next((headers.get(name) for name in ("certificationnumber", "certnumber", "cert", "certification")), None)
+                    card_col = next((headers.get(name) for name in ("carddescription", "card", "cardtitle", "title", "description")), None)
+                    grader_col = next((headers.get(name) for name in ("company", "grader", "gradingcompany")), None)
+                    sport_col = next((headers.get(name) for name in ("sport", "category")), None)
+                    purchase_col = next((headers.get(name) for name in ("purchaseprice", "purchase", "cost", "buyprice")), None)
+                    for row_index in range(2, sheet.max_row + 1):
+                        item_id = str(sheet.cell(row_index, item_id_col).value or "").strip()
+                        if item_id:
+                            existing_records.append({"item_id": item_id})
+                            continue
+                        cert = scan_to_cert(sheet.cell(row_index, cert_col).value if cert_col else "")
+                        if cert:
+                            continue
+                        card = str(sheet.cell(row_index, card_col).value if card_col else "").strip()
+                        grader = str(sheet.cell(row_index, grader_col).value if grader_col else "").strip()
+                        sport = str(sheet.cell(row_index, sport_col).value if sport_col else "").strip()
+                        purchase = sheet.cell(row_index, purchase_col).value if purchase_col else None
+                        if not any(str(value or "").strip() for value in (card, grader, sport, purchase)):
+                            continue
+                        new_item_id = self._next_raw_item_id(existing_records)
+                        sheet.cell(row_index, item_id_col).value = new_item_id
+                        existing_records.append({"item_id": new_item_id})
+                        result["ids_added"] = int(result["ids_added"]) + 1
+                        changed = True
+                if changed:
+                    workbook.save(path)
+                    changed_paths.add(path)
+            except Exception as error:
+                result["errors"].append(f"{path.name}: {error}")  # type: ignore[index]
+            finally:
+                workbook.close()
+        result["files_updated"] = len(changed_paths)
+        return result
+
+    def ensure_raw_item_ids_in_stage_sheets(self, include_received: bool = False) -> dict[str, object]:
+        folders = [INCOMING_SHEETS_DIR, WORKING_SHEETS_DIR]
+        if include_received:
+            folders.append(RECEIVED_SHEETS_DIR)
+        paths: list[Path] = []
+        for folder in folders:
+            try:
+                folder.mkdir(parents=True, exist_ok=True)
+                paths.extend(sorted(folder.glob("*.xlsx"), key=lambda path: path.name.lower()))
+            except Exception:
+                continue
+        return self._ensure_raw_item_ids_in_sheet_paths(paths)
+
     def _normalize_inventory_record(self, record: dict[str, object]) -> dict[str, object]:
         normalized = dict(record)
         normalized["date_added"] = str(normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"))[:10]
@@ -13273,6 +13364,7 @@ class CardPipelineApp(tk.Tk):
                 [*INCOMING_SHEETS_DIR.glob("*.xlsx"), *WORKING_SHEETS_DIR.glob("*.xlsx")],
                 key=lambda path: (path.parent.name.lower(), path.name.lower()),
             )
+            raw_id_result = self._ensure_raw_item_ids_in_sheet_paths(paths)
         except Exception as error:
             self.incoming_cert_index = {}
             self.review_status.set(f"Incoming sheets unavailable: {error}")
@@ -13324,7 +13416,9 @@ class CardPipelineApp(tk.Tk):
         self._refresh_table()
         cert_count = sum(1 for key in index if not str(key).startswith("raw:"))
         raw_count = len(index) - cert_count
-        self.review_status.set(f"Indexed {cert_count} cert(s) and {raw_count} raw row(s) from {len(paths)} incoming/working sheet(s).")
+        raw_added = int(raw_id_result.get("ids_added") or 0)
+        raw_note = f" Added {raw_added} missing raw ID(s)." if raw_added else ""
+        self.review_status.set(f"Indexed {cert_count} cert(s) and {raw_count} raw row(s) from {len(paths)} incoming/working sheet(s).{raw_note}")
 
     def refresh_received_sheets(self) -> None:
         try:
