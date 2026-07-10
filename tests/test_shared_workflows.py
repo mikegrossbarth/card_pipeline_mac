@@ -4667,6 +4667,42 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.assignment_engine.last_row.card_ladder_value, 150)
         self.assertEqual(dummy.assignment_engine.last_row.card_ladder_comps_average, 100)
 
+    def test_inventory_assignment_recomputes_nobody_takes_with_stale_payout(self) -> None:
+        class FakeAssignment:
+            def recommend(self, row, person=""):
+                self.last_person = person
+                return types.SimpleNamespace(company="Fanatics", payout=476.16, source_value=512)
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
+            _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
+
+        dummy = InventoryDummy()
+        dummy.assignment_engine = FakeAssignment()
+        record = dummy._enrich_inventory_record_assignment(
+            {
+                "assigned_person": "Mikey",
+                "cert_number": "0018849545",
+                "grader": "BGS",
+                "sport": "basketball",
+                "card_title": "2024-25 Panini National Treasures Emerald #111 Cam Spencer JSY AU BGS 8.5",
+                "source_sheet": "smalltown.sportscards_7_7_26.xlsx",
+                "purchase_price": 440,
+                "card_ladder_value": 512,
+                "card_ladder_comps_average": 480,
+                "best_company": app.NO_COMPANY_TAKES_LABEL,
+                "estimated_payout": 476.16,
+            }
+        )
+
+        self.assertEqual(record["best_company"], "Fanatics")
+        self.assertEqual(record["estimated_payout"], 476.16)
+        self.assertEqual(record["inventory_value"], 512)
+        self.assertEqual(dummy.assignment_engine.last_person, "Mikey")
+
     def test_inventory_assignment_uses_saved_sport_for_company_rules(self) -> None:
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value

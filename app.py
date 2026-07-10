@@ -3800,7 +3800,13 @@ class CardPipelineApp(tk.Tk):
     def _enrich_inventory_record_assignment(self, record: dict[str, object], force: bool = False) -> dict[str, object]:
         hydrator = getattr(self, "_hydrate_inventory_record_source_values", None)
         normalized = hydrator(record) if callable(hydrator) else self._normalize_inventory_record(record)
-        if not force and normalized.get("best_company") and normalized.get("estimated_payout") is not None:
+        current_best = str(normalized.get("best_company") or "").strip()
+        if (
+            not force
+            and current_best
+            and current_best.upper() != NO_COMPANY_TAKES_LABEL.upper()
+            and normalized.get("estimated_payout") is not None
+        ):
             return normalized
         try:
             row = self._inventory_workbook_row(normalized, 1)
@@ -3813,7 +3819,7 @@ class CardPipelineApp(tk.Tk):
         except Exception:
             return normalized
         if recommendation.payout is None:
-            normalized["best_company"] = normalized.get("best_company") or NO_COMPANY_TAKES_LABEL
+            normalized["best_company"] = NO_COMPANY_TAKES_LABEL
             normalized["estimated_payout"] = None
             normalized["inventory_value"] = getattr(recommendation, "source_value", None) or assignment_engine.assignment_value(row)
             return normalized
