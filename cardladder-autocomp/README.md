@@ -21,7 +21,7 @@ The extension talks to the desktop bridge on `127.0.0.1` ports `8765` through `8
 Current helper version expected by the app bridge:
 
 ```text
-2026-06-17-no-blind-grader-option-v22
+2026-07-11-stale-first-row-retry-v23
 ```
 
 For non-PSA graders, the helper first tries normal page/DOM clicks. If Card Ladder ignores those synthetic clicks, it briefly uses Chrome's `debugger` API to send a trusted click to the visible Grader bar. Chrome may show a browser-level debugger warning during that fallback. The debugger attach is scoped to the Card Ladder tab and is detached after the click.

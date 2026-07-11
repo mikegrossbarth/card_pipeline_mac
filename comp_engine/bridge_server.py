@@ -22,9 +22,9 @@ from cy_automation.cy_macos import CYMacOSAdapter
 from workbook_io import WorkbookRow
 import assignment_engine
 
-BRIDGE_VERSION = "2026-06-17-cardladder-no-blind-grader-option-v22"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-06-17-no-blind-grader-option-v22"
-EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.4"
+BRIDGE_VERSION = "2026-07-11-cardladder-stale-first-row-retry-v23"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-07-11-stale-first-row-retry-v23"
+EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.6"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 DEBUG_LOG = DEBUG_DIR / "bridge.log"
 MOBILE_APP_DIR = Path(__file__).resolve().parent.parent / "mobile_app"

@@ -6,7 +6,7 @@ const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
-const CARDLADDER_BACKGROUND_VERSION = "2026-06-17-no-blind-grader-option-v22";
+const CARDLADDER_BACKGROUND_VERSION = "2026-07-11-stale-first-row-retry-v23";
 const KEEP_SYNC_TAB_CLOSE_MS = 30000;
 const KEEP_SYNC_RETRY_MS = 60000;
 
@@ -352,7 +352,17 @@ async function cancelRun() {
 }
 
 async function lookupRowWithRetries(tabId, row) {
-  const pageResult = await submitRowWithGrader(tabId, row);
+  let pageResult = await submitRowWithGrader(tabId, row);
+  if (isStalePreviousResultSubmit(pageResult)) {
+    await resetSalesHistoryTab(tabId);
+    pageResult = await submitRowWithGrader(tabId, row);
+    if (isStalePreviousResultSubmit(pageResult)) {
+      return {
+        ...pageResult,
+        error: `${pageResult.error || "Card Ladder stayed on the previous result page after submit."} Retried once from a fresh Sales History page.`,
+      };
+    }
+  }
 
   if (["error", "invalid_cert"].includes(pageResult?.status)) return pageResult;
   if (pageResult?.status === "no_results") {
@@ -416,6 +426,17 @@ async function lookupRowWithRetries(tabId, row) {
     await delay(OCR_RETRY_MS);
   }
   return markPartialCapture(lastResult || domResult, expectedResultCount);
+}
+
+function isStalePreviousResultSubmit(result) {
+  return result?.status === "error" && /stayed on the previous result page/i.test(String(result?.error || ""));
+}
+
+async function resetSalesHistoryTab(tabId) {
+  await chrome.tabs.update(tabId, { url: SALES_HISTORY_URL });
+  await waitForTabNotLoading(tabId);
+  await injectContent(tabId);
+  await delay(500);
 }
 
 function stampResult(result) {
