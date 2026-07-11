@@ -14787,17 +14787,17 @@ class CardPipelineApp(tk.Tk):
             return
         with self.state.lock:
             rows = list(self.state.rows)
-            excel_row = max((int(getattr(row, "excel_row", 1) or 1) for row in rows), default=1) + 1
-            rows.append(
-                WorkbookRow(
-                    excel_row=excel_row,
-                    cert_number="",
-                    card_title="",
-                    grader="",
-                    status="Needs setup",
-                )
+        excel_row = max((int(getattr(row, "excel_row", 1) or 1) for row in rows), default=1) + 1
+        rows.append(
+            WorkbookRow(
+                excel_row=excel_row,
+                cert_number="",
+                card_title="",
+                grader="",
+                status="Needs setup",
             )
-            self.state.set_rows(rows)
+        )
+        self.state.set_rows(rows)
         self.row_sources[excel_row] = name or path.name
         self.comp_sheet_sources.pop(excel_row, None)
         self.comp_output_saved = False

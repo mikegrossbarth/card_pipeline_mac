@@ -2241,6 +2241,56 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn("/status", bridge_server.BRIDGE_LOCAL_ONLY_PATH_PREFIXES)
         self.assertIn("/result/cardladder", bridge_server.BRIDGE_LOCAL_ONLY_PATH_PREFIXES)
 
+    def test_add_comp_row_does_not_deadlock_on_bridge_state_lock(self) -> None:
+        class FakeTree:
+            def selection_set(self, _iid: str) -> None:
+                self.selected = _iid
+
+            def focus(self, _iid: str) -> None:
+                self.focused = _iid
+
+            def see(self, _iid: str) -> None:
+                self.seen = _iid
+
+        class Status:
+            def __init__(self) -> None:
+                self.value = ""
+
+            def set(self, value: str) -> None:
+                self.value = value
+
+        class Dummy:
+            add_comp_row = app.CardPipelineApp.add_comp_row
+
+            def _comp_sheet_info(self, _label: str):
+                return "Working", "Lot.xlsx", Path("Lot.xlsx")
+
+            def _cancel_cell_edit(self) -> None:
+                self.cancelled_edit = True
+
+            def _refresh_comp_table(self, schedule_recommendations: bool = False) -> None:
+                self.refreshed_with = schedule_recommendations
+
+        dummy = Dummy()
+        dummy.loaded_comp_sheet_label = "Working / Lot.xlsx"
+        dummy.state = app.BridgeState()
+        dummy.state.set_rows([WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="First")])
+        dummy.row_sources = {2: "Lot.xlsx"}
+        dummy.comp_sheet_sources = {}
+        dummy.comp_tree = FakeTree()
+        dummy.comp_output_saved = True
+        dummy.status_var = Status()
+
+        thread = threading.Thread(target=dummy.add_comp_row, daemon=True)
+        thread.start()
+        thread.join(1.0)
+
+        self.assertFalse(thread.is_alive(), "add_comp_row deadlocked while updating BridgeState rows")
+        self.assertEqual([row.excel_row for row in dummy.state.rows], [2, 3])
+        self.assertFalse(dummy.comp_output_saved)
+        self.assertEqual(dummy.row_sources[3], "Lot.xlsx")
+
+
     def test_delete_selected_comp_rows_rekeys_sources_for_save_back(self) -> None:
         class FakeTree:
             def selection(self) -> tuple[str, ...]:
