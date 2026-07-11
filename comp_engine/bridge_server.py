@@ -514,6 +514,7 @@ class BridgeState:
         raw_comp_count = len(comps)
         comps = filter_comps_for_card(comps, profile_title or row.card_title)
         filtered_comp_count = raw_comp_count - len(comps)
+        generic_profile_reason = generic_profile_review_reason(profile_title, profile_grader, profile_grade, ocr)
         if result_status == "partial_comp_capture":
             if profile_title:
                 row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
@@ -556,6 +557,15 @@ class BridgeState:
             row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
             row.status = "Card Ladder extension error"
             row.notes = str(result.get("error") or "Card Ladder lookup failed before a result could be captured.")
+            return
+        if generic_profile_reason:
+            row.card_title = ""
+            row.card_ladder_value = None
+            row.card_ladder_comps_average = None
+            row.card_ladder_comps = ""
+            row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
+            row.status = "Card Ladder review"
+            row.notes = generic_profile_reason
             return
         if profile_title:
             row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
@@ -807,6 +817,40 @@ def build_card_title(description: str, grader: str, grade: str) -> str:
     if grade and not re.search(rf"(?<!\d){re.escape(grade)}(?!\d)", " ".join(parts)):
         parts.append(grade)
     return re.sub(r"\s+", " ", " ".join(parts)).strip()
+
+
+def generic_profile_review_reason(profile_title: str, grader: str, grade: str, ocr: dict) -> str:
+    title = clean_profile_title(profile_title)
+    if not title:
+        return ""
+    result_count = safe_int(ocr.get("resultCount") or ocr.get("result_count"))
+    if not is_generic_cardladder_profile_title(title, grader, grade):
+        return ""
+    return (
+        f"Card Ladder returned an overly broad profile title ({build_card_title(title, grader, grade) or title})"
+        + (f" with {result_count} results" if result_count is not None else "")
+        + ". Re-run or verify manually before saving comps."
+    )
+
+
+def is_generic_cardladder_profile_title(title: str, grader: str = "", grade: str = "") -> bool:
+    cleaned = clean_profile_title(title)
+    cleaned = re.sub(rf"\b{re.escape(clean_grader(grader))}\b", " ", cleaned, flags=re.I) if grader else cleaned
+    cleaned = re.sub(rf"(?<!\d){re.escape(clean_grade(grade))}(?!\d)", " ", cleaned) if grade else cleaned
+    cleaned = re.sub(r"\b(?:psa|bgs|sgc|cgc|gem|mint|mt)\b", " ", cleaned, flags=re.I)
+    words = [word for word in re.findall(r"[A-Za-z0-9#'-]+", cleaned) if word]
+    if len(words) <= 2 and any(re.fullmatch(r"19\d{2}|20\d{2}", word) for word in words):
+        return True
+    has_player_or_number = any(re.search(r"#|[A-Za-z]{2,}\d|\d+[A-Za-z]", word) for word in words)
+    has_enough_detail = len(words) >= 4 or has_player_or_number
+    return not has_enough_detail
+
+
+def safe_int(value) -> int | None:
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return None
 
 
 def average_comp_prices(comps: list[dict]) -> float | None:
