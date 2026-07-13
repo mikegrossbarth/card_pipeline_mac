@@ -2019,6 +2019,37 @@ class AssignmentEngineTests(unittest.TestCase):
 
         self.assertTrue(decision.accepted)
         self.assertAlmostEqual(decision.payout or 0, 46.9942)
+        self.assertEqual(decision.payout_rate, 0.82)
+        self.assertEqual(decision.payout_category, "Baseball")
+
+    def test_assignment_decision_reports_selected_payout_tier(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="141955355",
+            grader="PSA",
+            category="baseball",
+            card_title="1963 Topps #200 Mickey Mantle PSA 2",
+            card_ladder_comps_average=425,
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Arena Club",
+                    assignment_engine.CompanyRules(ranges=[assignment_engine.AssignmentRule("baseball", 10, 1000)]),
+                    [
+                        assignment_engine.PayoutTier(0, 1000, 0.95, "Baseball"),
+                        assignment_engine.PayoutTier(0, 1000, 0.9, "Soccer"),
+                    ],
+                )
+            ]
+        )
+
+        decision = engine.evaluate(row)[0]
+
+        self.assertTrue(decision.accepted)
+        self.assertEqual(decision.payout, 403.75)
+        self.assertEqual(decision.payout_rate, 0.95)
+        self.assertEqual(decision.payout_category, "Baseball")
 
     def test_dnb_over_50_section_only_blocks_cards_above_50(self) -> None:
         values = [
@@ -4716,6 +4747,29 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         sorted_rows = dummy._sorted_records(rows, "date", True, "profit", "Sold Cards")
 
         self.assertEqual([row["card_title"] for row in sorted_rows], ["Shipping", "Newer card", "Older card", "Yesterday"])
+
+    def test_assignment_explanation_shows_payout_rate_and_category(self) -> None:
+        class ExplainDummy:
+            _assignment_decision_detail = app.CardPipelineApp._assignment_decision_detail
+
+        dummy = ExplainDummy()
+        decision = assignment_engine.AssignmentDecision(
+            "Arena Club",
+            True,
+            2622.0,
+            "accepted and payout tier matched",
+            2760.0,
+            0.95,
+            "Vintage",
+            0,
+            None,
+        )
+
+        detail = dummy._assignment_decision_detail(decision)
+
+        self.assertIn("95%", detail)
+        self.assertIn("category: Vintage", detail)
+        self.assertNotIn("accepted and payout tier matched", detail)
 
     def test_inventory_refresh_purges_non_active_rows_from_ledger(self) -> None:
         class InventoryDummy:

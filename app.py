@@ -6603,9 +6603,28 @@ class CardPipelineApp(tk.Tk):
             status = "TAKES" if decision.accepted and decision.payout is not None else "NO"
             payout = format_money(decision.payout) if decision.payout is not None else "no payout"
             source_value = format_money(decision.source_value) if decision.source_value is not None else "no source value"
-            reason = decision.reason or "no reason returned"
+            reason = self._assignment_decision_detail(decision)
             lines.append(f"- {decision.company}: {status} | {source_value} | {payout} | {reason}")
         return "\n".join(lines)
+
+    def _assignment_decision_detail(self, decision: assignment_engine.AssignmentDecision) -> str:
+        if decision.accepted and decision.payout is not None:
+            details: list[str] = []
+            rate = getattr(decision, "payout_rate", None)
+            if rate is not None:
+                percent = rate * 100
+                percent_text = f"{percent:.2f}".rstrip("0").rstrip(".")
+                details.append(f"{percent_text}%")
+            category = str(getattr(decision, "payout_category", "") or "").strip()
+            details.append(f"category: {category or 'default/all'}")
+            min_price = getattr(decision, "payout_min_price", 0)
+            max_price = getattr(decision, "payout_max_price", None)
+            if min_price or max_price is not None:
+                low = format_money(float(min_price or 0))
+                high = format_money(float(max_price)) if max_price is not None else "no max"
+                details.append(f"tier: {low} to {high}")
+            return " | ".join(details)
+        return decision.reason or "no reason returned"
 
     def explain_selected_inventory_assignment(self) -> None:
         if not hasattr(self, "inventory_tree"):
