@@ -125,7 +125,7 @@ On macOS, L.U.C.A.S can submit certs to the local CourtYard app and fill `CY val
 
 Use the `Receive` tab for physically receiving cards and source matching. Use the `Assignment` tab for pure assignment review and fallback assignment work.
 
-Assignment companies are local in `assignment_companies.json`. The manager supports manual rules, local files, Google Keep exports, workbook/CSV files, Google Sheets through OAuth, manual payout tiers, payout files, and linked `Payouts` tabs. Google Keep note sources are synced per company from the selected company's Rule Source panel with `Sync Google Keep`.
+Assignment companies are local in `assignment_companies.json`. The manager supports manual rules, local files, Google Keep exports, workbook/CSV files, Google Sheets through OAuth, manual payout tiers, payout files, and linked `Payouts` tabs. Manual rules also support a company-wide card year range, such as Fanatics `Min Year` `1990`, before the category/value rules are evaluated. Google Keep note sources are synced per company from the selected company's Rule Source panel with `Sync Google Keep`.
 
 Network Mode exposes seller terms in Create and is configured through `Company Rules -> People Rules`. People Rules stores shared seller rows in `ASSIGNMENT RULES/seller_terms.csv`. The UI labels `Seller Rate %` and `Deduction %` as percentage fields and accepts numbers only, for example `90`, `92.5`, `10`, or `10.5`, without percent signs. `Seller Rate %` pays the seller a flat percentage of the selected Sheet Type company's source value. `Deduction %` follows that Sheet Type company's payout logic and subtracts the deduction from the company payout.
 

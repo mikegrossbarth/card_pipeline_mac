@@ -20,11 +20,12 @@ This guide is written for both the Windows and Mac repositories. Platform differ
 10. [Inventory](#inventory)
 11. [Profit](#profit)
 12. [Network Mode And People Rules](#network-mode-and-people-rules)
-13. [Google Sheets And Google Keep Sources](#google-sheets-and-google-keep-sources)
-14. [Company Sheets](#company-sheets)
-15. [Mac-Only Mobile Companion](#mac-only-mobile-companion)
-16. [Troubleshooting](#troubleshooting)
-17. [Best Practices](#best-practices)
+13. [Manual Company Rule Year Ranges](#manual-company-rule-year-ranges)
+14. [Google Sheets And Google Keep Sources](#google-sheets-and-google-keep-sources)
+15. [Company Sheets](#company-sheets)
+16. [Mac-Only Mobile Companion](#mac-only-mobile-companion)
+17. [Troubleshooting](#troubleshooting)
+18. [Best Practices](#best-practices)
 
 ## What LUCAS Tracks
 
@@ -385,6 +386,12 @@ How seller terms work:
 - If terms are invalid, save stops with a clear prompt.
 
 Use **People Rules Health** in Company Rules to find duplicate rows, inactive companies, missing companies, bad rates, and parsed terms.
+
+## Manual Company Rule Year Ranges
+
+Manual Company Rules can set a company-wide **Company Card Year Range**. Use this for broad company cutoffs, such as Fanatics **Min Year** `1990`.
+
+The year range is checked before category/value rules and appears in **Explain Assignment** when it rejects a card.
 
 ## Google Sheets And Google Keep Sources
 

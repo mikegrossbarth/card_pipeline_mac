@@ -500,6 +500,8 @@ class CompanyRules:
     goat_players: set[str] = field(default_factory=set)
     goat_ranges: list[AssignmentRule] = field(default_factory=list)
     accept_all: bool = False
+    min_year: int | None = None
+    max_year: int | None = None
 
 
 @dataclass
@@ -738,7 +740,7 @@ def card_row_text(row: Any, source_value: float) -> str:
 
 
 def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -> bool:
-    if not rules.accept_all and not (rules.include or rules.exclude or rules.ranges or rules.blocks or rules.grade_rules or rules.rule_groups):
+    if not rules.accept_all and not (rules.include or rules.exclude or rules.ranges or rules.blocks or rules.grade_rules or rules.rule_groups or rules.min_year is not None or rules.max_year is not None):
         return False
     haystack = clean_text(text)
     grade_company, grade = parse_grade(text, grader)
@@ -747,6 +749,8 @@ def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -
         if rule_matches(rule, haystack, price):
             return False
     if any(term_matches(term, haystack) for term in rules.exclude):
+        return False
+    if not year_range_matches(rules.min_year, rules.max_year, haystack):
         return False
     if rules.rule_groups:
         return any(company_accepts(group, text, price, grader) for group in rules.rule_groups)
@@ -770,7 +774,7 @@ def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -
 
 
 def company_rejection_reason(rules: CompanyRules, text: str, price: float, grader: str) -> str:
-    if not rules.accept_all and not (rules.include or rules.exclude or rules.ranges or rules.blocks or rules.grade_rules or rules.rule_groups):
+    if not rules.accept_all and not (rules.include or rules.exclude or rules.ranges or rules.blocks or rules.grade_rules or rules.rule_groups or rules.min_year is not None or rules.max_year is not None):
         return "no active company rules loaded"
     haystack = clean_text(text)
     grade_company, grade = parse_grade(text, grader)
@@ -781,6 +785,10 @@ def company_rejection_reason(rules: CompanyRules, text: str, price: float, grade
     for term in rules.exclude:
         if term_matches(term, haystack):
             return f"excluded by rule: {term}"
+    if not year_range_matches(rules.min_year, rules.max_year, haystack):
+        year = card_year_from_text(haystack)
+        actual = str(year) if year is not None else "blank"
+        return f"card year {actual} is outside company year range: {describe_year_range(rules.min_year, rules.max_year)}"
     if rules.rule_groups:
         group_reasons = [company_rejection_reason(group, text, price, grader) for group in rules.rule_groups]
         unique_reasons = unique_values([reason for reason in group_reasons if reason])
@@ -820,6 +828,12 @@ def describe_grade_rule(rule: GradeRule) -> str:
     if rule.max_grade is not None:
         parts.append(f"maximum {rule.max_grade:g}")
     return " and ".join(parts) if parts else "an allowed grade"
+
+
+def describe_year_range(min_year: int | None, max_year: int | None) -> str:
+    low = str(min_year) if min_year is not None else "any year"
+    high = str(max_year) if max_year is not None else "current"
+    return f"{low} to {high}"
 
 
 def format_rule_money(value: float | int | None) -> str:
@@ -1527,6 +1541,17 @@ def parse_rules(text: str, accept_all: bool = False) -> CompanyRules:
                 if parsed_goat_range.min_price is not None or parsed_goat_range.max_price is not None:
                     rules.goat_ranges.append(parsed_goat_range)
                 continue
+            if key in {"minyear", "minimumyear", "fromyear", "yearmin"}:
+                rules.min_year = parse_year_value(value)
+                continue
+            if key in {"maxyear", "maximumyear", "toyear", "yearmax"}:
+                rules.max_year = parse_year_value(value)
+                continue
+            if key in {"yearrange", "years", "cardyear", "cardyears"}:
+                min_year, max_year = parse_year_range(value)
+                rules.min_year = min_year
+                rules.max_year = max_year
+                continue
             if key in {"minprice", "minimumprice"}:
                 rules.ranges.append(AssignmentRule(min_price=parse_money(value)))
                 continue
@@ -1547,6 +1572,12 @@ def parse_rules(text: str, accept_all: bool = False) -> CompanyRules:
 
 def parse_rule_dict(payload: dict[str, Any], accept_all: bool = False) -> CompanyRules:
     rules = CompanyRules(accept_all=accept_all or bool(payload.get("accept_all")))
+    rules.min_year = parse_year_value(payload.get("minYear") or payload.get("min_year") or payload.get("yearMin") or payload.get("minimumYear"))
+    rules.max_year = parse_year_value(payload.get("maxYear") or payload.get("max_year") or payload.get("yearMax") or payload.get("maximumYear"))
+    if rules.min_year is None and rules.max_year is None:
+        year_range = payload.get("yearRange") or payload.get("years") or payload.get("cardYears")
+        if year_range is not None:
+            rules.min_year, rules.max_year = parse_year_range(year_range)
     rules.include.extend(split_values(payload.get("include") or payload.get("includeKeywords") or payload.get("sports") or payload.get("sport")))
     rules.exclude.extend(split_values(payload.get("exclude") or payload.get("excludeKeywords")))
     rules.goat_players.update(clean_rule_text(player) for player in split_values(payload.get("goatPlayers") or payload.get("goat_players")))
@@ -1578,12 +1609,18 @@ def parse_rule_dict(payload: dict[str, Any], accept_all: bool = False) -> Compan
     custom_rules = payload.get("rules") or payload.get("customRules") or []
     if isinstance(custom_rules, list):
         rules.rule_groups.extend(parse_custom_rule_group(item) for item in custom_rules if isinstance(item, dict))
-        rules.rule_groups = [group for group in rules.rule_groups if group.include or group.ranges or group.grade_rules or group.accept_all]
+        rules.rule_groups = [
+            group
+            for group in rules.rule_groups
+            if group.include or group.ranges or group.grade_rules or group.accept_all or group.min_year is not None or group.max_year is not None
+        ]
     return rules
 
 
 def parse_custom_rule_group(payload: dict[str, Any]) -> CompanyRules:
     group = CompanyRules()
+    group.min_year = parse_year_value(payload.get("minYear") or payload.get("min_year") or payload.get("yearMin") or payload.get("minimumYear"))
+    group.max_year = parse_year_value(payload.get("maxYear") or payload.get("max_year") or payload.get("yearMax") or payload.get("maximumYear"))
     sports = split_values(payload.get("sports") or payload.get("sport"))
     if payload.get("sportOther"):
         sports.append(str(payload.get("sportOther")).strip())
@@ -2416,6 +2453,48 @@ def parse_money_range(min_value: Any, max_value: Any) -> tuple[float | None, flo
         if min_number is not None and max_number is not None and min_number < max_number:
             min_text = f"{min_text}k"
     return parse_money(min_text), parse_money(max_text)
+
+
+def parse_year_value(value: Any) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.search(r"\b(19\d{2}|20\d{2})\b", text)
+    if not match:
+        return None
+    year = int(match.group(1))
+    return year if 1900 <= year <= 2099 else None
+
+
+def parse_year_range(value: Any) -> tuple[int | None, int | None]:
+    if isinstance(value, dict):
+        return (
+            parse_year_value(value.get("min") or value.get("minYear") or value.get("from")),
+            parse_year_value(value.get("max") or value.get("maxYear") or value.get("to")),
+        )
+    text = str(value or "").strip()
+    if not text:
+        return None, None
+    range_match = re.search(r"\b(19\d{2}|20\d{2})\b\s*(?:-|–|—|to|through|thru)\s*\b(19\d{2}|20\d{2})\b", text, re.I)
+    if range_match:
+        return int(range_match.group(1)), int(range_match.group(2))
+    plus_match = re.search(r"\b(19\d{2}|20\d{2})\b\s*\+", text)
+    if plus_match:
+        return int(plus_match.group(1)), None
+    return parse_year_value(text), None
+
+
+def year_range_matches(min_year: int | None, max_year: int | None, haystack: str) -> bool:
+    if min_year is None and max_year is None:
+        return True
+    year = card_year_from_text(haystack)
+    if year is None:
+        return False
+    if min_year is not None and year < min_year:
+        return False
+    if max_year is not None and year > max_year:
+        return False
+    return True
 
 
 def is_block_rule_line(value: Any) -> bool:

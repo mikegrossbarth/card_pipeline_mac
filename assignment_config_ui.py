@@ -328,6 +328,8 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.payout_source_path = tk.StringVar()
         self.reset_weekday = tk.StringVar(value=DEFAULT_COMPANY_RESET_WEEKDAY)
         self.reset_time = tk.StringVar(value=DEFAULT_COMPANY_RESET_TIME)
+        self.manual_min_year = tk.StringVar()
+        self.manual_max_year = tk.StringVar()
         self.status = tk.StringVar(value="Create or edit a company, then save.")
         self.preview_status = tk.StringVar(value="No source file selected.")
         self.google_status = tk.StringVar(value="")
@@ -477,14 +479,22 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.manual_rule_panel = ttk.Frame(self.body, style="AssignPanel.TFrame", padding=12)
         self.manual_rule_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         self.manual_rule_panel.columnconfigure(0, weight=1)
-        self.manual_rule_panel.rowconfigure(2, weight=1)
+        self.manual_rule_panel.rowconfigure(3, weight=1)
         rule_header = ttk.Frame(self.manual_rule_panel, style="AssignPanel.TFrame")
         rule_header.grid(row=0, column=0, sticky="ew")
         ttk.Label(rule_header, text="Manual Rule Builder", style="AssignTitle.TLabel").pack(side=tk.LEFT)
         ttk.Button(rule_header, text="Add Rule", command=self._add_rule_row, style="AssignSoft.TButton").pack(side=tk.RIGHT)
         ttk.Label(self.manual_rule_panel, text="Used when Rule Source is Manual rules.", style="AssignMuted.TLabel").grid(row=1, column=0, sticky=tk.W, pady=(3, 8))
+        year_frame = ttk.Frame(self.manual_rule_panel, style="AssignPanel.TFrame")
+        year_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        ttk.Label(year_frame, text="Company Card Year Range", style="Assign.TLabel").grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
+        ttk.Label(year_frame, text="Min Year", style="AssignMuted.TLabel").grid(row=0, column=1, sticky=tk.W, padx=(0, 6))
+        ttk.Entry(year_frame, textvariable=self.manual_min_year, width=10, style="Assign.TEntry").grid(row=0, column=2, sticky=tk.W)
+        ttk.Label(year_frame, text="Max Year", style="AssignMuted.TLabel").grid(row=0, column=3, sticky=tk.W, padx=(14, 6))
+        ttk.Entry(year_frame, textvariable=self.manual_max_year, width=10, style="Assign.TEntry").grid(row=0, column=4, sticky=tk.W)
+        ttk.Label(year_frame, text="Example: Fanatics min year 1990.", style="AssignMuted.TLabel").grid(row=0, column=5, sticky=tk.W, padx=(14, 0))
         rules_view = ttk.Frame(self.manual_rule_panel, style="AssignPanel.TFrame")
-        rules_view.grid(row=2, column=0, sticky="nsew")
+        rules_view.grid(row=3, column=0, sticky="nsew")
         rules_view.columnconfigure(0, weight=1)
         rules_view.rowconfigure(0, weight=1)
         self.rules_canvas = tk.Canvas(rules_view, bg="#1f1f1f", highlightthickness=0, borderwidth=0)
@@ -757,6 +767,8 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.payout_materialized_source = company.get("payout") if isinstance(company.get("payout"), dict) else None
         rules_payload = self._load_json_source(company.get("rules") or company.get("rules_source") or company.get("rulesSource"))
         payout_payload = self._load_json_source(company.get("payout") or company.get("payout_source") or company.get("payoutSource"))
+        self.manual_min_year.set(str((rules_payload or {}).get("minYear") or (rules_payload or {}).get("min_year") or ""))
+        self.manual_max_year.set(str((rules_payload or {}).get("maxYear") or (rules_payload or {}).get("max_year") or ""))
         self._set_rule_rows(rules_payload.get("rules") if isinstance(rules_payload, dict) else [])
         self._set_payout_rows(payout_payload.get("tiers") if isinstance(payout_payload, dict) else [])
         if self.rule_source_mode.get() == "manual" and self.payout_source_mode.get() == "manual":
@@ -787,6 +799,8 @@ class AssignmentRulesDialog(tk.Toplevel):
         self.payout_source_path.set("")
         self.rule_materialized_source = None
         self.payout_materialized_source = None
+        self.manual_min_year.set("")
+        self.manual_max_year.set("")
         self._reset_preview_status()
         self._set_rule_rows([])
         self._set_payout_rows([])
@@ -1072,7 +1086,12 @@ class AssignmentRulesDialog(tk.Toplevel):
                 return ""
         self.rules_dir.mkdir(parents=True, exist_ok=True)
         rules_path = self.rules_dir / f"{safe_stem(name)}-rules.json"
-        rules_path.write_text(json.dumps(self._rules_payload(), indent=2), encoding="utf-8")
+        try:
+            rules_payload = self._rules_payload()
+        except ValueError as error:
+            messagebox.showinfo("Manual rules", str(error))
+            return ""
+        rules_path.write_text(json.dumps(rules_payload, indent=2), encoding="utf-8")
         return str(rules_path)
 
     def _save_or_link_payout(self, name: str, rule_source: str | dict[str, Any]) -> str | dict[str, Any]:
@@ -1380,10 +1399,27 @@ class AssignmentRulesDialog(tk.Toplevel):
             self.status.set("Saved and reloaded Assignment rules.")
 
     def _rules_payload(self) -> dict[str, Any]:
+        min_year = self._validated_year(self.manual_min_year.get(), "Min Year")
+        max_year = self._validated_year(self.manual_max_year.get(), "Max Year")
+        if min_year and max_year and min_year > max_year:
+            raise ValueError("Min Year cannot be later than Max Year.")
         return {
             "rules": [self._rule_payload(row) for row in self.rule_rows],
             "blocks": [],
+            "minYear": str(min_year) if min_year else "",
+            "maxYear": str(max_year) if max_year else "",
         }
+
+    def _validated_year(self, value: str, label: str) -> int | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if not re.fullmatch(r"(?:19|20)\d{2}", text):
+            raise ValueError(f"{label} must be a four-digit year, such as 1990.")
+        year = int(text)
+        if year < 1900 or year > 2099:
+            raise ValueError(f"{label} must be between 1900 and 2099.")
+        return year
 
     def _rule_payload(self, row: dict[str, Any]) -> dict[str, Any]:
         return {

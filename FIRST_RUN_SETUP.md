@@ -289,6 +289,8 @@ In L.U.C.A.S:
 6. choose a payout source
 7. save the company
 
+For manual rules, use **Company Card Year Range** when a company has a broad year cutoff. For example, set Fanatics **Min Year** to `1990` so pre-1990 cards are rejected before sport/value rules are evaluated.
+
 For Google Keep rule sources, sync is done per company:
 
 ```text

@@ -1563,6 +1563,54 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertIn("$100 to $299", decision.reason)
         self.assertIn("$500 to $999", decision.reason)
 
+    def test_company_year_range_rejects_cards_outside_manual_range(self) -> None:
+        rules = assignment_engine.parse_rules(
+            json.dumps(
+                {
+                    "minYear": "1990",
+                    "rules": [
+                        {
+                            "sports": ["football"],
+                            "priceRanges": [{"min": "100", "max": "2000"}],
+                        }
+                    ],
+                }
+            )
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Fanatics",
+                    rules,
+                    [assignment_engine.PayoutTier(100, 2000, 0.93, "Football")],
+                    value_source="card_ladder",
+                )
+            ]
+        )
+        modern = WorkbookRow(
+            excel_row=2,
+            cert_number="59840219",
+            grader="PSA",
+            card_title="2018 Panini Prizm Stained Glass SG8 Josh Allen PSA 9",
+            card_ladder_value=1527,
+            category="football",
+        )
+        too_old = WorkbookRow(
+            excel_row=3,
+            cert_number="123",
+            grader="PSA",
+            card_title="1989 Score Barry Sanders PSA 9",
+            card_ladder_value=1527,
+            category="football",
+        )
+
+        modern_decision, old_decision = engine.evaluate(modern)[0], engine.evaluate(too_old)[0]
+
+        self.assertTrue(modern_decision.accepted)
+        self.assertFalse(old_decision.accepted)
+        self.assertIn("card year 1989", old_decision.reason)
+        self.assertIn("1990 to current", old_decision.reason)
+
     def test_person_payout_policy_locks_companies_and_overrides_rates(self) -> None:
         row = WorkbookRow(
             excel_row=2,
