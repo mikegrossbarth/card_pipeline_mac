@@ -12139,6 +12139,8 @@ class CardPipelineApp(tk.Tk):
 
         phase_started = time.perf_counter()
         old_marker = dict(self.home_sheet_markers.get(key, {}))
+        if self._is_personal_lucas():
+            old_marker["assigned_person"] = self._personal_default_person()
         self._delete_sheet_marker(key)
         new_key = self._home_sheet_key(target_stage, destination.name)
         self.home_sheet_markers[new_key] = self._marker_for_stage(old_marker, target_stage)

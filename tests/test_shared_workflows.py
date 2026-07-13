@@ -270,6 +270,51 @@ class SharedStateTests(unittest.TestCase):
         self.assertEqual(getattr(dummy, "refresh_working_calls", 0), 0)
         self.assertEqual(getattr(dummy, "refresh_received_calls", 0), 0)
 
+    def test_personal_lucas_right_click_move_forces_mikey(self) -> None:
+        class PersonalMoveDummy:
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _sheet_path_for_stage = app.CardPipelineApp._sheet_path_for_stage
+            _marker_for_stage = app.CardPipelineApp._marker_for_stage
+            _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+
+            def _is_personal_lucas(self):
+                return True
+
+            def _delete_sheet_marker(self, key):
+                self.home_sheet_markers.pop(key, None)
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            incoming_dir = root / "INCOMING SHEETS"
+            working_dir = root / "WORKING SHEETS"
+            received_dir = root / "RECEIVED SHEETS"
+            incoming_dir.mkdir(parents=True)
+            working_dir.mkdir()
+            received_dir.mkdir()
+            (working_dir / "Personal Lot.xlsx").write_text("placeholder", encoding="utf-8")
+
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            app.INCOMING_SHEETS_DIR = incoming_dir
+            app.WORKING_SHEETS_DIR = working_dir
+            app.RECEIVED_SHEETS_DIR = received_dir
+            dummy = PersonalMoveDummy()
+            dummy.home_sheet_markers = {"Working|Personal Lot.xlsx": {"assigned_person": "Kevin Hambone"}}
+            dummy.home_sheet_paths = {"Incoming": {}, "Working": {"Personal Lot.xlsx": working_dir / "Personal Lot.xlsx"}, "Received": {}}
+            try:
+                moved_key, cleanup = dummy._move_home_sheet_to_stage("Working|Personal Lot.xlsx", "Incoming")
+
+                self.assertEqual(moved_key, "Incoming|Personal Lot.xlsx")
+                self.assertEqual(cleanup, {})
+                self.assertEqual(dummy.home_sheet_markers[moved_key]["assigned_person"], "Mikey")
+            finally:
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.RECEIVED_SHEETS_DIR = old_received
+
     def test_home_sheet_sort_modes(self) -> None:
         class SortVar:
             def __init__(self, value):
