@@ -6643,6 +6643,77 @@ class CardPipelineApp(tk.Tk):
             lines.append(f"- {decision.company}: {status} | {source_value} | {payout} | {reason}")
         return "\n".join(lines)
 
+    def _assignment_explanation_for_workbook_row(self, row: WorkbookRow, label: str = "Workflow row") -> str:
+        person = self._assignment_person_for_row(row)
+        recommendation = self.assignment_engine.recommend(row, person=person)
+        decisions = self.assignment_engine.evaluate(row, person=person)
+        lines = [
+            row.card_title or row.cert_number or row.item_id or label,
+            "",
+            f"Person: {person or 'Unassigned'}",
+            f"Sport: {row.category or 'blank'}",
+            f"Cert/Item ID: {row.cert_number or row.item_id or 'blank'}",
+            f"Grader: {row.grader or 'blank'}",
+            f"Purchase: {format_money(self._money_value(row.existing_value) or 0.0)}",
+            f"CL value: {format_money(self._money_value(row.card_ladder_value) or 0.0)}",
+            f"Comps: {format_money(self._money_value(row.card_ladder_comps_average) or 0.0)}",
+            f"CY estimate: {format_money(self._money_value(row.cy_value) or 0.0)}",
+            f"CY confidence: {row.cy_confidence or 'blank'}",
+            f"Current Best Company: {row.best_company or 'blank'}",
+            f"Current Est. Payout: {format_money(row.estimated_payout) if row.estimated_payout is not None else 'blank'}",
+            "",
+            f"Recommended: {recommendation.company or NO_COMPANY_TAKES_LABEL} | {format_money(recommendation.payout) if recommendation.payout is not None else 'no payout'}",
+            "",
+            "Rule decisions:",
+        ]
+        if not decisions:
+            lines.append("No assignment companies are loaded.")
+        for decision in decisions:
+            status = "TAKES" if decision.accepted and decision.payout is not None else "NO"
+            payout = format_money(decision.payout) if decision.payout is not None else "no payout"
+            source_value = format_money(decision.source_value) if decision.source_value is not None else "no source value"
+            reason = self._assignment_decision_detail(decision)
+            lines.append(f"- {decision.company}: {status} | {source_value} | {payout} | {reason}")
+        return "\n".join(lines)
+
+    def _show_assignment_explanation_popup(self, explanation: str) -> None:
+        popup = tk.Toplevel(self)
+        popup.title("Assignment Explanation")
+        popup.configure(bg=self.colors["bg"])
+        popup.transient(self)
+        popup.geometry("760x520")
+        frame = ttk.Frame(popup, style="App.TFrame", padding=18)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Assignment Explanation", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).pack(anchor=tk.W, pady=(0, 10))
+        text = tk.Text(frame, bg="#111111", fg="#f5f5f5", insertbackground="#ffffff", relief=tk.FLAT, wrap=tk.WORD, height=22)
+        text.pack(fill=tk.BOTH, expand=True)
+        text.insert("1.0", explanation)
+        text.configure(state=tk.DISABLED)
+        actions = ttk.Frame(frame, style="App.TFrame")
+        actions.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(actions, text="Copy Details", command=lambda: self._copy_inventory_text(explanation, "assignment explanation"), style="Soft.TButton").pack(side=tk.LEFT)
+        ttk.Button(actions, text="Close", command=popup.destroy, style="Primary.TButton").pack(side=tk.RIGHT)
+
+    def _workbook_row_for_tree_iid(self, tree: ttk.Treeview, row_id: str) -> WorkbookRow | None:
+        try:
+            excel_row = int(row_id)
+        except (TypeError, ValueError):
+            return None
+        rows = self.state.rows if hasattr(self, "comp_tree") and tree is self.comp_tree else self.review_rows
+        return next((row for row in rows if row.excel_row == excel_row), None)
+
+    def explain_selected_workflow_assignment(self, tree: ttk.Treeview) -> None:
+        selected = tree.selection() if tree is not None else ()
+        if not selected:
+            messagebox.showinfo("Explain Assignment", "Select one row first.")
+            return
+        row = self._workbook_row_for_tree_iid(tree, selected[0])
+        if not row:
+            messagebox.showinfo("Explain Assignment", "Could not find that row.")
+            return
+        label = "Comp row" if hasattr(self, "comp_tree") and tree is self.comp_tree else "Receive row"
+        self._show_assignment_explanation_popup(self._assignment_explanation_for_workbook_row(row, label))
+
     def _assignment_decision_detail(self, decision: assignment_engine.AssignmentDecision) -> str:
         if decision.accepted and decision.payout is not None:
             details: list[str] = []
@@ -6674,22 +6745,7 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("Explain Assignment", "Could not find that inventory row.")
             return
         explanation = self._assignment_explanation_for_record(record)
-        popup = tk.Toplevel(self)
-        popup.title("Assignment Explanation")
-        popup.configure(bg=self.colors["bg"])
-        popup.transient(self)
-        popup.geometry("760x520")
-        frame = ttk.Frame(popup, style="App.TFrame", padding=18)
-        frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text="Assignment Explanation", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).pack(anchor=tk.W, pady=(0, 10))
-        text = tk.Text(frame, bg="#111111", fg="#f5f5f5", insertbackground="#ffffff", relief=tk.FLAT, wrap=tk.WORD, height=22)
-        text.pack(fill=tk.BOTH, expand=True)
-        text.insert("1.0", explanation)
-        text.configure(state=tk.DISABLED)
-        actions = ttk.Frame(frame, style="App.TFrame")
-        actions.pack(fill=tk.X, pady=(12, 0))
-        ttk.Button(actions, text="Copy Details", command=lambda: self._copy_inventory_text(explanation, "assignment explanation"), style="Soft.TButton").pack(side=tk.LEFT)
-        ttk.Button(actions, text="Close", command=popup.destroy, style="Primary.TButton").pack(side=tk.RIGHT)
+        self._show_assignment_explanation_popup(explanation)
 
     def _bind_context_menu(self, widget: tk.Widget, callback) -> None:
         for sequence in ("<Button-3>", "<Button-2>", "<Control-Button-1>", "<Command-Button-1>"):
@@ -6709,6 +6765,7 @@ class CardPipelineApp(tk.Tk):
         menu.add_command(label="Copy Cell", command=lambda row=row_id, column=column_id: self.copy_tree_cell_value(self.comp_tree, row, column, "comp cell"))
         menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_tree_row_values(self.comp_tree, row, "comp row"))
         menu.add_separator()
+        menu.add_command(label="Explain Assignment", command=lambda target=self.comp_tree: self.explain_selected_workflow_assignment(target))
         menu.add_command(label="Add Row", command=self.add_comp_row)
         menu.add_command(label="Delete Selected", command=self.delete_selected_comp_rows)
         try:
@@ -6733,6 +6790,7 @@ class CardPipelineApp(tk.Tk):
         menu.add_command(label="Copy Cell", command=lambda row=row_id, column=column_id: self.copy_tree_cell_value(tree, row, column, f"{label_prefix} cell"))
         menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_tree_row_values(tree, row, f"{label_prefix} row"))
         menu.add_separator()
+        menu.add_command(label="Explain Assignment", command=lambda target=tree: self.explain_selected_workflow_assignment(target))
         menu.add_command(label="Delete Selected", command=self.delete_selected_review_rows)
         try:
             menu.tk_popup(event.x_root, event.y_root)
