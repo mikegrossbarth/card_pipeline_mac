@@ -115,7 +115,6 @@ async function pollDesktopBridge() {
       const command = response?.command;
       if (!response) continue;
       activeBridgeUrl = bridgeUrl;
-      maybeSyncKeepSources(bridgeUrl, response).catch(() => {});
       if (!command || command.type !== "RUN_ALL_COMPS") continue;
       await fetch(`${bridgeUrl}/ack`, {
         method: "POST",
