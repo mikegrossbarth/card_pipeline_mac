@@ -299,7 +299,7 @@ Profit reads the profit ledger and, when requested, company sheets.
 
 Use Profit to:
 
-- View daily/overall profit charts.
+- View daily, overall, profit-to-sales-ratio, and profit-per-company charts.
 - View month, year, YTD, and total profit.
 - Search sold cards.
 - Review sold sheets.

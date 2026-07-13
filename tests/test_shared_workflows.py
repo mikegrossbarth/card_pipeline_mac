@@ -7892,6 +7892,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
             _profit_chart_lines = app.CardPipelineApp._profit_chart_lines
             _profit_sport_label = app.CardPipelineApp._profit_sport_label
+            _profit_company_label = app.CardPipelineApp._profit_company_label
+            _profit_company_chart_series = app.CardPipelineApp._profit_company_chart_series
             _profit_chart_bucket_label = app.CardPipelineApp._profit_chart_bucket_label
             _profit_chart_bucket_display = app.CardPipelineApp._profit_chart_bucket_display
             _profit_chart_bucket_range = app.CardPipelineApp._profit_chart_bucket_range
@@ -7957,6 +7959,25 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertAlmostEqual(line_lookup["Football"][0], 0.20)
         self.assertAlmostEqual(line_lookup["Baseball"][0], 0.20)
         self.assertAlmostEqual(line_lookup["Basketball"][1], 0.25)
+
+        company_rows = [
+            {"assigned_person": "Lucas", "date_added": "2026-06-17", "profit": 30, "company": "Fanatics"},
+            {"assigned_person": "Lucas", "date_added": "2026-06-16", "profit": -40, "company": "Arena Club"},
+            {"assigned_person": "Lucas", "date_added": "2026-06-15", "profit": 10, "company": "Fanatics"},
+            {"assigned_person": "Lucas", "date_added": "2026-06-14", "profit": 5, "company": ""},
+            {"assigned_person": "Lucas", "date_added": "2026-06-17", "profit": -100, "record_type": "expense", "company": "Fees"},
+        ]
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "5 Days")
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Profit by Company")
+        dummy.profit_plot_var = types.SimpleNamespace(get=lambda: "By Sport")
+        company_labels, company_values = dummy._profit_company_chart_series(company_rows)
+        self.assertEqual(company_labels, ["Fanatics", "Arena Club", "General Sold"])
+        self.assertEqual(company_values, [40.0, -40.0, 5.0])
+        company_chart_labels, company_lines, company_percent_mode = dummy._profit_chart_lines(company_rows)
+        self.assertFalse(company_percent_mode)
+        self.assertEqual(company_chart_labels, company_labels)
+        self.assertEqual(company_lines[0]["chart"], "bar")
+        self.assertEqual(dummy._profit_chart_title(), "Profit by Company (5 Days)")
 
     def test_profit_month_period_uses_rolling_thirty_days(self) -> None:
         class ProfitDummy:
