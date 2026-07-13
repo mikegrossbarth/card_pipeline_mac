@@ -935,6 +935,8 @@ class CardPipelineApp(tk.Tk):
         self.home_selected_sheet_key = ""
         self.home_person_var = tk.StringVar()
         self.home_sheet_sort_var = tk.StringVar(value="Date Created")
+        self.home_incoming_volume_sort_column = "sheet"
+        self.home_incoming_volume_sort_descending = False
         self.payout_person_var = tk.StringVar()
         self.payout_status_var = tk.StringVar(value="No unpaid sheets loaded.")
         self.payout_summary_people: dict[str, str] = {}
@@ -1865,23 +1867,33 @@ class CardPipelineApp(tk.Tk):
         right = ttk.Frame(body, style="App.TFrame")
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        metrics = ttk.Frame(right, style="App.TFrame")
+        metrics = tk.PanedWindow(
+            right,
+            orient=tk.VERTICAL,
+            sashwidth=6,
+            sashrelief=tk.RAISED,
+            bg=palette["bg"],
+            bd=0,
+            showhandle=False,
+        )
         metrics.pack(fill=tk.BOTH, expand=True)
+        self.home_metrics_pane = metrics
         volume_panel = ttk.Frame(metrics, style="Panel.TFrame", padding=(12, 12))
-        volume_panel.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         ttk.Label(volume_panel, text="Incoming Volume by Sheet", style="Panel.TLabel").pack(anchor=tk.W)
+        incoming_volume_headings = {"sheet": "Sheet", "person": "Person", "cards": "Cards", "received": "Received", "volume": "Price Volume", "status": "Status"}
         self.incoming_volume_tree = self._build_home_tree(
             volume_panel,
             columns=("sheet", "person", "cards", "received", "volume", "status"),
-            headings={"sheet": "Sheet", "person": "Person", "cards": "Cards", "received": "Received", "volume": "Price Volume", "status": "Status"},
+            headings=incoming_volume_headings,
             widths={"sheet": 320, "person": 130, "cards": 80, "received": 95, "volume": 130, "status": 150},
             height=9,
         )
+        self.incoming_volume_headings = incoming_volume_headings
+        self._configure_sortable_tree_headings(self.incoming_volume_tree, incoming_volume_headings, "home_incoming_volume")
         self.incoming_volume_tree.tag_configure("total_divider", background="#1f1f1f", foreground="#ffffff", font=("Segoe UI Semibold", 10))
         self.incoming_volume_tree.tag_configure("total_row", background="#242424", foreground="#ffffff", font=("Segoe UI Semibold", 10))
 
         partial_panel = ttk.Frame(metrics, style="Panel.TFrame", padding=(12, 12))
-        partial_panel.pack(fill=tk.BOTH, expand=True)
         ttk.Label(partial_panel, text="Partially Received Incoming Sheets", style="Panel.TLabel").pack(anchor=tk.W)
         self.partial_received_tree = self._build_home_tree(
             partial_panel,
@@ -1891,6 +1903,8 @@ class CardPipelineApp(tk.Tk):
             height=8,
         )
         self.partial_received_tree.tag_configure("partial_sheet", background="#4a3d12", foreground="#fff3b0")
+        metrics.add(volume_panel, minsize=150, stretch="always")
+        metrics.add(partial_panel, minsize=150, stretch="always")
 
     def _build_home_tree(
         self,
@@ -1923,13 +1937,25 @@ class CardPipelineApp(tk.Tk):
         return tree
 
     def _configure_sortable_tree_headings(self, tree: ttk.Treeview, headings: dict[str, str], table: str) -> None:
-        sort_column = self.inventory_sort_column if table == "inventory" else self.profit_sort_column
-        descending = self.inventory_sort_descending if table == "inventory" else self.profit_sort_descending
+        if table == "inventory":
+            sort_column = self.inventory_sort_column
+            descending = self.inventory_sort_descending
+        elif table == "home_incoming_volume":
+            sort_column = self.home_incoming_volume_sort_column
+            descending = self.home_incoming_volume_sort_descending
+        else:
+            sort_column = self.profit_sort_column
+            descending = self.profit_sort_descending
         for column in tree["columns"]:
             label = headings.get(column, column)
             if column == sort_column:
                 label = f"{label} {'v' if descending else '^'}"
-            command = (lambda col=column: self._sort_inventory_by_column(col)) if table == "inventory" else (lambda col=column: self._sort_profit_by_column(col))
+            if table == "inventory":
+                command = lambda col=column: self._sort_inventory_by_column(col)
+            elif table == "home_incoming_volume":
+                command = lambda col=column: self._sort_home_incoming_volume_by_column(col)
+            else:
+                command = lambda col=column: self._sort_profit_by_column(col)
             tree.heading(column, text=label, anchor=tk.W, command=command)
 
     def _sort_inventory_by_column(self, column: str) -> None:
@@ -1939,6 +1965,14 @@ class CardPipelineApp(tk.Tk):
             self.inventory_sort_column = column
             self.inventory_sort_descending = False
         self.refresh_inventory_tab()
+
+    def _sort_home_incoming_volume_by_column(self, column: str) -> None:
+        if column == self.home_incoming_volume_sort_column:
+            self.home_incoming_volume_sort_descending = not self.home_incoming_volume_sort_descending
+        else:
+            self.home_incoming_volume_sort_column = column
+            self.home_incoming_volume_sort_descending = column in {"cards", "received", "volume"}
+        self._refresh_home_metrics()
 
     def _sort_profit_by_column(self, column: str) -> None:
         if column == self.profit_sort_column:
@@ -1958,9 +1992,11 @@ class CardPipelineApp(tk.Tk):
         return ""
 
     def _record_sort_value(self, record: dict[str, object], column: str, table: str, mode: str = "") -> tuple[bool, object]:
-        money_columns = {"purchase", "sale", "profit", "amount", "payout", "card_ladder", "comps", "cy_estimate"}
-        int_columns = {"cards"}
-        if table == "inventory":
+        money_columns = {"purchase", "sale", "profit", "amount", "payout", "card_ladder", "comps", "cy_estimate", "volume"}
+        int_columns = {"cards", "received"}
+        if table == "home_incoming_volume":
+            raw = record.get(column)
+        elif table == "inventory":
             field_map = {
                 "date": "date_added",
                 "type": "item_type",
@@ -10374,6 +10410,7 @@ class CardPipelineApp(tk.Tk):
         total_cards = 0
         total_received = 0
         total_volume = 0.0
+        volume_rows: list[dict[str, object]] = []
         for name in incoming_names:
             key = self._home_sheet_key("Incoming", name)
             summary = self.home_sheet_summaries.get(key, {})
@@ -10385,17 +10422,15 @@ class CardPipelineApp(tk.Tk):
             total_cards += total
             total_received += received
             total_volume += volume
-            self.incoming_volume_tree.insert(
-                "",
-                tk.END,
-                values=(
-                    name,
-                    str(marker.get("assigned_person") or ""),
-                    total,
-                    received,
-                    format_money(volume),
-                    status,
-                ),
+            volume_rows.append(
+                {
+                    "sheet": name,
+                    "person": str(marker.get("assigned_person") or ""),
+                    "cards": total,
+                    "received": received,
+                    "volume": volume,
+                    "status": status,
+                }
             )
             if summary.get("partially_received"):
                 self.partial_received_tree.insert(
@@ -10411,6 +10446,32 @@ class CardPipelineApp(tk.Tk):
                         "Yes" if marker.get("all_received") else "",
                     ),
                 )
+        if hasattr(self, "_sorted_records"):
+            volume_rows = self._sorted_records(
+                volume_rows,
+                getattr(self, "home_incoming_volume_sort_column", "sheet"),
+                bool(getattr(self, "home_incoming_volume_sort_descending", False)),
+                "home_incoming_volume",
+            )
+        if hasattr(self, "_configure_sortable_tree_headings"):
+            self._configure_sortable_tree_headings(
+                self.incoming_volume_tree,
+                getattr(self, "incoming_volume_headings", {"sheet": "Sheet", "person": "Person", "cards": "Cards", "received": "Received", "volume": "Price Volume", "status": "Status"}),
+                "home_incoming_volume",
+            )
+        for record in volume_rows:
+            self.incoming_volume_tree.insert(
+                "",
+                tk.END,
+                values=(
+                    record.get("sheet") or "",
+                    record.get("person") or "",
+                    record.get("cards") or 0,
+                    record.get("received") or 0,
+                    format_money(record.get("volume")),
+                    record.get("status") or "",
+                ),
+            )
         if incoming_names:
             self.incoming_volume_tree.insert(
                 "",
