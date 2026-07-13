@@ -8712,23 +8712,38 @@ class CardPipelineApp(tk.Tk):
         label = str(record.get("company") or record.get("buyer") or "").strip()
         return label or "General Sold"
 
-    def _profit_company_chart_series(self, rows: list[dict[str, object]]) -> tuple[list[str], list[float]]:
-        totals: dict[str, float] = {}
+    def _profit_company_chart_series(self, rows: list[dict[str, object]]) -> tuple[list[str], list[dict[str, object]]]:
+        monthly = self._profit_period_label() in {"Year", "YTD", "Total"}
+        buckets = self._profit_chart_bucket_range(rows, monthly)
+        profit_by_company: dict[str, dict[str, float]] = {}
         for record in rows:
             if str(record.get("record_type") or "").strip().lower() == "expense":
                 continue
             profit = self._money_value(record.get("profit"))
-            if profit is None:
+            sold_date = self._profit_record_date(record.get("date_added"))
+            if profit is None or sold_date is None:
                 continue
             company = self._profit_company_label(record)
-            totals[company] = totals.get(company, 0.0) + float(profit)
-        ordered = sorted(totals.items(), key=lambda item: abs(item[1]), reverse=True)
-        return [company for company, _value in ordered], [value for _company, value in ordered]
+            bucket = self._profit_chart_bucket_label(sold_date)
+            profit_by_company.setdefault(company, {})[bucket] = profit_by_company.setdefault(company, {}).get(bucket, 0.0) + float(profit)
+        if not buckets:
+            buckets = sorted({bucket for company_values in profit_by_company.values() for bucket in company_values})
+        company_totals = {
+            company: sum(abs(value) for value in company_values.values())
+            for company, company_values in profit_by_company.items()
+        }
+        companies = [company for company, _total in sorted(company_totals.items(), key=lambda item: item[1], reverse=True)][:6]
+        colors = ["#22c55e", "#38bdf8", "#eab308", "#fb7185", "#c084fc", "#f97316"]
+        lines: list[dict[str, object]] = []
+        for index, company in enumerate(companies):
+            values = [profit_by_company.get(company, {}).get(bucket, 0.0) for bucket in buckets]
+            lines.append({"label": company, "values": values, "color": colors[index % len(colors)]})
+        return buckets, lines
 
     def _profit_chart_lines(self, rows: list[dict[str, object]]) -> tuple[list[str], list[dict[str, object]], bool]:
         if self._profit_graph_label() == "Profit by Company":
-            labels, values = self._profit_company_chart_series(rows)
-            return labels, [{"label": "Profit by Company", "values": values, "color": "#22c55e", "chart": "bar"}], False
+            labels, lines = self._profit_company_chart_series(rows)
+            return labels, lines, False
         if self._profit_plot_label() != "By Sport":
             labels, values = self._profit_chart_series(rows)
             return labels, [{"label": self._profit_graph_label(), "values": values, "color": "#22c55e"}], self._profit_graph_label() == "Profit to Sales Ratio"
@@ -9608,34 +9623,19 @@ class CardPipelineApp(tk.Tk):
             canvas.create_line(x, pad_top, x, pad_top + plot_h, fill="#2a2a2a")
         canvas.create_line(pad_left, pad_top, pad_left, pad_top + plot_h, fill="#555555")
         canvas.create_line(pad_left, zero_y, pad_left + plot_w, zero_y, fill="#555555")
-        bar_mode = any(str(line.get("chart") or "") == "bar" for line in chart_lines)
-        if bar_mode:
-            line = chart_lines[0]
+        for line in chart_lines:
             line_values = [float(value) for value in line.get("values", [])]
-            slot_w = plot_w / max(len(labels), 1)
-            bar_w = max(8, min(64, slot_w * 0.58))
-            for index, value in enumerate(line_values):
-                x = pad_left + slot_w * index + slot_w / 2
-                y = y_at(value)
-                fill = "#ef4444" if value < 0 and not percent_mode else str(line.get("color") or "#22c55e")
-                canvas.create_rectangle(x - bar_w / 2, min(y, zero_y), x + bar_w / 2, max(y, zero_y), fill=fill, outline="")
-                if len(labels) <= 10:
-                    canvas.create_text(x, y - 12 if value >= 0 else y + 12, text=value_label(value), fill=fill, font=("Segoe UI", 8, "bold"))
-        else:
-            for line in chart_lines:
-                line_values = [float(value) for value in line.get("values", [])]
-                color = str(line.get("color") or "#22c55e")
-                points = [(x_at(index), y_at(value)) for index, value in enumerate(line_values)]
-                for first, second in zip(points, points[1:]):
-                    canvas.create_line(*first, *second, fill=color, width=3)
-                for index, (x, y) in enumerate(points):
-                    value = line_values[index]
-                    point_color = "#ef4444" if value < 0 and not percent_mode else color
-                    canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=point_color, outline="")
+            color = str(line.get("color") or "#22c55e")
+            points = [(x_at(index), y_at(value)) for index, value in enumerate(line_values)]
+            for first, second in zip(points, points[1:]):
+                canvas.create_line(*first, *second, fill=color, width=3)
+            for index, (x, y) in enumerate(points):
+                value = line_values[index]
+                point_color = "#ef4444" if value < 0 and not percent_mode else color
+                canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=point_color, outline="")
         for index, label in enumerate(labels):
             if len(labels) <= 14 or index % max(1, len(labels) // 8) == 0:
-                label_text = str(label) if bar_mode else self._profit_chart_bucket_display(label)
-                canvas.create_text(x_at(index), height - max(18, pad_bottom - 20), text=label_text, fill="#b3b3b3", font=("Segoe UI", 8))
+                canvas.create_text(x_at(index), height - max(18, pad_bottom - 20), text=self._profit_chart_bucket_display(label), fill="#b3b3b3", font=("Segoe UI", 8))
         legend_x = pad_left
         legend_y = 8
         for line in chart_lines[:6]:

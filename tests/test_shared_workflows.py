@@ -7970,13 +7970,16 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.profit_period_var = types.SimpleNamespace(get=lambda: "5 Days")
         dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Profit by Company")
         dummy.profit_plot_var = types.SimpleNamespace(get=lambda: "By Sport")
-        company_labels, company_values = dummy._profit_company_chart_series(company_rows)
-        self.assertEqual(company_labels, ["Fanatics", "Arena Club", "General Sold"])
-        self.assertEqual(company_values, [40.0, -40.0, 5.0])
-        company_chart_labels, company_lines, company_percent_mode = dummy._profit_chart_lines(company_rows)
+        company_labels, company_lines = dummy._profit_company_chart_series(company_rows)
+        self.assertEqual(company_labels, ["2026-06-13", "2026-06-14", "2026-06-15", "2026-06-16", "2026-06-17"])
+        company_values = {line["label"]: line["values"] for line in company_lines}
+        self.assertEqual(company_values["Fanatics"], [0.0, 0.0, 10.0, 0.0, 30.0])
+        self.assertEqual(company_values["Arena Club"], [0.0, 0.0, 0.0, -40.0, 0.0])
+        self.assertEqual(company_values["General Sold"], [0.0, 5.0, 0.0, 0.0, 0.0])
+        company_chart_labels, company_chart_lines, company_percent_mode = dummy._profit_chart_lines(company_rows)
         self.assertFalse(company_percent_mode)
         self.assertEqual(company_chart_labels, company_labels)
-        self.assertEqual(company_lines[0]["chart"], "bar")
+        self.assertEqual([line["label"] for line in company_chart_lines], ["Fanatics", "Arena Club", "General Sold"])
         self.assertEqual(dummy._profit_chart_title(), "Profit by Company (5 Days)")
 
     def test_profit_month_period_uses_rolling_thirty_days(self) -> None:
