@@ -9833,6 +9833,7 @@ class CardPipelineApp(tk.Tk):
         archived_count = 0
         reconciled_count = 0
         duplicate_warnings: list[str] = []
+        duplicate_notices: list[str] = []
         conflict_files = self._shared_conflict_files()
         if conflict_files:
             errors.append(f"Shared conflicts: {', '.join(path.name for path in conflict_files[:3])}")
@@ -9847,6 +9848,7 @@ class CardPipelineApp(tk.Tk):
                 reconciliation = self._reconcile_accounted_home_sheets()
                 reconciled_count = len(reconciliation.get("moved") or [])
                 duplicate_warnings = list(reconciliation.get("warnings") or [])
+                duplicate_notices = list(reconciliation.get("notices") or [])
             except Exception as error:
                 errors.append(f"Reconcile: {error}")
         for kind, directory in (("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR), ("Received", RECEIVED_SHEETS_DIR)):
@@ -9875,8 +9877,10 @@ class CardPipelineApp(tk.Tk):
         if errors:
             self.status_var.set(f"Home refreshed with {len(errors)} sheet issue(s).")
         elif duplicate_warnings:
-            self.status_var.set(f"Home refreshed. {len(duplicate_warnings)} incoming/working sheet(s) already overlap inventory or sold cards.")
+            self.status_var.set(f"Home refreshed. {len(duplicate_warnings)} incoming/working sheet issue(s) need review.")
             self._warn_accounted_duplicate_sheets(duplicate_warnings)
+        elif duplicate_notices:
+            self.status_var.set(f"Home refreshed. {len(duplicate_notices)} partial incoming/working sheet(s) already have some accounted cards; remaining rows can still be received.")
         elif self._seller_warning_count("Working"):
             count = self._seller_warning_count("Working")
             self.status_var.set(f"Home metrics refreshed. {count} working seller sheet(s) need values.")
@@ -9890,7 +9894,7 @@ class CardPipelineApp(tk.Tk):
         record_performance_event(
             "home.refresh",
             perf_start,
-            f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived={archived_count} reconciled={reconciled_count} duplicate_warnings={len(duplicate_warnings)} reconcile_accounted={reconcile_accounted} errors={len(errors)}",
+            f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived={archived_count} reconciled={reconciled_count} duplicate_warnings={len(duplicate_warnings)} duplicate_notices={len(duplicate_notices)} reconcile_accounted={reconcile_accounted} errors={len(errors)}",
         )
 
     def _home_summary_cache_key(self, path: Path) -> str:
@@ -9949,7 +9953,7 @@ class CardPipelineApp(tk.Tk):
         }
 
     def _reconcile_accounted_home_sheets(self) -> dict[str, list[str]]:
-        result: dict[str, list[str]] = {"moved": [], "warnings": []}
+        result: dict[str, list[str]] = {"moved": [], "warnings": [], "notices": []}
         if not CARD_PIPELINE_DIR.exists():
             return result
         accounted = self._accounted_sheet_cert_index()
@@ -9975,7 +9979,7 @@ class CardPipelineApp(tk.Tk):
                     continue
                 missing = sheet_certs - accounted_certs
                 if missing:
-                    result["warnings"].append(
+                    result["notices"].append(
                         f"{path.name}: {len(matched)}/{len(sheet_certs)} cert(s) already exist in inventory/company/sold ledgers; {len(missing)} still unaccounted."
                     )
                     continue

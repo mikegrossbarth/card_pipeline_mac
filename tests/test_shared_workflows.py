@@ -4357,7 +4357,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.WORKING_SHEETS_DIR = old_working
                 app.RECEIVED_SHEETS_DIR = old_received
 
-    def test_partial_accounted_incoming_sheet_warns_without_moving(self) -> None:
+    def test_partial_accounted_incoming_sheet_notices_without_moving(self) -> None:
         class ReconcileDummy:
             _accounted_source_key = app.CardPipelineApp._accounted_source_key
             _add_accounted_cert = app.CardPipelineApp._add_accounted_cert
@@ -4408,8 +4408,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 result = dummy._reconcile_accounted_home_sheets()
 
                 self.assertEqual(result["moved"], [])
-                self.assertEqual(len(result["warnings"]), 1)
-                self.assertIn("1/2 cert(s) already exist", result["warnings"][0])
+                self.assertEqual(result["warnings"], [])
+                self.assertEqual(len(result["notices"]), 1)
+                self.assertIn("1/2 cert(s) already exist", result["notices"][0])
                 self.assertTrue(sheet_path.exists())
                 self.assertFalse((app.RECEIVED_SHEETS_DIR / "Lot B.xlsx").exists())
             finally:
