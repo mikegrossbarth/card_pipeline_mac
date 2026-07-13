@@ -1948,6 +1948,15 @@ class CardPipelineApp(tk.Tk):
             self.profit_sort_descending = False
         self.refresh_profit_tab()
 
+    def _profit_added_sort_value(self, record: dict[str, object]) -> str:
+        added_at = str(record.get("ledger_added_at") or record.get("created_at") or record.get("recorded_at") or "").strip()
+        if added_at:
+            return added_at
+        expense_id = str(record.get("expense_id") or "").strip()
+        if re.fullmatch(r"\d{14,20}", expense_id):
+            return expense_id
+        return ""
+
     def _record_sort_value(self, record: dict[str, object], column: str, table: str, mode: str = "") -> tuple[bool, object]:
         money_columns = {"purchase", "sale", "profit", "amount", "payout", "card_ladder", "comps", "cy_estimate"}
         int_columns = {"cards"}
@@ -2000,6 +2009,9 @@ class CardPipelineApp(tk.Tk):
                 raw = self._expense_related_label(record)
             else:
                 raw = record.get(field_map.get(column, column))
+            if column == "date":
+                text = str(raw or "").strip()
+                return not bool(text), (text.casefold(), self._profit_added_sort_value(record))
         if column in money_columns:
             value = self._money_value(raw)
             return value is None, value if value is not None else 0.0
@@ -8353,6 +8365,7 @@ class CardPipelineApp(tk.Tk):
             normalized["source_sheet"] = related_sheet if related_type in {"Card", "Sheet"} and related_sheet else "Expenses"
             normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
             normalized["notes"] = notes
+            normalized["ledger_added_at"] = str(normalized.get("ledger_added_at") or "").strip()
             normalized["ledger_key"] = self._profit_record_key(normalized)
             return normalized
         purchase = self._money_value(normalized.get("purchase_price"))
@@ -8370,6 +8383,7 @@ class CardPipelineApp(tk.Tk):
         normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
         normalized["original_source_sheet"] = str(normalized.get("original_source_sheet") or "").strip()
         normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
+        normalized["ledger_added_at"] = str(normalized.get("ledger_added_at") or "").strip()
         photo_paths = normalized.get("photo_paths") or normalized.get("photos") or []
         if isinstance(photo_paths, str):
             photo_paths = [part.strip() for part in re.split(r"[;\n]", photo_paths) if part.strip()]
@@ -8798,6 +8812,8 @@ class CardPipelineApp(tk.Tk):
                 keys = CardPipelineApp._profit_record_identity_keys(self, normalized)
                 if not keys or keys & existing_keys:
                     continue
+                if not str(normalized.get("ledger_added_at") or "").strip():
+                    normalized["ledger_added_at"] = datetime.now().isoformat(timespec="microseconds")
                 normalized["recorded_by"] = self.lucas_identity.get("display_name", "")
                 normalized["recorded_machine"] = self.lucas_identity.get("machine", "")
                 ledger.append(normalized)
@@ -9247,7 +9263,15 @@ class CardPipelineApp(tk.Tk):
                 self._save_profit_ledger(current)
                 ledger = current
         self.profit_rows = self._enrich_profit_records_with_people(ledger)
-        self.profit_rows.sort(key=lambda record: (str(record.get("date_added") or ""), str(record.get("company") or ""), str(record.get("card_title") or "")), reverse=True)
+        self.profit_rows.sort(
+            key=lambda record: (
+                str(record.get("date_added") or ""),
+                self._profit_added_sort_value(record),
+                str(record.get("company") or ""),
+                str(record.get("card_title") or ""),
+            ),
+            reverse=True,
+        )
         self.filtered_profit_rows = self._filtered_profit_records(self.profit_rows)
         if not hasattr(self, "profit_tree"):
             record_performance_event(

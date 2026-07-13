@@ -4053,6 +4053,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(len(ledger), 1)
                 self.assertEqual(ledger[0]["profit"], 50.0)
                 self.assertEqual(ledger[0]["recorded_by"], "Tester")
+                self.assertRegex(ledger[0]["ledger_added_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
@@ -4675,6 +4676,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class SortDummy:
             _money_value = app.CardPipelineApp._money_value
             _expense_related_label = app.CardPipelineApp._expense_related_label
+            _profit_added_sort_value = app.CardPipelineApp._profit_added_sort_value
             _record_sort_value = app.CardPipelineApp._record_sort_value
             _sorted_records = app.CardPipelineApp._sorted_records
 
@@ -4694,6 +4696,26 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             {"card_title": "C", "profit": ""},
         ]
         self.assertEqual([row["card_title"] for row in dummy._sorted_records(profit_rows, "profit", True, "profit")], ["B", "A", "C"])
+
+    def test_profit_date_sort_uses_added_timestamp_within_same_day(self) -> None:
+        class SortDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _expense_related_label = app.CardPipelineApp._expense_related_label
+            _profit_added_sort_value = app.CardPipelineApp._profit_added_sort_value
+            _record_sort_value = app.CardPipelineApp._record_sort_value
+            _sorted_records = app.CardPipelineApp._sorted_records
+
+        dummy = SortDummy()
+        rows = [
+            {"card_title": "Older card", "date_added": "2026-07-13", "ledger_added_at": "2026-07-13T10:00:00"},
+            {"card_title": "Newer card", "date_added": "2026-07-13", "ledger_added_at": "2026-07-13T10:05:00"},
+            {"card_title": "Shipping", "record_type": "expense", "date_added": "2026-07-13", "expense_id": "20260713100600000000"},
+            {"card_title": "Yesterday", "date_added": "2026-07-12", "ledger_added_at": "2026-07-12T23:59:00"},
+        ]
+
+        sorted_rows = dummy._sorted_records(rows, "date", True, "profit", "Sold Cards")
+
+        self.assertEqual([row["card_title"] for row in sorted_rows], ["Shipping", "Newer card", "Older card", "Yesterday"])
 
     def test_inventory_refresh_purges_non_active_rows_from_ledger(self) -> None:
         class InventoryDummy:
