@@ -4761,7 +4761,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             2760.0,
             0.95,
             "Vintage",
-            0,
+            100,
             None,
         )
 
@@ -4769,6 +4769,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertIn("95%", detail)
         self.assertIn("category: Vintage", detail)
+        self.assertIn("$100", detail)
         self.assertNotIn("accepted and payout tier matched", detail)
 
     def test_inventory_refresh_purges_non_active_rows_from_ledger(self) -> None:
