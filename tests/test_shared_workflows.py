@@ -1503,6 +1503,66 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertTrue(assignment_engine.company_accepts(rules, "2019 Panini Prizm Stephen Curry Silver PSA 10", 100, "PSA"))
         self.assertFalse(assignment_engine.company_accepts(rules, "2019 Panini Prizm Stephen Curry Silver", 100, "PSA"))
 
+    def test_assignment_rejection_names_block_rule(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="152304499",
+            grader="PSA",
+            card_title="2025 Topps Chrome #251 Cooper Flagg PSA 10",
+            card_ladder_comps_average=725.60,
+            category="basketball",
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Arena Club",
+                    assignment_engine.CompanyRules(
+                        ranges=[assignment_engine.AssignmentRule("Basketball", 500, 999)],
+                        blocks=[assignment_engine.AssignmentRule("2025 Topps Chrome Cooper Flagg 10", block=True, grade_companies=("PSA",))],
+                    ),
+                    [assignment_engine.PayoutTier(500, 999, 0.95, "Basketball")],
+                )
+            ]
+        )
+
+        decision = engine.evaluate(row)[0]
+
+        self.assertFalse(decision.accepted)
+        self.assertIn("blocked by rule", decision.reason)
+        self.assertIn("2025 Topps Chrome Cooper Flagg 10", decision.reason)
+
+    def test_assignment_rejection_names_value_gap_for_matching_category(self) -> None:
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="152304527",
+            grader="PSA",
+            card_title="2025 Topps Chrome #254 Kon Knueppel PSA 10 Xfractor",
+            card_ladder_comps_average=303,
+            category="basketball",
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Arena Club",
+                    assignment_engine.CompanyRules(
+                        ranges=[
+                            assignment_engine.AssignmentRule("Basketball", 100, 299),
+                            assignment_engine.AssignmentRule("Basketball", 500, 999),
+                        ]
+                    ),
+                    [assignment_engine.PayoutTier(100, 999, 0.95, "Basketball")],
+                )
+            ]
+        )
+
+        decision = engine.evaluate(row)[0]
+
+        self.assertFalse(decision.accepted)
+        self.assertIn("matched Basketball", decision.reason)
+        self.assertIn("$303", decision.reason)
+        self.assertIn("$100 to $299", decision.reason)
+        self.assertIn("$500 to $999", decision.reason)
+
     def test_person_payout_policy_locks_companies_and_overrides_rates(self) -> None:
         row = WorkbookRow(
             excel_row=2,

@@ -623,7 +623,7 @@ class AssignmentEngine:
                 continue
             card_text = card_row_text(row, source_value)
             if not company_accepts(company.rules, card_text, source_value, grader):
-                decisions.append(AssignmentDecision(company.name, False, reason="card does not match company rules", source_value=source_value))
+                decisions.append(AssignmentDecision(company.name, False, reason=company_rejection_reason(company.rules, card_text, source_value, grader), source_value=source_value))
                 continue
             payout_tiers = company_policy.payout_tiers if company_policy and company_policy.payout_tiers else company.payout_tiers
             payout_match = payout_match_for_value(payout_tiers, source_value, card_text, company.rules)
@@ -767,6 +767,107 @@ def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -
     if rules.ranges:
         return any(rule_matches(rule, haystack, price) for rule in rules.ranges)
     return True
+
+
+def company_rejection_reason(rules: CompanyRules, text: str, price: float, grader: str) -> str:
+    if not rules.accept_all and not (rules.include or rules.exclude or rules.ranges or rules.blocks or rules.grade_rules or rules.rule_groups):
+        return "no active company rules loaded"
+    haystack = clean_text(text)
+    grade_company, grade = parse_grade(text, grader)
+
+    for rule in rules.blocks:
+        if rule_matches(rule, haystack, price):
+            return f"blocked by rule: {describe_assignment_rule(rule)}"
+    for term in rules.exclude:
+        if term_matches(term, haystack):
+            return f"excluded by rule: {term}"
+    if rules.rule_groups:
+        group_reasons = [company_rejection_reason(group, text, price, grader) for group in rules.rule_groups]
+        unique_reasons = unique_values([reason for reason in group_reasons if reason])
+        if unique_reasons:
+            return "no rule group matched: " + "; ".join(unique_reasons[:3])
+        return "no rule group matched"
+
+    if rules.grade_rules:
+        grade_label = clean_text(grade_company) or "blank"
+        grade_rule = rules.grade_rules.get(clean_text(grade_company))
+        allowed_graders = ", ".join(sorted(key.upper() for key, value in rules.grade_rules.items() if value.allowed)) or "none"
+        if grade_rule is None:
+            return f"grader {grade_label.upper()} is not in allowed graders: {allowed_graders}"
+        if not grade_rule.allowed:
+            return f"grader {grade_label.upper()} is blocked by grade rules"
+        if grade is None and (grade_rule.min_grade is not None or grade_rule.max_grade is not None):
+            return f"missing grade; {grade_label.upper()} rule requires {describe_grade_rule(grade_rule)}"
+        if grade is not None and grade_rule.min_grade is not None and grade < grade_rule.min_grade:
+            return f"grade {grade:g} is below {grade_label.upper()} minimum {grade_rule.min_grade:g}"
+        if grade is not None and grade_rule.max_grade is not None and grade > grade_rule.max_grade:
+            return f"grade {grade:g} is above {grade_label.upper()} maximum {grade_rule.max_grade:g}"
+
+    if rules.include and not any(term_matches(term, haystack) for term in rules.include):
+        return "missing required include/category match; expected one of: " + describe_terms(rules.include)
+    if rules.ranges:
+        category_matches = [rule for rule in rules.ranges if not rule.matcher or term_matches(rule.matcher, haystack)]
+        if category_matches:
+            return f"matched {describe_rule_matchers(category_matches)}, but value {format_rule_money(price)} is outside allowed range(s): {describe_rules(category_matches)}"
+        return "no matching category/value rule; checked: " + describe_rules(rules.ranges)
+    return "card does not match company rules"
+
+
+def describe_grade_rule(rule: GradeRule) -> str:
+    parts: list[str] = []
+    if rule.min_grade is not None:
+        parts.append(f"minimum {rule.min_grade:g}")
+    if rule.max_grade is not None:
+        parts.append(f"maximum {rule.max_grade:g}")
+    return " and ".join(parts) if parts else "an allowed grade"
+
+
+def format_rule_money(value: float | int | None) -> str:
+    if value is None:
+        return "no max"
+    amount = float(value)
+    return f"${amount:,.2f}".rstrip("0").rstrip(".")
+
+
+def describe_terms(terms: list[str], limit: int = 8) -> str:
+    shown = [str(term).strip() for term in terms if str(term).strip()]
+    suffix = f"; +{len(shown) - limit} more" if len(shown) > limit else ""
+    return ", ".join(shown[:limit]) + suffix if shown else "none"
+
+
+def describe_rule_matchers(rules: list[AssignmentRule], limit: int = 4) -> str:
+    labels = unique_values([rule.matcher or "any category" for rule in rules])
+    suffix = f"; +{len(labels) - limit} more" if len(labels) > limit else ""
+    return ", ".join(labels[:limit]) + suffix if labels else "any category"
+
+
+def describe_rules(rules: list[AssignmentRule], limit: int = 8) -> str:
+    descriptions = unique_values([describe_assignment_rule(rule) for rule in rules])
+    suffix = f"; +{len(descriptions) - limit} more" if len(descriptions) > limit else ""
+    return "; ".join(descriptions[:limit]) + suffix if descriptions else "none"
+
+
+def describe_assignment_rule(rule: AssignmentRule) -> str:
+    parts: list[str] = []
+    if rule.matcher:
+        parts.append(rule.matcher)
+    if rule.min_price is not None or rule.max_price is not None:
+        low = f">{format_rule_money(rule.min_price)}" if rule.min_price_exclusive else format_rule_money(rule.min_price or 0)
+        high = format_rule_money(rule.max_price) if rule.max_price is not None else "no max"
+        parts.append(f"{low} to {high}")
+    if rule.min_year is not None or rule.max_year is not None:
+        low_year = str(rule.min_year) if rule.min_year is not None else "any year"
+        high_year = str(rule.max_year) if rule.max_year is not None else "current"
+        parts.append(f"years {low_year} to {high_year}")
+    if rule.grade_companies:
+        parts.append("graders " + "/".join(rule.grade_companies))
+    if rule.min_grade is not None:
+        symbol = ">" if rule.min_grade_exclusive else ">="
+        parts.append(f"grade {symbol} {rule.min_grade:g}")
+    if rule.max_grade is not None:
+        symbol = "<" if rule.max_grade_exclusive else "<="
+        parts.append(f"grade {symbol} {rule.max_grade:g}")
+    return " | ".join(parts) if parts else "any card"
 
 
 def payout_match_for_value(tiers: list[PayoutTier], value: float, text: str = "", rules: CompanyRules | None = None) -> tuple[PayoutTier, float] | None:
