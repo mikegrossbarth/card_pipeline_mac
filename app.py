@@ -13292,6 +13292,8 @@ class CardPipelineApp(tk.Tk):
             relative = self._inventory_photo_relative_path(path)
             if relative and not relative.is_absolute() and ".." not in relative.parts:
                 candidates.extend([self._inventory_photo_shared_folder() / relative, self._inventory_photo_source_folder() / relative])
+            elif path.name:
+                candidates.extend([self._inventory_photo_shared_folder() / path.name, self._inventory_photo_source_folder() / path.name])
         else:
             candidates.extend([self._inventory_photo_shared_folder() / path, self._inventory_photo_source_folder() / path, path])
         seen: set[str] = set()

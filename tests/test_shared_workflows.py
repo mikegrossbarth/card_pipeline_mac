@@ -7559,6 +7559,68 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.DELETED_ARCHIVE_DIR = old_deleted_archive
                 app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
 
+    def test_inventory_sold_archives_matching_source_and_shared_photo_files(self) -> None:
+        class PhotoSoldDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
+            _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
+            _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
+            _unique_deleted_archive_path = app.CardPipelineApp._unique_deleted_archive_path
+            _archive_deleted_file = app.CardPipelineApp._archive_deleted_file
+            _purge_expired_deleted_archive = app.CardPipelineApp._purge_expired_deleted_archive
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
+            _delete_inventory_photo_files_for_removed_records = app.CardPipelineApp._delete_inventory_photo_files_for_removed_records
+            _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
+            _append_activity = lambda self, action, summary, details=None: None
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            old_deleted_archive = app.DELETED_ARCHIVE_DIR
+            old_deleted_photos = app.DELETED_INVENTORY_PHOTOS_DIR
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "LUCAS_PERSONAL" / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            app.DELETED_ARCHIVE_DIR = Path(tmp) / "DELETED ARCHIVE"
+            app.DELETED_INVENTORY_PHOTOS_DIR = app.DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
+            source_dir = Path(tmp) / "iCloud Source"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            source_dir.mkdir(parents=True)
+            shared_photo = app.INVENTORY_PHOTOS_DIR / "card.jpg"
+            source_photo = source_dir / "card.jpg"
+            shared_photo.write_bytes(b"shared image")
+            source_photo.write_bytes(b"source image")
+            dummy = PhotoSoldDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.app_settings = {"inventory_photo_folder": str(source_dir)}
+            record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "123", "card_title": "Test", "status": "Active", "photo_paths": [str(shared_photo)]})
+            dummy._save_inventory_ledger([record])
+            try:
+                self.assertEqual(dummy._mark_inventory_record_sold(str(record["inventory_key"]), "Arena Club", 10), 1)
+                self.assertFalse(shared_photo.exists())
+                self.assertFalse(source_photo.exists())
+                archived = sorted(path.name for path in app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card*.jpg"))
+                self.assertEqual(archived, ["card-2.jpg", "card.jpg"])
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+                app.DELETED_ARCHIVE_DIR = old_deleted_archive
+                app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
+
     def test_refund_restore_brings_archived_inventory_photo_back(self) -> None:
         class PhotoRestoreDummy:
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
