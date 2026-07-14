@@ -5308,6 +5308,14 @@ class CardPipelineApp(tk.Tk):
 
     def _instagram_inventory_sync_worker(self, plan: dict[str, object]) -> None:
         started = time.perf_counter()
+        try:
+            import_existing = getattr(self, "_instagram_import_existing_posts", None)
+            if callable(import_existing):
+                import_existing(limit=500, use_ocr=False)
+        except Exception as error:
+            events = getattr(self, "events", None)
+            if events is not None:
+                events.put(("status", f"Instagram pre-sync duplicate scan skipped: {str(error)[:120]}"))
         state = self._load_instagram_inventory_state()
         posts = state.setdefault("posts", {})
         current_active_records = self._instagram_inventory_active_records()
@@ -5685,6 +5693,7 @@ class CardPipelineApp(tk.Tk):
     def _restore_inventory_photo_files_for_records(self, records: list[dict[str, object]]) -> int:
         if not records or not DELETED_INVENTORY_PHOTOS_DIR.exists():
             return 0
+        metadata_for_records: list[dict[str, object]] = []
         metadata_by_original: dict[str, dict[str, object]] = {}
         for metadata_path in DELETED_INVENTORY_PHOTOS_DIR.rglob("*.archive.json"):
             try:
@@ -5694,6 +5703,7 @@ class CardPipelineApp(tk.Tk):
             original = str(metadata.get("original_path") or "").strip()
             archive = str(metadata.get("archive_path") or "").strip()
             if original and archive:
+                metadata_for_records.append(metadata)
                 metadata_by_original[original] = metadata
                 try:
                     metadata_by_original[str(Path(original).expanduser().resolve())] = metadata
@@ -5702,7 +5712,31 @@ class CardPipelineApp(tk.Tk):
         restored = 0
         restored_paths: list[str] = []
         for record in records:
-            for path_value in record.get("photo_paths") or []:
+            photo_values = [str(path) for path in (record.get("photo_paths") or []) if str(path or "").strip()]
+            if not photo_values:
+                cert = scan_to_cert(record.get("cert_number"))
+                inventory_key = str(record.get("inventory_key") or "").strip().lower()
+                source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+                title = str(record.get("card_title") or "").strip().lower()
+                recovered: list[str] = []
+                for metadata in metadata_for_records:
+                    details = metadata.get("details") if isinstance(metadata.get("details"), dict) else {}
+                    detail_cert = scan_to_cert(details.get("cert_number"))
+                    detail_key = str(details.get("inventory_key") or "").strip().lower()
+                    detail_source = Path(str(details.get("source_sheet") or "")).name.strip().lower()
+                    detail_title = str(details.get("card_title") or "").strip().lower()
+                    matched = bool(cert and detail_cert and cert == detail_cert)
+                    matched = matched or bool(inventory_key and detail_key and inventory_key == detail_key)
+                    matched = matched or bool(source_sheet and detail_source and title and detail_title and source_sheet == detail_source and title == detail_title)
+                    if matched:
+                        original = str(metadata.get("original_path") or "").strip()
+                        if original and original not in recovered:
+                            recovered.append(original)
+                if recovered:
+                    record["photo_paths"] = recovered[:MAX_INVENTORY_PHOTOS_PER_CARD]
+                    record["photo_count"] = len(record["photo_paths"])
+                    photo_values = list(record["photo_paths"])
+            for path_value in photo_values:
                 candidates = self._inventory_photo_path_candidates(path_value)
                 if any(candidate.exists() for candidate in candidates):
                     continue
@@ -6488,6 +6522,7 @@ class CardPipelineApp(tk.Tk):
         sheet_source_lookup: dict[int, str] = {}
         people_by_cert: dict[str, str] = {}
         keys_by_cert: dict[str, str] = {}
+        photos_by_cert: dict[str, list[str]] = {}
         unassigned = 0
         for index, record in enumerate(movable_records, start=1):
             row = self._inventory_workbook_row(record, index)
@@ -6522,6 +6557,7 @@ class CardPipelineApp(tk.Tk):
             if cert:
                 people_by_cert[cert] = str(record.get("assigned_person") or "")
                 keys_by_cert[cert] = str(record.get("inventory_key") or "")
+                photos_by_cert[cert] = [str(path) for path in (record.get("photo_paths") or []) if str(path or "").strip()]
         if not rows:
             messagebox.showinfo("No company match", "No selected inventory cards matched an assignable company.")
             return
@@ -6538,6 +6574,9 @@ class CardPipelineApp(tk.Tk):
             for record in added_records:
                 cert = scan_to_cert(record.get("cert_number"))
                 record["assigned_person"] = people_by_cert.get(cert, "")
+                if cert and not record.get("photo_paths"):
+                    record["photo_paths"] = list(photos_by_cert.get(cert, []))
+                    record["photo_count"] = len(record["photo_paths"])
                 key = keys_by_cert.get(cert, "")
                 if key:
                     moved_keys.add(key)

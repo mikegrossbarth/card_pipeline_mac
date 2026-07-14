@@ -6607,6 +6607,74 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.PROFIT_LEDGER_PATH = old_profit
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+
+    def test_inventory_company_move_preserves_photo_paths_for_refund(self) -> None:
+        class InventoryMoveDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _inventory_workbook_row = app.CardPipelineApp._inventory_workbook_row
+            _company_sheet_name_lookup_for_rows = lambda self, rows: {}
+            _mark_inventory_records_moved_to_company = app.CardPipelineApp._mark_inventory_records_moved_to_company
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            record_profit_sales = app.CardPipelineApp.record_profit_sales
+            _append_profit_records = app.CardPipelineApp._append_profit_records
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _delete_inventory_photo_files_for_removed_records = lambda self, removed, kept=None: 0
+            _move_inventory_records_to_company_sheets = app.CardPipelineApp._move_inventory_records_to_company_sheets
+            _append_activity = lambda self, action, summary, details=None: None
+            refresh_inventory_tab = lambda self: None
+            refresh_profit_tab = lambda self: None
+
+            def __init__(self):
+                self.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+                self.status_var = types.SimpleNamespace(set=lambda _value: None)
+                self.assignment_engine = types.SimpleNamespace()
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_company = app.COMPANY_SHEETS_DIR
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = root
+            app.COMPANY_SHEETS_DIR = root / "COMPANY SHEETS"
+            app.PROFIT_LEDGER_PATH = root / "profit_ledger.json"
+            app.INVENTORY_LEDGER_PATH = root / "inventory_ledger.json"
+            dummy = InventoryMoveDummy()
+            record = dummy._normalize_inventory_record(
+                {
+                    "assigned_person": "James Copeland",
+                    "cert_number": "4151253025",
+                    "grader": "CGC",
+                    "card_title": "1997 Pokemon Jungle Japanese Mr. Mime Holo CGC 7.5",
+                    "source_sheet": "Kevin_6_16_2026.xlsx",
+                    "purchase_price": 12,
+                    "card_ladder_value": 18,
+                    "card_ladder_comps_average": 16,
+                    "best_company": "FANATICS",
+                    "estimated_payout": 17.1,
+                    "status": "Active",
+                    "photo_paths": ["mr-mime-front.jpg"],
+                }
+            )
+            dummy._save_inventory_ledger([record])
+            try:
+                dummy._move_inventory_records_to_company_sheets([record])
+                profit = [dummy._normalize_profit_record(item) for item in dummy._load_profit_ledger()]
+                self.assertEqual(profit[0]["photo_paths"], ["mr-mime-front.jpg"])
+                self.assertEqual(profit[0]["photo_count"], 1)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.COMPANY_SHEETS_DIR = old_company
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_nobody_takes_inventory_record_cannot_move_to_company_sheet(self) -> None:
         class InventoryDummy:
             _inventory_record_can_move_to_company_sheet = app.CardPipelineApp._inventory_record_can_move_to_company_sheet
@@ -7662,6 +7730,58 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertTrue(original.exists())
                 self.assertFalse(archived.exists())
                 self.assertFalse(archived.with_name("card.jpg.archive.json").exists())
+            finally:
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.DELETED_ARCHIVE_DIR = old_deleted_archive
+                app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
+
+
+    def test_refund_restore_recovers_photo_paths_from_archive_metadata(self) -> None:
+        class PhotoRestoreDummy:
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
+            _restore_inventory_photo_files_for_records = app.CardPipelineApp._restore_inventory_photo_files_for_records
+            _append_activity = lambda self, action, summary, details=None: None
+
+        with TemporaryDirectory() as tmp:
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_deleted_archive = app.DELETED_ARCHIVE_DIR
+            old_deleted_photos = app.DELETED_INVENTORY_PHOTOS_DIR
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
+            app.DELETED_ARCHIVE_DIR = Path(tmp) / "DELETED ARCHIVE"
+            app.DELETED_INVENTORY_PHOTOS_DIR = app.DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
+            archive_dir = app.DELETED_INVENTORY_PHOTOS_DIR / "2026-07-10"
+            archive_dir.mkdir(parents=True)
+            original = app.INVENTORY_PHOTOS_DIR / "mr-mime-front.jpg"
+            archived = archive_dir / "mr-mime-front.jpg"
+            archived.write_bytes(b"fake image")
+            archived.with_name("mr-mime-front.jpg.archive.json").write_text(
+                json.dumps(
+                    {
+                        "original_path": str(original),
+                        "archive_path": str(archived),
+                        "reason": "inventory_photo_removed",
+                        "details": {
+                            "cert_number": "4151253025",
+                            "card_title": "1997 Pokemon Jungle Japanese Mr. Mime Holo CGC 7.5",
+                            "source_sheet": "Kevin_6_16_2026.xlsx",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                dummy = PhotoRestoreDummy()
+                dummy.app_settings = {}
+                record = {"cert_number": "4151253025", "card_title": "1997 Pokemon Jungle Japanese Mr. Mime Holo CGC 7.5", "source_sheet": "Kevin_6_16_2026.xlsx", "photo_paths": []}
+                restored = dummy._restore_inventory_photo_files_for_records([record])
+
+                self.assertEqual(restored, 1)
+                self.assertEqual(record["photo_paths"], [str(original)])
+                self.assertTrue(original.exists())
             finally:
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.DELETED_ARCHIVE_DIR = old_deleted_archive
