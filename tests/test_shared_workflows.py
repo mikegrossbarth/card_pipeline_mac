@@ -3749,15 +3749,20 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
             def _payout_sheet_items(self):
                 return [
-                    {"person": "Kevin Hambone", "name": "Open.xlsx", "stage": "Sold", "paid": False, "payout_balance": 10},
-                    {"person": "Kevin Hambone", "name": "Paid.xlsx", "stage": "Sold", "paid": True, "payout_balance": 20},
-                    {"person": "James Copeland", "name": "Other.xlsx", "stage": "Sold", "paid": True, "payout_balance": 30},
+                    {"key": "Sold|Kevin Hambone|Open.xlsx", "person": "Kevin Hambone", "name": "Open.xlsx", "stage": "Sold", "paid": False, "row_count": 1, "net_profit_total": 20, "payout_balance": 10},
+                    {"key": "Sold|Kevin Hambone|Paid A.xlsx", "person": "Kevin Hambone", "name": "Paid A.xlsx", "stage": "Sold", "paid": True, "paid_at": "2026-07-14T10:00:00", "row_count": 1, "net_profit_total": 40, "payout_balance": 20},
+                    {"key": "Sold|Kevin Hambone|Paid B.xlsx", "person": "Kevin Hambone", "name": "Paid B.xlsx", "stage": "Sold", "paid": True, "paid_at": "2026-07-14T10:00:00", "row_count": 2, "net_profit_total": 60, "payout_balance": 30},
+                    {"key": "Sold|James Copeland|Other.xlsx", "person": "James Copeland", "name": "Other.xlsx", "stage": "Sold", "paid": True, "paid_at": "2026-07-14T11:00:00", "row_count": 1, "payout_balance": 30},
                 ]
+
+            home_sheet_markers = {}
 
         items = Dummy()._payout_history_items_for_person("Kevin Hambone")
 
-        self.assertEqual([item["name"] for item in items], ["Paid.xlsx", "Open.xlsx"])
-        self.assertEqual(sum(float(item["payout_balance"]) for item in items), 30.0)
+        self.assertEqual([item["name"] for item in items], ["Total paid at 2026-07-14T10:00:00", "Open.xlsx"])
+        self.assertEqual(items[0]["row_count"], 3)
+        self.assertEqual(items[0]["payout_balance"], 50.0)
+        self.assertEqual(sum(float(item["payout_balance"]) for item in items), 60.0)
 
     def test_save_payout_marker_blocks_pending_seller_paid(self) -> None:
         class PayoutDummy:
@@ -4066,6 +4071,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
             _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
             _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
+            _profit_record_payout_time = app.CardPipelineApp._profit_record_payout_time
+            _empty_realized_profit_group = app.CardPipelineApp._empty_realized_profit_group
+            _add_profit_record_to_realized_group = app.CardPipelineApp._add_profit_record_to_realized_group
+            _payout_realized_groups_for_marker = app.CardPipelineApp._payout_realized_groups_for_marker
 
             def __init__(self):
                 self.home_sheet_paths = {"Incoming": {"Lot A.xlsx": Path("Lot A.xlsx")}, "Received": {}}
@@ -4129,6 +4138,69 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(by_name["Expense Adjustments"]["net_profit_total"], -10.0)
         self.assertEqual(by_name["Expense Adjustments"]["payout_balance"], -5.0)
         self.assertEqual(sum(float(item["payout_balance"]) for item in payout_items), 20.0)
+
+    def test_team_payout_reopens_balance_for_sales_after_paid_marker(self) -> None:
+        class PayoutDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
+            _sold_payout_key = app.CardPipelineApp._sold_payout_key
+            _realized_profit_groups_by_person_sheet = app.CardPipelineApp._realized_profit_groups_by_person_sheet
+            _loose_expense_adjustments_by_person = app.CardPipelineApp._loose_expense_adjustments_by_person
+            _active_payout_balance = app.CardPipelineApp._active_payout_balance
+            _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
+            _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
+            _profit_record_payout_time = app.CardPipelineApp._profit_record_payout_time
+            _empty_realized_profit_group = app.CardPipelineApp._empty_realized_profit_group
+            _add_profit_record_to_realized_group = app.CardPipelineApp._add_profit_record_to_realized_group
+            _payout_realized_groups_for_marker = app.CardPipelineApp._payout_realized_groups_for_marker
+
+            def __init__(self):
+                key = self._sold_payout_key("Kevin Hambone", "Lot A.xlsx")
+                self.home_sheet_paths = {"Incoming": {}, "Received": {}}
+                self.home_sheet_markers = {key: {"assigned_person": "Kevin Hambone", "paid": True, "paid_at": "2026-07-14T10:00:00"}}
+                self.home_sheet_summaries = {}
+                self.ledger = [
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "source_sheet": "Lot A.xlsx",
+                        "purchase_price": 100.0,
+                        "sale_price": 160.0,
+                        "company": "Fanatics",
+                        "cert_number": "111",
+                        "date_added": "2026-07-14",
+                        "ledger_added_at": "2026-07-14T09:30:00",
+                    },
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "source_sheet": "Lot A.xlsx",
+                        "purchase_price": 40.0,
+                        "sale_price": 100.0,
+                        "company": "Fanatics",
+                        "cert_number": "222",
+                        "date_added": "2026-07-14",
+                        "ledger_added_at": "2026-07-14T10:30:00",
+                    },
+                ]
+
+            def _seller_terms_seller_names(self):
+                return set()
+
+            def _load_profit_ledger(self):
+                return self.ledger
+
+        items = PayoutDummy()._payout_sheet_items()
+        self.assertEqual(len(items), 2)
+        paid_items = [item for item in items if item["paid"]]
+        open_items = [item for item in items if not item["paid"]]
+        self.assertEqual(paid_items[0]["payout_balance"], 30.0)
+        self.assertEqual(open_items[0]["payout_balance"], 30.0)
+        self.assertEqual(open_items[0]["status"], "Sold")
 
     def test_moving_received_sheet_back_clears_received_profit_and_company_rows(self) -> None:
         class MoveDummy:

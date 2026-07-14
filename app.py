@@ -10994,70 +10994,76 @@ class CardPipelineApp(tk.Tk):
         for (person_key, source_key), group in sorted(realized_profit_groups.items(), key=lambda pair: (pair[0][0], pair[0][1])):
             if self._source_sheet_is_seller_payout(str(group.get("source_sheet") or ""), str(group.get("person") or ""), seller_names):
                 continue
-            realized_profit_total = float(group.get("profit") or 0.0)
-            if realized_profit_total == 0:
-                continue
             person = str(group.get("person") or "").strip() or "Unassigned"
             source_sheet = str(group.get("source_sheet") or "").strip() or "Sold Cards"
             key = self._sold_payout_key(person, source_sheet)
             marker = self.home_sheet_markers.get(key, {})
-            paid = bool(marker.get("paid"))
-            payout_balance, payout_basis = self._active_payout_balance(
-                person,
-                float(group.get("purchase_total") or 0.0),
-                float(group.get("sale_total") or 0.0),
-                seller_names,
-                realized_profit_total=realized_profit_total,
-                seller_payout=False,
-            )
-            items.append(
-                {
-                    "key": key,
-                    "stage": "Sold",
-                    "name": source_sheet,
-                    "person": person,
-                    "paid": paid,
-                    "row_count": int(group.get("row_count") or 0),
-                    "received_count": int(group.get("row_count") or 0),
-                    "purchase_total": float(group.get("purchase_total") or 0.0),
-                    "estimated_payout_total": float(group.get("sale_total") or 0.0),
-                    "estimated_profit": round(float(group.get("sale_total") or 0.0) - float(group.get("purchase_total") or 0.0), 2),
-                    "realized_profit_total": round(realized_profit_total, 2),
-                    "expense_total": round(float(group.get("expense_total") or 0.0), 2),
-                    "net_profit_total": round(realized_profit_total, 2),
-                    "payout_balance": payout_balance,
-                    "payout_basis": payout_basis,
-                    "status": "Paid" if paid else "Sold",
-                }
-            )
+            paid_groups = self._payout_realized_groups_for_marker(person, source_sheet, group, marker)
+            for paid, payout_group in paid_groups:
+                realized_profit_total = float(payout_group.get("profit") or 0.0)
+                if realized_profit_total == 0:
+                    continue
+                payout_balance, payout_basis = self._active_payout_balance(
+                    person,
+                    float(payout_group.get("purchase_total") or 0.0),
+                    float(payout_group.get("sale_total") or 0.0),
+                    seller_names,
+                    realized_profit_total=realized_profit_total,
+                    seller_payout=False,
+                )
+                items.append(
+                    {
+                        "key": key,
+                        "stage": "Sold",
+                        "name": source_sheet,
+                        "person": person,
+                        "paid": paid,
+                        "paid_at": str(marker.get("paid_at") or "") if paid else "",
+                        "row_count": int(payout_group.get("row_count") or 0),
+                        "received_count": int(payout_group.get("row_count") or 0),
+                        "purchase_total": float(payout_group.get("purchase_total") or 0.0),
+                        "estimated_payout_total": float(payout_group.get("sale_total") or 0.0),
+                        "estimated_profit": round(float(payout_group.get("sale_total") or 0.0) - float(payout_group.get("purchase_total") or 0.0), 2),
+                        "realized_profit_total": round(realized_profit_total, 2),
+                        "expense_total": round(float(payout_group.get("expense_total") or 0.0), 2),
+                        "net_profit_total": round(realized_profit_total, 2),
+                        "payout_balance": payout_balance,
+                        "payout_basis": payout_basis,
+                        "status": "Paid" if paid else "Sold",
+                    }
+                )
         for person_key, group in sorted(loose_expense_groups.items(), key=lambda pair: pair[1]["person"].lower()):
             person = str(group.get("person") or "").strip() or "Unassigned"
             source_sheet = "Expense Adjustments"
             key = self._sold_payout_key(person, source_sheet)
             marker = self.home_sheet_markers.get(key, {})
-            paid = bool(marker.get("paid"))
-            net_profit_total = float(group.get("profit") or 0.0)
-            payout_balance = min(0.0, round(net_profit_total / 2.0, 2))
-            items.append(
-                {
-                    "key": key,
-                    "stage": "Sold",
-                    "name": source_sheet,
-                    "person": person,
-                    "paid": paid,
-                    "row_count": 0,
-                    "received_count": 0,
-                    "purchase_total": 0.0,
-                    "estimated_payout_total": 0.0,
-                    "estimated_profit": round(net_profit_total, 2),
-                    "realized_profit_total": round(net_profit_total, 2),
-                    "expense_total": round(float(group.get("expense_total") or 0.0), 2),
-                    "net_profit_total": round(net_profit_total, 2),
-                    "payout_balance": payout_balance,
-                    "payout_basis": "Expense adjustment to team net profit",
-                    "status": "Paid" if paid else "Expenses",
-                }
-            )
+            paid_groups = self._payout_realized_groups_for_marker(person, source_sheet, group, marker)
+            for paid, payout_group in paid_groups:
+                net_profit_total = float(payout_group.get("profit") or 0.0)
+                if net_profit_total == 0:
+                    continue
+                payout_balance = min(0.0, round(net_profit_total / 2.0, 2))
+                items.append(
+                    {
+                        "key": key,
+                        "stage": "Sold",
+                        "name": source_sheet,
+                        "person": person,
+                        "paid": paid,
+                        "paid_at": str(marker.get("paid_at") or "") if paid else "",
+                        "row_count": 0,
+                        "received_count": 0,
+                        "purchase_total": 0.0,
+                        "estimated_payout_total": 0.0,
+                        "estimated_profit": round(net_profit_total, 2),
+                        "realized_profit_total": round(net_profit_total, 2),
+                        "expense_total": round(float(payout_group.get("expense_total") or 0.0), 2),
+                        "net_profit_total": round(net_profit_total, 2),
+                        "payout_balance": payout_balance,
+                        "payout_basis": "Expense adjustment to team net profit",
+                        "status": "Paid" if paid else "Expenses",
+                    }
+                )
         return items
 
     def _realized_profit_totals_by_person_sheet(self) -> dict[tuple[str, str], float]:
@@ -11065,6 +11071,85 @@ class CardPipelineApp(tk.Tk):
             key: float(group.get("profit") or 0.0)
             for key, group in self._realized_profit_groups_by_person_sheet().items()
         }
+
+    def _profit_record_payout_time(self, record: dict[str, object]) -> datetime | None:
+        for field in ("ledger_added_at", "created_at", "recorded_at"):
+            text = str(record.get(field) or "").strip()
+            if not text:
+                continue
+            try:
+                return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+            except ValueError:
+                continue
+        date_text = str(record.get("date_added") or "").strip()[:10]
+        if date_text:
+            try:
+                return datetime.strptime(date_text, "%Y-%m-%d") + timedelta(hours=23, minutes=59, seconds=59)
+            except ValueError:
+                return None
+        return None
+
+    def _empty_realized_profit_group(self, person: str, source_sheet: str) -> dict[str, object]:
+        return {
+            "person": person,
+            "source_sheet": source_sheet,
+            "row_count": 0,
+            "purchase_total": 0.0,
+            "sale_total": 0.0,
+            "expense_total": 0.0,
+            "profit": 0.0,
+            "records": [],
+        }
+
+    def _add_profit_record_to_realized_group(self, group: dict[str, object], record: dict[str, object]) -> None:
+        profit = self._money_value(record.get("profit"))
+        if profit is None:
+            return
+        is_expense = str(record.get("record_type") or "").strip().lower() == "expense"
+        purchase = self._money_value(record.get("purchase_price")) or 0.0
+        sale = self._money_value(record.get("sale_price")) or 0.0
+        if is_expense:
+            group["expense_total"] = float(group["expense_total"]) + abs(profit)
+        else:
+            group["row_count"] = int(group["row_count"]) + 1
+            group["purchase_total"] = float(group["purchase_total"]) + purchase
+            group["sale_total"] = float(group["sale_total"]) + sale
+        group["profit"] = float(group["profit"]) + profit
+        records = group.setdefault("records", [])
+        if isinstance(records, list):
+            records.append(record)
+
+    def _payout_realized_groups_for_marker(
+        self,
+        person: str,
+        source_sheet: str,
+        group: dict[str, object],
+        marker: dict[str, object],
+    ) -> list[tuple[bool, dict[str, object]]]:
+        if not marker.get("paid"):
+            return [(False, group)]
+        paid_at_text = str(marker.get("paid_at") or "").strip()
+        if not paid_at_text:
+            return [(True, group)]
+        try:
+            paid_at = datetime.fromisoformat(paid_at_text.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return [(True, group)]
+        paid_group = self._empty_realized_profit_group(person, source_sheet)
+        open_group = self._empty_realized_profit_group(person, source_sheet)
+        records = group.get("records")
+        if not isinstance(records, list):
+            return [(True, group)]
+        for record in records:
+            record_time = self._profit_record_payout_time(record)
+            target = open_group if record_time and record_time > paid_at else paid_group
+            self._add_profit_record_to_realized_group(target, record)
+        result: list[tuple[bool, dict[str, object]]] = []
+        if float(paid_group.get("profit") or 0.0):
+            result.append((True, paid_group))
+        if float(open_group.get("profit") or 0.0):
+            result.append((False, open_group))
+        return result or [(True, group)]
 
     def _realized_profit_groups_by_person_sheet(self) -> dict[tuple[str, str], dict[str, object]]:
         totals: dict[tuple[str, str], float] = defaultdict(float)
@@ -11083,15 +11168,7 @@ class CardPipelineApp(tk.Tk):
             key = (person.lower(), source_sheet.lower())
             group = groups.setdefault(
                 key,
-                {
-                    "person": person,
-                    "source_sheet": source_sheet,
-                    "row_count": 0,
-                    "purchase_total": 0.0,
-                    "sale_total": 0.0,
-                    "expense_total": 0.0,
-                    "profit": 0.0,
-                },
+                self._empty_realized_profit_group(person, source_sheet),
             )
             purchase = self._money_value(record.get("purchase_price")) or 0.0
             sale = self._money_value(record.get("sale_price")) or 0.0
@@ -11103,6 +11180,9 @@ class CardPipelineApp(tk.Tk):
                 group["sale_total"] = float(group["sale_total"]) + sale
             totals[key] += profit
             group["profit"] = totals[key]
+            records = group.setdefault("records", [])
+            if isinstance(records, list):
+                records.append(record)
         return groups
 
     def _loose_expense_adjustments_by_person(self) -> dict[str, dict[str, object]]:
@@ -11121,9 +11201,12 @@ class CardPipelineApp(tk.Tk):
             if amount <= 0:
                 continue
             key = person.lower()
-            group = groups.setdefault(key, {"person": person, "expense_total": 0.0, "profit": 0.0})
+            group = groups.setdefault(key, self._empty_realized_profit_group(person, "Expense Adjustments"))
             group["expense_total"] = float(group["expense_total"]) + amount
             group["profit"] = float(group["profit"]) - amount
+            records = group.setdefault("records", [])
+            if isinstance(records, list):
+                records.append(record)
         return groups
 
     def _sold_payout_key(self, person: str, source_sheet: str) -> str:
@@ -11572,19 +11655,50 @@ class CardPipelineApp(tk.Tk):
         person_key = str(person or "").strip().lower()
         if not person_key:
             return []
-        items = [
+        source_items = [
             item
             for item in self._payout_sheet_items()
             if str(item.get("person") or "Unassigned").strip().lower() == person_key
         ]
-        return sorted(
-            items,
-            key=lambda item: (
-                not bool(item.get("paid")),
-                str(item.get("stage") or ""),
-                str(item.get("name") or "").lower(),
-            ),
-        )
+        paid_batches: dict[str, dict[str, object]] = {}
+        open_items: list[dict[str, object]] = []
+        for item in source_items:
+            if not item.get("paid"):
+                open_items.append(item)
+                continue
+            key = str(item.get("key") or "")
+            marker = self.home_sheet_markers.get(key, {})
+            paid_at = str(item.get("paid_at") or marker.get("paid_at") or "Paid").strip() or "Paid"
+            batch = paid_batches.setdefault(
+                paid_at,
+                {
+                    "key": f"paid-batch:{paid_at}",
+                    "stage": "Paid",
+                    "name": f"Total paid at {paid_at}",
+                    "person": person,
+                    "paid": True,
+                    "paid_at": paid_at if paid_at != "Paid" else "",
+                    "row_count": 0,
+                    "received_count": 0,
+                    "purchase_total": 0.0,
+                    "estimated_payout_total": 0.0,
+                    "estimated_profit": 0.0,
+                    "realized_profit_total": 0.0,
+                    "expense_total": 0.0,
+                    "net_profit_total": 0.0,
+                    "payout_balance": 0.0,
+                    "payout_basis": "Total paid balance",
+                    "status": "Paid",
+                },
+            )
+            for field in ("row_count", "received_count"):
+                batch[field] = int(batch.get(field) or 0) + int(item.get(field) or 0)
+            for field in ("purchase_total", "estimated_payout_total", "estimated_profit", "realized_profit_total", "expense_total", "net_profit_total", "payout_balance"):
+                batch[field] = round(float(batch.get(field) or 0.0) + float(item.get(field) or 0.0), 2)
+        return [
+            *sorted(paid_batches.values(), key=lambda item: str(item.get("paid_at") or item.get("name") or ""), reverse=True),
+            *sorted(open_items, key=lambda item: (str(item.get("stage") or ""), str(item.get("name") or "").lower())),
+        ]
 
     def open_payout_history_menu(self, event=None) -> None:
         if event is not None:
@@ -11646,8 +11760,6 @@ class CardPipelineApp(tk.Tk):
         tree.tag_configure("open", foreground="#fff3b0")
         tree.tag_configure("negative", foreground="#ffd1d1")
         for index, item in enumerate(items):
-            key = str(item.get("key") or "")
-            marker = self.home_sheet_markers.get(key, {})
             paid = bool(item.get("paid"))
             balance = float(item.get("payout_balance") or 0.0)
             tag = "paid" if paid else ("negative" if balance < 0 else "open")
@@ -11664,7 +11776,7 @@ class CardPipelineApp(tk.Tk):
                     format_money(float(item.get("net_profit_total") or 0.0)),
                     format_money(balance),
                     item.get("payout_basis") or "",
-                    marker.get("paid_at") or "",
+                    item.get("paid_at") or "",
                 ),
                 tags=(tag,),
             )
