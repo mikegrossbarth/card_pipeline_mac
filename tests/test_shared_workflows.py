@@ -3743,6 +3743,22 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
 
+    def test_payout_history_filters_person_and_keeps_paid_rows(self) -> None:
+        class Dummy:
+            _payout_history_items_for_person = app.CardPipelineApp._payout_history_items_for_person
+
+            def _payout_sheet_items(self):
+                return [
+                    {"person": "Kevin Hambone", "name": "Open.xlsx", "stage": "Sold", "paid": False, "payout_balance": 10},
+                    {"person": "Kevin Hambone", "name": "Paid.xlsx", "stage": "Sold", "paid": True, "payout_balance": 20},
+                    {"person": "James Copeland", "name": "Other.xlsx", "stage": "Sold", "paid": True, "payout_balance": 30},
+                ]
+
+        items = Dummy()._payout_history_items_for_person("Kevin Hambone")
+
+        self.assertEqual([item["name"] for item in items], ["Paid.xlsx", "Open.xlsx"])
+        self.assertEqual(sum(float(item["payout_balance"]) for item in items), 30.0)
+
     def test_save_payout_marker_blocks_pending_seller_paid(self) -> None:
         class PayoutDummy:
             _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key

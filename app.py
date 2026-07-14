@@ -2120,6 +2120,8 @@ class CardPipelineApp(tk.Tk):
         self.payout_summary_tree.tag_configure("total_divider", background="#1f1f1f", foreground="#ffffff", font=("Segoe UI Semibold", 10))
         self.payout_summary_tree.tag_configure("total_row", background="#242424", foreground="#ffffff", font=("Segoe UI Semibold", 10))
         self.payout_summary_tree.bind("<ButtonRelease-1>", self.mark_payout_person_paid)
+        self.payout_summary_tree.bind("<Button-3>", self.open_payout_history_menu)
+        self.payout_summary_tree.bind("<Control-Button-1>", self.open_payout_history_menu)
 
         detail_panel = ttk.Frame(payout_split, style="Panel.TFrame", padding=(12, 12))
         payout_split.add(detail_panel, minsize=360)
@@ -11517,6 +11519,110 @@ class CardPipelineApp(tk.Tk):
             return []
         return [self.payout_detail_keys.get(iid, "") for iid in self.payout_detail_tree.selection() if self.payout_detail_keys.get(iid)]
 
+    def _payout_history_items_for_person(self, person: str) -> list[dict[str, object]]:
+        person_key = str(person or "").strip().lower()
+        if not person_key:
+            return []
+        items = [
+            item
+            for item in self._payout_sheet_items()
+            if str(item.get("person") or "Unassigned").strip().lower() == person_key
+        ]
+        return sorted(
+            items,
+            key=lambda item: (
+                not bool(item.get("paid")),
+                str(item.get("stage") or ""),
+                str(item.get("name") or "").lower(),
+            ),
+        )
+
+    def open_payout_history_menu(self, event=None) -> None:
+        if event is not None:
+            row_id = self.payout_summary_tree.identify_row(event.y)
+            if not row_id:
+                return
+            self.payout_summary_tree.selection_set(row_id)
+        selected = self.payout_summary_tree.selection()
+        if not selected:
+            return
+        person = self.payout_summary_people.get(selected[0])
+        if not person or person in {"TOTAL", "━━━━━━", "------"}:
+            return
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="View Historical Payouts", command=lambda person=person: self.open_payout_history_popup(person))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def open_payout_history_popup(self, person: str) -> None:
+        items = self._payout_history_items_for_person(person)
+        popup = tk.Toplevel(self)
+        popup.title(f"Payout History - {person}")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.geometry("1080x520")
+
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(14, 12))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text=f"Payout History: {person}", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).pack(anchor=tk.W)
+        totals = {
+            "paid": sum(float(item.get("payout_balance") or 0.0) for item in items if item.get("paid")),
+            "unpaid": sum(float(item.get("payout_balance") or 0.0) for item in items if not item.get("paid")),
+        }
+        ttk.Label(
+            frame,
+            text=f"{len(items)} payout row(s) | Paid: {format_money(totals['paid'])} | Open: {format_money(totals['unpaid'])}",
+            style="Muted.TLabel",
+        ).pack(anchor=tk.W, pady=(4, 10))
+        tree = self._build_home_tree(
+            frame,
+            columns=("status", "stage", "sheet", "cards", "expenses", "net_profit", "balance", "basis", "paid_at"),
+            headings={
+                "status": "Status",
+                "stage": "Type",
+                "sheet": "Sheet / Group",
+                "cards": "Cards",
+                "expenses": "Expenses",
+                "net_profit": "Net Profit",
+                "balance": "Balance",
+                "basis": "Basis",
+                "paid_at": "Paid At",
+            },
+            widths={"status": 90, "stage": 85, "sheet": 260, "cards": 70, "expenses": 100, "net_profit": 110, "balance": 110, "basis": 180, "paid_at": 150},
+            height=16,
+        )
+        tree.tag_configure("paid", foreground="#b8f7ce")
+        tree.tag_configure("open", foreground="#fff3b0")
+        tree.tag_configure("negative", foreground="#ffd1d1")
+        for index, item in enumerate(items):
+            key = str(item.get("key") or "")
+            marker = self.home_sheet_markers.get(key, {})
+            paid = bool(item.get("paid"))
+            balance = float(item.get("payout_balance") or 0.0)
+            tag = "paid" if paid else ("negative" if balance < 0 else "open")
+            tree.insert(
+                "",
+                tk.END,
+                iid=f"history:{index}",
+                values=(
+                    "Paid" if paid else "Open",
+                    item.get("stage") or "",
+                    item.get("name") or "",
+                    item.get("row_count") or 0,
+                    format_money(float(item.get("expense_total") or 0.0)),
+                    format_money(float(item.get("net_profit_total") or 0.0)),
+                    format_money(balance),
+                    item.get("payout_basis") or "",
+                    marker.get("paid_at") or "",
+                ),
+                tags=(tag,),
+            )
+        if not items:
+            tree.insert("", tk.END, values=("No payouts", "", "", "", "", "", "", "", ""))
+        ttk.Button(frame, text="Close", command=popup.destroy, style="Soft.TButton").pack(anchor=tk.E, pady=(10, 0))
+
     def mark_payout_person_paid(self, event=None) -> None:
         if event is not None:
             row_id = self.payout_summary_tree.identify_row(event.y)
@@ -11611,6 +11717,7 @@ class CardPipelineApp(tk.Tk):
             summary = self.home_sheet_summaries.get(key, {})
             marker["assigned_person"] = str(item["person"] or "").strip()
             marker["paid"] = True
+            marker["paid_at"] = datetime.now().isoformat(timespec="seconds")
             marker["all_received"] = bool(marker.get("all_received") or summary.get("all_received") or kind == "Received")
             marker["tracking_number"] = str(marker.get("tracking_number") or "")
             self.home_sheet_markers[key] = marker
@@ -11710,6 +11817,10 @@ class CardPipelineApp(tk.Tk):
             return
         marker["assigned_person"] = person.strip()
         marker["paid"] = bool(paid)
+        if paid:
+            marker.setdefault("paid_at", datetime.now().isoformat(timespec="seconds"))
+        else:
+            marker.pop("paid_at", None)
         marker["all_received"] = bool(marker.get("all_received") or summary.get("all_received") or kind == "Received")
         marker["tracking_number"] = str(marker.get("tracking_number") or "")
         self.home_sheet_markers[key] = marker
