@@ -8125,6 +8125,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
             _profit_chart_lines = app.CardPipelineApp._profit_chart_lines
+            _profit_chart_tooltip_value = app.CardPipelineApp._profit_chart_tooltip_value
             _profit_sport_label = app.CardPipelineApp._profit_sport_label
             _profit_company_label = app.CardPipelineApp._profit_company_label
             _profit_company_chart_series = app.CardPipelineApp._profit_company_chart_series
@@ -8144,6 +8145,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy._profit_period_label(), "Year")
         self.assertEqual(dummy._profit_graph_label(), "Overall Profit")
         self.assertEqual(dummy._profit_chart_title(), "Overall Profit (Year)")
+        self.assertEqual(dummy._profit_chart_tooltip_value(123.45, False), "$123.45")
+        self.assertEqual(dummy._profit_chart_tooltip_value(0.1234, True), "12.34%")
 
         dummy.profit_person_var = types.SimpleNamespace(get=lambda: "luc")
         dummy.profit_period_var = types.SimpleNamespace(get=lambda: "5 Days")

@@ -2483,6 +2483,8 @@ class CardPipelineApp(tk.Tk):
         )
         self.profit_chart_canvas.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
         self.profit_chart_canvas.bind("<Configure>", lambda _event: self._draw_profit_chart())
+        self.profit_chart_canvas.bind("<Motion>", self._show_profit_chart_tooltip)
+        self.profit_chart_canvas.bind("<Leave>", lambda _event: self._hide_profit_chart_tooltip())
         profit_split.add(chart_panel, minsize=120)
 
         ledger_panel = ttk.Frame(profit_split, style="Panel.TFrame", padding=(12, 10))
@@ -9630,11 +9632,49 @@ class CardPipelineApp(tk.Tk):
         except ValueError:
             return text[:7] if len(text) >= 7 else "Unknown"
 
+    def _profit_chart_tooltip_value(self, value: float, percent_mode: bool) -> str:
+        return f"{value * 100:.2f}%" if percent_mode else format_money(value)
+
+    def _hide_profit_chart_tooltip(self) -> None:
+        if hasattr(self, "profit_chart_canvas"):
+            self.profit_chart_canvas.delete("profit_tooltip")
+
+    def _show_profit_chart_tooltip(self, event: tk.Event) -> None:
+        points = getattr(self, "profit_chart_points", [])
+        if not points or not hasattr(self, "profit_chart_canvas"):
+            return
+        nearest = None
+        nearest_distance = 14 * 14
+        for point in points:
+            distance = (event.x - point["x"]) ** 2 + (event.y - point["y"]) ** 2
+            if distance <= nearest_distance:
+                nearest = point
+                nearest_distance = distance
+        if not nearest:
+            self._hide_profit_chart_tooltip()
+            return
+        canvas = self.profit_chart_canvas
+        self._hide_profit_chart_tooltip()
+        series = str(nearest.get("series") or "").strip()
+        label = str(nearest.get("label") or "").strip()
+        value = self._profit_chart_tooltip_value(float(nearest.get("value") or 0.0), bool(nearest.get("percent_mode")))
+        text = f"{series}\n{label}: {value}" if series else f"{label}: {value}"
+        x = min(max(float(nearest["x"]) + 12, 8), max(canvas.winfo_width() - 150, 8))
+        y = max(float(nearest["y"]) - 34, 8)
+        text_id = canvas.create_text(x + 8, y + 6, anchor="nw", text=text, fill="#f5f5f5", font=("Segoe UI", 9), tags=("profit_tooltip",))
+        bbox = canvas.bbox(text_id)
+        if not bbox:
+            return
+        x1, y1, x2, y2 = bbox
+        rect_id = canvas.create_rectangle(x1 - 6, y1 - 4, x2 + 6, y2 + 4, fill="#111111", outline="#4b5563", tags=("profit_tooltip",))
+        canvas.tag_lower(rect_id, text_id)
+
     def _draw_profit_chart(self) -> None:
         if not hasattr(self, "profit_chart_canvas"):
             return
         canvas = self.profit_chart_canvas
         canvas.delete("all")
+        self.profit_chart_points = []
         width = max(canvas.winfo_width(), 400)
         height = max(canvas.winfo_height(), 120)
         pad_left, pad_right = 62, 22
@@ -9680,6 +9720,7 @@ class CardPipelineApp(tk.Tk):
         for line in chart_lines:
             line_values = [float(value) for value in line.get("values", [])]
             color = str(line.get("color") or "#22c55e")
+            series_label = str(line.get("label") or "")
             points = [(x_at(index), y_at(value)) for index, value in enumerate(line_values)]
             for first, second in zip(points, points[1:]):
                 canvas.create_line(*first, *second, fill=color, width=3)
@@ -9687,6 +9728,14 @@ class CardPipelineApp(tk.Tk):
                 value = line_values[index]
                 point_color = "#ef4444" if value < 0 and not percent_mode else color
                 canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=point_color, outline="")
+                self.profit_chart_points.append({
+                    "x": x,
+                    "y": y,
+                    "label": self._profit_chart_bucket_display(labels[index]),
+                    "series": series_label,
+                    "value": value,
+                    "percent_mode": percent_mode,
+                })
         for index, label in enumerate(labels):
             if len(labels) <= 14 or index % max(1, len(labels) // 8) == 0:
                 canvas.create_text(x_at(index), height - max(18, pad_bottom - 20), text=self._profit_chart_bucket_display(label), fill="#b3b3b3", font=("Segoe UI", 8))
