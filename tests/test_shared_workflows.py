@@ -5209,6 +5209,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertNotIn("value", app.INVENTORY_TABLE_COLUMNS)
         self.assertIn("card_ladder", app.INVENTORY_TABLE_COLUMNS)
         self.assertIn("paid_with", app.INVENTORY_TABLE_COLUMNS)
+        self.assertEqual(app.INVENTORY_TABLE_COLUMNS.index("paid_with"), app.INVENTORY_TABLE_COLUMNS.index("payout") + 1)
         self.assertIn("comps", app.INVENTORY_TABLE_COLUMNS)
         self.assertIn("cy_estimate", app.INVENTORY_TABLE_COLUMNS)
         self.assertIn("cy_confidence", app.INVENTORY_TABLE_COLUMNS)
