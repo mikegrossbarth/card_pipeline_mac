@@ -36,6 +36,10 @@ Important design note: the hard part is not the mobile UI; it is safely exposing
 
 Deferred future work, not for the current build: true live-anywhere mobile access would need a small secure cloud backend, real auth/invite tokens, and a cloud queue or database. The preferred low-risk shape is to keep the current mobile/offline queue model, add a hosted queue service such as Supabase later, let the phone write inventory add/sold/expense actions to that queue from anywhere, and let desktop L.U.C.A.S pull/apply those actions through the same ledger-safe queue importer. This is intentionally postponed because it is more setup/security/deployment work than the current local/offline mobile companion needs.
 
+### Team Instagram Inventory Page
+
+Future idea: add a Team L.U.C.A.S Instagram inventory account/page that reuses the Personal L.U.C.A.S Instagram inventory behavior while keeping Team and Personal completely separated. The app code can share the existing Instagram Graph API posting, carousel, quota, import, duplicate-detection, and manual-delete queue logic, but Team needs its own Instagram professional account/Page connection, IG user id, access token, and local `.env` keys. Team sync state should live under the Team pipeline root, separate from Personal state, and tests should prove Team never reads/posts Personal inventory and Personal never reads/posts Team inventory.
+
 ### OpenClaw / Agent Inbox
 
 Future idea: let the user's OpenClaw agent talk to L.U.C.A.S through a narrow command inbox instead of controlling the desktop UI. Preferred shape is a token-protected Agent Inbox endpoint or shared-file queue where OpenClaw sends structured JSON commands such as inventory search, profit/payout lookup, missing-photo review, draft mark-sold, or draft add-expense. Read-only commands can run automatically; destructive commands like mark sold, delete, overwrite sheet rows, Instagram deletion, and bulk sync should return a confirmation id and require explicit follow-up confirmation. Reuse the existing mobile bridge/queue patterns where possible.
