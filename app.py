@@ -14208,8 +14208,6 @@ class CardPipelineApp(tk.Tk):
                 row.status = "Received - no incoming match"
 
     def _ensure_receive_row_assignment(self, row: WorkbookRow) -> None:
-        if row.best_company and row.estimated_payout is not None:
-            return
         recommendation = self.assignment_engine.recommend(row, person=getattr(self, "_assignment_person_for_row", lambda _row: "")(row))
         if recommendation.payout is None:
             if not row.best_company:

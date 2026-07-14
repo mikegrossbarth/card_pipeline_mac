@@ -3209,6 +3209,32 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.review_rows[0].best_company, "Arena Club")
         self.assertEqual(dummy.review_rows[0].estimated_payout, 369.89)
 
+    def test_receive_row_recomputes_stale_stored_assignment_values(self) -> None:
+        class Dummy:
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+
+        row = WorkbookRow(
+            excel_row=14,
+            cert_number="152491672",
+            grader="PSA",
+            category="baseball",
+            card_title="2018 Topps Allen and Ginter World Talent #WT-24 Shohei Ohtani World Talent PSA 10",
+            existing_value=430,
+            card_ladder_value=415.03,
+            card_ladder_comps_average=500.02,
+            best_company="FANATICS",
+            estimated_payout=385.98,
+        )
+        dummy = Dummy()
+        dummy.assignment_engine = types.SimpleNamespace(
+            recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("ARENA CLUB", 460.02, 500.02)
+        )
+
+        dummy._ensure_receive_row_assignment(row)
+
+        self.assertEqual(row.best_company, "ARENA CLUB")
+        self.assertEqual(row.estimated_payout, 460.02)
+
     def test_scoped_assignment_results_leave_unreturned_rows_unchanged(self) -> None:
         class FieldVar:
             def __init__(self):
