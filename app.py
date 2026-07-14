@@ -1659,7 +1659,7 @@ class CardPipelineApp(tk.Tk):
         receive_bottom = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
         receive_bottom.pack(fill=tk.X, pady=(10, 0))
         ttk.Button(receive_bottom, text="Mark Received in Sheets", command=self.mark_review_received_in_sheets, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(receive_bottom, text="Refresh Incoming Index", command=self.refresh_incoming_index, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(receive_bottom, text="Refresh Incoming Index", command=self.refresh_incoming_index, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
 
         review_controls = ttk.Frame(self.review_tab, style="Panel.TFrame", padding=(16, 12))
         review_controls.pack(fill=tk.X, pady=(0, 10))
