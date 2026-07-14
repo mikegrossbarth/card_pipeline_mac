@@ -1100,7 +1100,7 @@ def default_output_path(root: Path) -> Path:
 
 def scan_to_cert(value: Any) -> str:
     text = str(value or "")
-    candidates = re.findall(r"\d{6,12}", text)
+    candidates = re.findall(r"\d{6,16}", text)
     if candidates:
         return max(candidates, key=len)
     return normalize_cert(text)

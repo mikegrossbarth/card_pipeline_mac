@@ -32,7 +32,7 @@ import cardladder_ocr
 import google_sheets_import
 import lucas_diagnostics
 from comp_engine.workbook_io import WorkbookRow
-from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, parse_money as intake_parse_money, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
+from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, parse_money as intake_parse_money, scan_to_cert, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
 
 
@@ -84,6 +84,10 @@ class SharedStateTests(unittest.TestCase):
         self.assertEqual(bridge_server.parse_value("$20.27"), 20.27)
         self.assertEqual(cardladder_ocr.parse_money("$20.27"), 20.27)
         self.assertEqual(MoneyDummy()._money_value("$20.27"), 20.27)
+
+    def test_scan_to_cert_preserves_long_psa_cert_numbers(self) -> None:
+        self.assertEqual(scan_to_cert("1401017991290"), "1401017991290")
+        self.assertEqual(scan_to_cert("PSA Cert 1401017991290"), "1401017991290")
 
     def test_card_ladder_profile_title_strips_trailing_close_ui_text(self) -> None:
         raw_titles = [
