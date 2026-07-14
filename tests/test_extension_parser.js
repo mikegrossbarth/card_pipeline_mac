@@ -61,6 +61,7 @@ assert.strictEqual(comp.price, "$25.00");
 assert.match(comp.title, /Joe Montana/);
 assert.doesNotMatch(comp.title, /Chet Holmgren/);
 assert.strictEqual(context.parseMoneyValue("$15.92k"), 15920);
+assert.strictEqual(context.parseMoneyValue("$20.27k"), 20270);
 assert.strictEqual(context.parseMoneyValue("$15.92"), 15.92);
 
 console.log("extension parser regression ok");

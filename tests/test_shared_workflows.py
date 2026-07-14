@@ -32,7 +32,7 @@ import cardladder_ocr
 import google_sheets_import
 import lucas_diagnostics
 from comp_engine.workbook_io import WorkbookRow
-from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
+from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, parse_money as intake_parse_money, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
 
 
@@ -71,13 +71,19 @@ import multi_card_extraction
 
 
 class SharedStateTests(unittest.TestCase):
-    def test_card_ladder_money_parsers_treat_three_digit_decimal_as_thousands(self) -> None:
+    def test_card_ladder_money_parsers_treat_three_digit_decimal_and_k_suffix_as_thousands(self) -> None:
+        class MoneyDummy:
+            _money_value = app.CardPipelineApp._money_value
+
         self.assertEqual(bridge_server.parse_value("$15.920"), 15920.0)
         self.assertEqual(cardladder_ocr.parse_money("$15.920"), 15920.0)
-        self.assertEqual(bridge_server.parse_value("$15.92k"), 15920.0)
-        self.assertEqual(cardladder_ocr.parse_money("$15.92k"), 15920.0)
-        self.assertEqual(bridge_server.parse_value("$15.92"), 15.92)
-        self.assertEqual(cardladder_ocr.parse_money("$15.92"), 15.92)
+        self.assertEqual(bridge_server.parse_value("$20.27k"), 20270.0)
+        self.assertEqual(cardladder_ocr.parse_money("$20.27k"), 20270.0)
+        self.assertEqual(MoneyDummy()._money_value("$20.27k"), 20270.0)
+        self.assertEqual(intake_parse_money("$20.27k"), 20270.0)
+        self.assertEqual(bridge_server.parse_value("$20.27"), 20.27)
+        self.assertEqual(cardladder_ocr.parse_money("$20.27"), 20.27)
+        self.assertEqual(MoneyDummy()._money_value("$20.27"), 20.27)
 
     def test_card_ladder_profile_title_strips_trailing_close_ui_text(self) -> None:
         raw_titles = [
