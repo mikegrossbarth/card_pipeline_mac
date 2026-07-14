@@ -2087,10 +2087,20 @@ class CardPipelineApp(tk.Tk):
         controls.columnconfigure(2, weight=1)
         ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
-        body = ttk.Frame(self.payouts_tab, style="App.TFrame")
-        body.pack(fill=tk.BOTH, expand=True)
-        summary_panel = ttk.Frame(body, style="Panel.TFrame", padding=(12, 12))
-        summary_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        payout_split = tk.PanedWindow(
+            self.payouts_tab,
+            orient=tk.HORIZONTAL,
+            bg=self.app_palette["border"],
+            bd=0,
+            sashwidth=8,
+            sashrelief=tk.RAISED,
+            showhandle=True,
+            handlesize=28,
+            opaqueresize=True,
+        )
+        payout_split.pack(fill=tk.BOTH, expand=True)
+        summary_panel = ttk.Frame(payout_split, style="Panel.TFrame", padding=(12, 12))
+        payout_split.add(summary_panel, minsize=320)
         ttk.Label(summary_panel, text="Active Balances", style="Panel.TLabel").pack(anchor=tk.W)
         self.payout_summary_tree = self._build_home_tree(
             summary_panel,
@@ -2111,8 +2121,8 @@ class CardPipelineApp(tk.Tk):
         self.payout_summary_tree.tag_configure("total_row", background="#242424", foreground="#ffffff", font=("Segoe UI Semibold", 10))
         self.payout_summary_tree.bind("<ButtonRelease-1>", self.mark_payout_person_paid)
 
-        detail_panel = ttk.Frame(body, style="Panel.TFrame", padding=(12, 12))
-        detail_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        detail_panel = ttk.Frame(payout_split, style="Panel.TFrame", padding=(12, 12))
+        payout_split.add(detail_panel, minsize=360)
         ttk.Label(detail_panel, text="Payment Sheets", style="Panel.TLabel").pack(anchor=tk.W)
         self.payout_detail_tree = self._build_home_tree(
             detail_panel,
