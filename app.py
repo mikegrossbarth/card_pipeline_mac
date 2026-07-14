@@ -162,8 +162,15 @@ def instagram_inventory_photo_order(paths: list[Path]) -> list[Path]:
 
 def instagram_ready_photo_urls(item: dict[str, object]) -> list[str]:
     raw_urls = item.get("photo_urls") if isinstance(item.get("photo_urls"), list) else [item.get("photo_url")]
-    urls = [str(url or "").strip() for url in raw_urls]
-    return urls if urls and all(urls) else []
+    urls: list[str] = []
+    seen: set[str] = set()
+    for raw_url in raw_urls:
+        url = str(raw_url or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+    return urls
 LUCAS_LOGO_PATH = ROOT / "assets" / "lucas.png"
 MIKEYS_CARDS_LOGO_PATH = ROOT / "assets" / "mikeys_cards_logo.png"
 CARDLADDER_EXTENSION_DIR = ROOT / "cardladder-autocomp" / "extension"
@@ -4511,6 +4518,20 @@ class CardPipelineApp(tk.Tk):
             relative = Path(path.name)
         return f"{base_url}/{urllib.parse.quote(relative.as_posix())}"
 
+    def _instagram_inventory_photo_is_postable(self, path: Path) -> bool:
+        if not path.exists() or not path.is_file():
+            return False
+        try:
+            from PIL import Image
+
+            with Image.open(path) as image:
+                extrema = image.convert("L").getextrema()
+        except Exception:
+            return False
+        if not extrema:
+            return False
+        return int(extrema[1]) - int(extrema[0]) > 8
+
     def _instagram_post_photo_id(self, post_entry: dict[str, object]) -> str:
         photo_id = str(post_entry.get("photo_id") or "").strip()
         if photo_id:
@@ -4618,6 +4639,8 @@ class CardPipelineApp(tk.Tk):
                 already_posted.append(record)
                 continue
             paths = instagram_inventory_photo_order(self._inventory_photo_paths_for_record(record))
+            if hasattr(self, "_instagram_inventory_photo_is_postable"):
+                paths = [path for path in paths if self._instagram_inventory_photo_is_postable(path)]
             if not paths:
                 missing_photos.append(record)
                 continue
@@ -4996,11 +5019,11 @@ class CardPipelineApp(tk.Tk):
             for index, item in enumerate(plan["to_remove"]):
                 detail = "No longer active in inventory"
                 if str(item.get("status") or "").strip().lower() == "delete_review_needed":
-                    detail = f"Delete retry pending: {str(item.get('delete_error') or '')[:140]}"
+                    detail = "Manual delete needed; queued for review"
                 elif str(item.get("reason") or "").strip().lower() == "cover_photo_changed":
                     detail = "Manual delete needed; cover photo changed"
                 else:
-                    detail = "Manual delete needed; API delete may not be available"
+                    detail = "Manual delete needed"
                 iid = f"remove:{index}"
                 tree.insert("", tk.END, iid=iid, values=("Remove", item.get("caption") or item.get("title") or "", item.get("media_id") or "", "", detail))
                 remove_items[iid] = item
@@ -5105,18 +5128,6 @@ class CardPipelineApp(tk.Tk):
 
             threading.Thread(target=worker, daemon=True).start()
 
-        def remove_old_posts() -> None:
-            removable = [item for item in plan.get("to_remove") or [] if isinstance(item, dict) and str(item.get("media_id") or "").strip()]
-            if not removable:
-                messagebox.showinfo("Instagram Sync", "No old Instagram inventory posts are ready to remove.")
-                return
-            if not messagebox.askyesno("Instagram Sync", f"Remove {len(removable)} Instagram post(s) that are no longer active in LUCAS inventory?"):
-                return
-            remove_plan = {**plan, "to_post": [], "to_remove": removable, "missing_public_urls": []}
-            worker = threading.Thread(target=self._instagram_inventory_sync_worker, args=(remove_plan,), daemon=True)
-            worker.start()
-            popup.after(1000, reload_plan)
-
         actions = ttk.Frame(frame, style="Panel.TFrame")
         actions.pack(fill=tk.X, pady=(12, 0))
         ttk.Button(actions, text="Refresh", command=reload_plan, style="Soft.TButton").pack(side=tk.LEFT)
@@ -5128,7 +5139,6 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(delete_actions, text="Open Target", command=open_manual_delete_target, style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(delete_actions, text="Copy Title", command=copy_manual_delete_title, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Mark Deleted", command=mark_manual_deleted, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(delete_actions, text="Try API Delete", command=remove_old_posts, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
         table_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
         reload_plan()
@@ -5195,7 +5205,7 @@ class CardPipelineApp(tk.Tk):
         message = (
             "Run live Instagram sync?\n\n"
             f"Post {post_count} of {ready_total} ready card(s)."
-            f"\nRemove {remove_count} old post(s) if Meta allows it."
+            f"\nQueue {remove_count} old post(s) for manual deletion review."
             f"\n\nManual live posting is capped at {post_limit} card(s) for this run."
         )
         if meta_remaining is not None:
@@ -5440,35 +5450,21 @@ class CardPipelineApp(tk.Tk):
                         continue
                     if item_identity and item_identity in active_by_identity:
                         continue
-                try:
-                    self._instagram_delete_media_post(media_id)
-                    self._record_instagram_removed_post(state, item)
-                    if tracked_media_id == media_id:
-                        posts.pop(key, None)
+                if tracked_media_id == media_id:
+                    entry = posts.get(key) if isinstance(posts.get(key), dict) else {}
+                    entry["status"] = "delete_review_needed"
+                    entry.pop("delete_error", None)
+                    entry["delete_queued_at"] = datetime.now().isoformat(timespec="seconds")
+                    posts[key] = entry
+                else:
                     duplicates = state.get("duplicate_posts")
                     if isinstance(duplicates, list):
-                        state["duplicate_posts"] = [
-                            duplicate
-                            for duplicate in duplicates
-                            if not isinstance(duplicate, dict) or str(duplicate.get("media_id") or "").strip() != media_id
-                    ]
-                    removed += 1
-                except Exception as error:
-                    if tracked_media_id == media_id:
-                        entry = posts.get(key) if isinstance(posts.get(key), dict) else {}
-                        entry["status"] = "delete_review_needed"
-                        entry["delete_error"] = str(error)[:500]
-                        entry["delete_queued_at"] = datetime.now().isoformat(timespec="seconds")
-                        posts[key] = entry
-                    else:
-                        duplicates = state.get("duplicate_posts")
-                        if isinstance(duplicates, list):
-                            for duplicate in duplicates:
-                                if isinstance(duplicate, dict) and str(duplicate.get("media_id") or "").strip() == media_id:
-                                    duplicate["status"] = "delete_review_needed"
-                                    duplicate["delete_error"] = str(error)[:500]
-                                    duplicate["delete_queued_at"] = datetime.now().isoformat(timespec="seconds")
-                    queued_removals += 1
+                        for duplicate in duplicates:
+                            if isinstance(duplicate, dict) and str(duplicate.get("media_id") or "").strip() == media_id:
+                                duplicate["status"] = "delete_review_needed"
+                                duplicate.pop("delete_error", None)
+                                duplicate["delete_queued_at"] = datetime.now().isoformat(timespec="seconds")
+                queued_removals += 1
                 self._save_instagram_inventory_state(state)
         except Exception as error:
             errors.append(str(error))

@@ -8473,10 +8473,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(result["id"], "179123")
         self.assertEqual(dummy.calls, 2)
 
-    def test_instagram_inventory_sync_removes_inactive_posts(self) -> None:
+    def test_instagram_inventory_sync_queues_inactive_posts_for_manual_delete(self) -> None:
         class InstagramDummy:
             _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
-            _instagram_delete_media_post = app.CardPipelineApp._instagram_delete_media_post
             _record_instagram_removed_post = app.CardPipelineApp._record_instagram_removed_post
             _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
             _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
@@ -8530,16 +8529,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(dummy.deleted, [("179-sold", "DELETE")])
-        self.assertNotIn("sold-key", dummy.state["posts"])
-        self.assertEqual(dummy.state["removed_posts"][0]["media_id"], "179-sold")
-        self.assertEqual(dummy.state["removed_posts"][0]["reason"], "inventory_not_active")
-        self.assertIn("removed 1", dummy.activities[-1][1])
+        self.assertEqual(dummy.deleted, [])
+        self.assertEqual(dummy.state["posts"]["sold-key"]["status"], "delete_review_needed")
+        self.assertIn("delete_queued_at", dummy.state["posts"]["sold-key"])
+        self.assertNotIn("removed_posts", dummy.state)
+        self.assertIn("queued 1", dummy.activities[-1][1])
 
-    def test_instagram_inventory_sync_marks_failed_delete_for_review(self) -> None:
+    def test_instagram_inventory_sync_does_not_call_delete_api_for_review_rows(self) -> None:
         class InstagramDummy:
             _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
-            _instagram_delete_media_post = app.CardPipelineApp._instagram_delete_media_post
             _record_instagram_removed_post = app.CardPipelineApp._record_instagram_removed_post
             _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
             _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
@@ -8558,6 +8556,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 }
                 self.events = queue.Queue()
                 self.activities = []
+                self.deleted = []
 
             def _load_instagram_inventory_state(self):
                 return self.state
@@ -8566,6 +8565,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.state = state
 
             def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                self.deleted.append((endpoint, method))
                 raise RuntimeError("Unsupported delete request")
 
             def _instagram_inventory_active_records(self):
@@ -8584,8 +8584,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         )
 
         entry = dummy.state["posts"]["old-key"]
+        self.assertEqual(dummy.deleted, [])
         self.assertEqual(entry["status"], "delete_review_needed")
-        self.assertIn("Unsupported delete request", entry["delete_error"])
+        self.assertNotIn("delete_error", entry)
         self.assertIn("queued 1", dummy.activities[-1][1])
 
     def test_instagram_manual_delete_clears_tracked_post(self) -> None:
@@ -8809,6 +8810,21 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(posted["photo_urls"], ["https://example.test/front.jpg", "https://example.test/back.jpg"])
         self.assertEqual(posted["child_creation_ids"], ["child-1", "child-2"])
         self.assertEqual(posted["permalink"], "https://instagram.test/p/carousel")
+
+    def test_instagram_ready_photo_urls_drops_blank_and_duplicate_urls(self) -> None:
+        urls = app.instagram_ready_photo_urls(
+            {
+                "photo_url": "https://example.test/front.jpg",
+                "photo_urls": [
+                    "",
+                    "https://example.test/front.jpg",
+                    " https://example.test/front.jpg ",
+                    "https://example.test/back.jpg",
+                ],
+            }
+        )
+
+        self.assertEqual(urls, ["https://example.test/front.jpg", "https://example.test/back.jpg"])
 
     def test_instagram_inventory_sync_continues_after_single_post_error(self) -> None:
         class InstagramDummy:
