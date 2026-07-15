@@ -7388,9 +7388,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
             _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
+            _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
             _inventory_record_references_photo = app.CardPipelineApp._inventory_record_references_photo
             _inventory_photo_scan_can_skip = app.CardPipelineApp._inventory_photo_scan_can_skip
             _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
+            _sold_inventory_photo_used_keys = app.CardPipelineApp._sold_inventory_photo_used_keys
+            _inventory_photo_image_matches_sold_photo = app.CardPipelineApp._inventory_photo_image_matches_sold_photo
             _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
             _inventory_photo_base64 = lambda self, path: "stub"
             _inventory_photo_scan_group_nearby_unmatched = app.CardPipelineApp._inventory_photo_scan_group_nearby_unmatched
@@ -7412,11 +7416,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             linked_photo = app.INVENTORY_PHOTOS_DIR / "linked.jpg"
             stale_linked_photo = app.INVENTORY_PHOTOS_DIR / "stale-linked.jpg"
             sold_photo = app.INVENTORY_PHOTOS_DIR / "sold.jpg"
+            sold_path_photo = app.INVENTORY_PHOTOS_DIR / "sold-path.jpg"
             attached_stale_photo = app.INVENTORY_PHOTOS_DIR / "attached-stale.jpg"
             retry_photo.write_bytes(b"retry image")
             linked_photo.write_bytes(b"linked image")
             stale_linked_photo.write_bytes(b"stale linked image")
             sold_photo.write_bytes(b"sold image")
+            sold_path_photo.write_bytes(b"sold path image")
             attached_stale_photo.write_bytes(b"attached stale image")
             dummy = PhotoDummy()
             dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
@@ -7427,11 +7433,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             linked_record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "87654321", "card_title": "Linked Card", "status": "Active", "photo_paths": [str(linked_photo)]})
             attached_stale_record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "22222222", "card_title": "Already Attached", "status": "Active", "photo_paths": [str(attached_stale_photo)]})
             dummy._save_inventory_ledger([retry_record, linked_record, attached_stale_record])
-            dummy._save_profit_ledger([{"cert_number": "55555555", "card_title": "Sold Card", "sale_price": 20}])
+            dummy._save_profit_ledger([
+                {"cert_number": "55555555", "card_title": "Sold Card", "sale_price": 20},
+                {"cert_number": "44444444", "card_title": "Sold Path Card", "sale_price": 25, "photo_paths": [str(sold_path_photo)]},
+            ])
             retry_sha = dummy._inventory_photo_file_hash(retry_photo)
             linked_sha = dummy._inventory_photo_file_hash(linked_photo)
             stale_linked_sha = dummy._inventory_photo_file_hash(stale_linked_photo)
             sold_sha = dummy._inventory_photo_file_hash(sold_photo)
+            sold_path_sha = dummy._inventory_photo_file_hash(sold_path_photo)
             attached_stale_sha = dummy._inventory_photo_file_hash(attached_stale_photo)
             dummy._save_inventory_photo_state(
                 {
@@ -7460,6 +7470,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertIn("last_seen", state["photos"][stale_linked_sha])
                 self.assertEqual(state["photos"][sold_sha]["status"], "sold_inventory")
                 self.assertIn("last_seen", state["photos"][sold_sha])
+                self.assertEqual(state["photos"][sold_path_sha]["status"], "sold_inventory")
+                self.assertIn("last_seen", state["photos"][sold_path_sha])
                 self.assertEqual(state["photos"][attached_stale_sha]["status"], "linked")
                 self.assertEqual(state["photos"][attached_stale_sha]["linked_keys"], [attached_stale_record["inventory_key"]])
             finally:

@@ -7141,6 +7141,34 @@ class CardPipelineApp(tk.Tk):
                 certs.add(cert)
         return certs
 
+    def _sold_inventory_photo_used_keys(self) -> tuple[set[str], set[str]]:
+        sold_rows = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        return self._inventory_photo_used_path_keys(sold_rows), self._inventory_photo_used_hashes(sold_rows)
+
+    def _inventory_photo_image_matches_sold_photo(
+        self,
+        image: dict[str, object],
+        sold_photo_paths: set[str],
+        sold_photo_hashes: set[str],
+    ) -> bool:
+        sha = str(image.get("sha256") or "").strip()
+        if sha and sha in sold_photo_hashes:
+            return True
+        image_path = Path(str(image.get("path") or "")).expanduser()
+        keys = {
+            str(image_path),
+            str(image.get("relative_path") or "").strip(),
+            str(image.get("filename") or "").strip(),
+        }
+        storage = self._inventory_photo_storage_value(image_path)
+        if storage:
+            keys.add(storage)
+        try:
+            keys.add(str(image_path.resolve()))
+        except Exception:
+            pass
+        return bool({key for key in keys if key} & sold_photo_paths)
+
     def _inventory_photo_state_matches_sold_cert(self, existing: dict[str, object], sold_certs: set[str] | None = None) -> bool:
         if not existing:
             return False
@@ -13897,7 +13925,14 @@ class CardPipelineApp(tk.Tk):
             keys_by_cert = self._active_inventory_keys_by_cert(rows)
             active_records = [record for record in rows if str(record.get("status") or "").lower() == "active"]
             records_by_key = {str(record.get("inventory_key") or ""): record for record in active_records}
-            sold_certs = self._sold_inventory_cert_numbers()
+            sold_cert_source = getattr(self, "_sold_inventory_cert_numbers", None)
+            sold_certs = sold_cert_source() if callable(sold_cert_source) else set()
+            sold_photo_source = getattr(self, "_sold_inventory_photo_used_keys", None)
+            sold_photo_paths, sold_photo_hashes = (
+                sold_photo_source()
+                if callable(sold_photo_source)
+                else (set(), set())
+            )
             last_background_status = 0.0
             for index, image in enumerate(images, start=1):
                 image_label = str(image.get("relative_path") or image.get("filename") or "photo")
@@ -13913,12 +13948,20 @@ class CardPipelineApp(tk.Tk):
                 existing = photos.get(sha) if isinstance(photos.get(sha), dict) else {}
                 image_path = Path(str(image.get("path") or ""))
                 can_skip = getattr(self, "_inventory_photo_scan_can_skip", None)
-                sold_cert_skip = self._inventory_photo_state_matches_sold_cert(existing, sold_certs)
-                attached_records = [record for record in active_records if self._inventory_record_references_photo(record, image_path)]
-                if (callable(can_skip) and can_skip(existing, records_by_key, image_path)) or sold_cert_skip or attached_records:
+                sold_cert_match = getattr(self, "_inventory_photo_state_matches_sold_cert", None)
+                sold_cert_skip = bool(callable(sold_cert_match) and sold_cert_match(existing, sold_certs))
+                sold_photo_match = getattr(self, "_inventory_photo_image_matches_sold_photo", None)
+                sold_photo_skip = bool(callable(sold_photo_match) and sold_photo_match(image, sold_photo_paths, sold_photo_hashes))
+                references_photo = getattr(self, "_inventory_record_references_photo", None)
+                attached_records = [
+                    record
+                    for record in active_records
+                    if callable(references_photo) and references_photo(record, image_path)
+                ]
+                if (callable(can_skip) and can_skip(existing, records_by_key, image_path)) or sold_cert_skip or sold_photo_skip or attached_records:
                     skipped += 1
                     existing["last_seen"] = datetime.now().isoformat(timespec="seconds")
-                    if sold_cert_skip:
+                    if sold_cert_skip or sold_photo_skip:
                         existing["status"] = "sold_inventory"
                     elif attached_records:
                         existing["status"] = "linked"
@@ -13937,7 +13980,9 @@ class CardPipelineApp(tk.Tk):
                     cards = identify_cards_sync(self.inventory_photo_client, image_b64)
                     certs = self._inventory_photo_certs_from_cards(cards)
                     if not certs:
-                        certs.update(self._inventory_photo_rescue_single_bgs_cert(cards, image_b64))
+                        bgs_rescue = getattr(self, "_inventory_photo_rescue_single_bgs_cert", None)
+                        if callable(bgs_rescue):
+                            certs.update(bgs_rescue(cards, image_b64))
                     scanned += 1
                 except Exception as error:
                     errors.append(f"{image.get('relative_path')}: {error}")
