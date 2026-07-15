@@ -5800,7 +5800,10 @@ class CardPipelineApp(tk.Tk):
         return changed
 
     def _general_sold_sheet_name(self, person: str) -> str:
-        return f"{str(person or '').strip() or 'Unassigned'} General Sold"
+        person_name = str(person or "").strip()
+        if person_name.lower() in {"", "unassigned"} and getattr(self, "_is_personal_lucas", lambda: False)():
+            person_name = self._personal_default_person()
+        return f"{person_name or 'Unassigned'} General Sold"
 
     def _inventory_sale_profit_record(
         self,
@@ -5812,6 +5815,8 @@ class CardPipelineApp(tk.Tk):
     ) -> dict[str, object]:
         normalized = self._normalize_inventory_record(record)
         assigned_person = str(normalized.get("assigned_person") or "Unassigned").strip() or "Unassigned"
+        if assigned_person.lower() == "unassigned" and getattr(self, "_is_personal_lucas", lambda: False)():
+            assigned_person = self._personal_default_person()
         company_name = str(company or "").strip()
         source_sheet = normalized.get("source_sheet") or "Inventory"
         original_source_sheet = source_sheet
@@ -8532,7 +8537,10 @@ class CardPipelineApp(tk.Tk):
             normalized["cert_number"] = related_cert if related_type == "Card" else ""
             normalized["weekly_sheet_name"] = ""
             normalized["source_sheet"] = related_sheet if related_type in {"Card", "Sheet"} and related_sheet else "Expenses"
-            normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
+            assigned_person = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
+            if assigned_person.lower() in {"", "unassigned"} and getattr(self, "_is_personal_lucas", lambda: False)():
+                assigned_person = self._personal_default_person()
+            normalized["assigned_person"] = assigned_person
             normalized["notes"] = notes
             normalized["ledger_added_at"] = str(normalized.get("ledger_added_at") or "").strip()
             normalized["ledger_key"] = self._profit_record_key(normalized)
@@ -8551,7 +8559,12 @@ class CardPipelineApp(tk.Tk):
         normalized["weekly_sheet_name"] = str(normalized.get("weekly_sheet_name") or "").strip()
         normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
         normalized["original_source_sheet"] = str(normalized.get("original_source_sheet") or "").strip()
-        normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
+        assigned_person = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
+        if assigned_person.lower() in {"", "unassigned"} and getattr(self, "_is_personal_lucas", lambda: False)():
+            assigned_person = self._personal_default_person()
+            if str(normalized.get("source_sheet") or "").strip().lower() == "unassigned general sold":
+                normalized["source_sheet"] = self._general_sold_sheet_name(assigned_person)
+        normalized["assigned_person"] = assigned_person
         normalized["ledger_added_at"] = str(normalized.get("ledger_added_at") or "").strip()
         photo_paths = normalized.get("photo_paths") or normalized.get("photos") or []
         if isinstance(photo_paths, str):

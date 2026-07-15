@@ -325,6 +325,44 @@ class SharedStateTests(unittest.TestCase):
                 app.WORKING_SHEETS_DIR = old_working
                 app.RECEIVED_SHEETS_DIR = old_received
 
+    def test_personal_lucas_profit_records_default_unassigned_to_mikey(self) -> None:
+        class ProfitDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _general_sold_sheet_name = app.CardPipelineApp._general_sold_sheet_name
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+
+            def __init__(self, personal: bool):
+                self.personal = personal
+
+            def _is_personal_lucas(self):
+                return self.personal
+
+        personal = ProfitDummy(True)
+        team = ProfitDummy(False)
+
+        personal_record = personal._normalize_profit_record(
+            {
+                "assigned_person": "Unassigned",
+                "cert_number": "123",
+                "company": "General Sold",
+                "date_added": "2026-07-15",
+                "weekly_sheet_name": "Inventory Sale",
+                "source_sheet": "Unassigned General Sold",
+                "purchase_price": 10,
+                "sale_price": 15,
+            }
+        )
+        team_record = team._normalize_profit_record(dict(personal_record, assigned_person="Unassigned", source_sheet="Unassigned General Sold"))
+
+        self.assertEqual(personal_record["assigned_person"], "Mikey")
+        self.assertEqual(personal_record["source_sheet"], "Mikey General Sold")
+        self.assertTrue(personal_record["ledger_key"].endswith("|mikey general sold"))
+        self.assertEqual(personal._general_sold_sheet_name(""), "Mikey General Sold")
+        self.assertEqual(team_record["assigned_person"], "Unassigned")
+        self.assertEqual(team._general_sold_sheet_name(""), "Unassigned General Sold")
+
     def test_home_sheet_sort_modes(self) -> None:
         class SortVar:
             def __init__(self, value):
