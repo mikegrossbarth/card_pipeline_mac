@@ -7821,6 +7821,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
             _inventory_photo_state_used_keys = app.CardPipelineApp._inventory_photo_state_used_keys
             _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
+            _sold_inventory_photo_used_keys = app.CardPipelineApp._sold_inventory_photo_used_keys
             _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
             _inventory_unattached_photo_paths = app.CardPipelineApp._inventory_unattached_photo_paths
 
@@ -7837,11 +7838,16 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
             app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
             photo = app.INVENTORY_PHOTOS_DIR / "[20260708-0246]-Card[10]-[1]-[].jpg"
+            sold_path_photo = app.INVENTORY_PHOTOS_DIR / "sold-path.jpg"
             photo.write_bytes(b"fake image")
+            sold_path_photo.write_bytes(b"sold path image")
             dummy = PhotoPickerDummy()
             dummy.app_settings = {}
             dummy._save_inventory_ledger([])
-            dummy._save_profit_ledger([{"cert_number": "65774395", "card_title": "Sold Card", "sale_price": 20}])
+            dummy._save_profit_ledger([
+                {"cert_number": "65774395", "card_title": "Sold Card", "sale_price": 20},
+                {"cert_number": "44444444", "card_title": "Sold Path Card", "sale_price": 25, "photo_paths": [str(sold_path_photo)]},
+            ])
             sha = dummy._inventory_photo_file_hash(photo)
             app.INVENTORY_PHOTO_STATE_PATH.write_text(
                 json.dumps(

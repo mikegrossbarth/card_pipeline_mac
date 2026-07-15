@@ -7183,6 +7183,8 @@ class CardPipelineApp(tk.Tk):
         used_hashes = self._inventory_photo_used_hashes()
         state_used_names, state_used_paths, state_used_hashes = self._inventory_photo_state_used_keys()
         sold_certs = self._sold_inventory_cert_numbers()
+        sold_photo_source = getattr(self, "_sold_inventory_photo_used_keys", None)
+        sold_photo_paths, sold_photo_hashes = sold_photo_source() if callable(sold_photo_source) else (set(), set())
         state = self._load_inventory_photo_state()
         photos = state.get("photos") if isinstance(state, dict) else {}
         photos = photos if isinstance(photos, dict) else {}
@@ -7200,14 +7202,14 @@ class CardPipelineApp(tk.Tk):
                 storage = self._inventory_photo_storage_value(path)
                 if storage:
                     keys.add(storage)
-                if keys & used or keys & state_used_paths:
+                if keys & used or keys & state_used_paths or keys & sold_photo_paths:
                     continue
                 unique_key = ""
                 try:
                     unique_key = self._inventory_photo_file_hash(path)
                 except Exception:
                     unique_key = ""
-                if unique_key and (unique_key in used_hashes or unique_key in state_used_hashes):
+                if unique_key and (unique_key in used_hashes or unique_key in state_used_hashes or unique_key in sold_photo_hashes):
                     continue
                 existing_state = photos.get(unique_key) if unique_key and isinstance(photos.get(unique_key), dict) else {}
                 if existing_state and self._inventory_photo_state_matches_sold_cert(existing_state, sold_certs):
