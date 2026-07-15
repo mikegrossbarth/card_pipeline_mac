@@ -189,7 +189,7 @@ COMP_SOURCE_BOTH = "Card Ladder + CY"
 COMP_SOURCE_CARD_LADDER = "Card Ladder"
 COMP_SOURCE_CY = "CY"
 NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
-PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Month", "Year", "YTD", "Total")
+PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Last 30 Days", "Calendar Month", "Year", "YTD", "Total")
 PROFIT_GRAPH_OPTIONS = ("Overall Profit", "Profit to Sales Ratio", "Daily Trend", "Profit by Company")
 PROFIT_PLOT_OPTIONS = ("Overall", "By Sport")
 DEFAULT_PROFIT_PERIOD = "Year"
@@ -3306,7 +3306,7 @@ class CardPipelineApp(tk.Tk):
         return days, [round(value, 2) for value in values]
 
     def mobile_profit_summary(self, payload: dict) -> dict:
-        period = str(payload.get("period") or "Total").strip()
+        period = self._canonical_profit_period(str(payload.get("period") or "Total").strip())
         if period not in PROFIT_PERIOD_OPTIONS:
             period = "Total"
         graph = str(payload.get("graph") or "Daily Trend").strip()
@@ -8650,14 +8650,25 @@ class CardPipelineApp(tk.Tk):
             return today - timedelta(days=4), today
         if label == "week":
             return today - timedelta(days=6), today
-        if label == "month":
+        if label in {"last 30 days", "last 30 day", "30 days", "rolling 30 days", "rolling month"}:
             return today - timedelta(days=29), today
+        if label in {"calendar month", "month", "this month", "mtd"}:
+            return today.replace(day=1), today
         if label in {"year", "ytd", "year to date"}:
             return today.replace(month=1, day=1), today
         return None, today
 
+    def _canonical_profit_period(self, period: str) -> str:
+        label = str(period or "").strip()
+        normalized = label.lower()
+        if normalized in {"month", "this month", "mtd"}:
+            return "Calendar Month"
+        if normalized in {"30 days", "last 30 day", "rolling 30 days", "rolling month"}:
+            return "Last 30 Days"
+        return label
+
     def _profit_period_label(self) -> str:
-        period = self.profit_period_var.get().strip() if hasattr(self, "profit_period_var") else DEFAULT_PROFIT_PERIOD
+        period = self._canonical_profit_period(self.profit_period_var.get().strip() if hasattr(self, "profit_period_var") else DEFAULT_PROFIT_PERIOD)
         return period if period in PROFIT_PERIOD_OPTIONS else DEFAULT_PROFIT_PERIOD
 
     def _profit_graph_label(self) -> str:
@@ -8850,13 +8861,18 @@ class CardPipelineApp(tk.Tk):
         lines: list[dict[str, object]] = []
         for index, sport in enumerate(sports):
             values = []
+            running_profit = 0.0
             for bucket in buckets:
                 profit = profit_by_sport.get(sport, {}).get(bucket, 0.0)
                 if ratio_mode:
                     sale = sales_by_sport.get(sport, {}).get(bucket, 0.0)
                     values.append(profit / sale if sale else 0.0)
                 else:
-                    values.append(profit)
+                    if self._profit_graph_label() == "Overall Profit":
+                        running_profit += profit
+                        values.append(round(running_profit, 2))
+                    else:
+                        values.append(profit)
             color = PROFIT_SPORT_COLORS.get(sport) or ["#22c55e", "#eab308", "#38bdf8", "#fb7185", "#c084fc", "#f97316"][index % 6]
             lines.append({"label": sport, "values": values, "color": color})
         return buckets, lines, ratio_mode

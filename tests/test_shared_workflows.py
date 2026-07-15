@@ -4833,6 +4833,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _profit_today = lambda self: datetime(2026, 6, 19).date()
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
+            _canonical_profit_period = app.CardPipelineApp._canonical_profit_period
             _profit_period_label = app.CardPipelineApp._profit_period_label
             _profit_graph_label = app.CardPipelineApp._profit_graph_label
             _profit_chart_title = app.CardPipelineApp._profit_chart_title
@@ -8360,6 +8361,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _profit_today = lambda self: datetime(2026, 6, 17).date()
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
+            _canonical_profit_period = app.CardPipelineApp._canonical_profit_period
             _profit_period_label = app.CardPipelineApp._profit_period_label
             _profit_graph_label = app.CardPipelineApp._profit_graph_label
             _profit_plot_label = app.CardPipelineApp._profit_plot_label
@@ -8425,9 +8427,21 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         sport_rows = [
             {"assigned_person": "Lucas", "date_added": "2026-01-05", "sport": "football", "card_title": "2024 Panini Prizm Jayden Daniels", "profit": 20, "sale_price": 100},
+            {"assigned_person": "Lucas", "date_added": "2026-02-01", "sport": "football", "card_title": "2024 Panini Prizm Jayden Daniels Silver", "profit": 15, "sale_price": 75},
             {"assigned_person": "Lucas", "date_added": "2026-01-09", "sport": "baseball", "card_title": "2024 Topps Chrome Shohei Ohtani", "profit": 30, "sale_price": 150},
             {"assigned_person": "Lucas", "date_added": "2026-02-02", "sport": "basketball", "card_title": "Victor Wembanyama", "profit": 25, "sale_price": 100},
         ]
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Year")
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Overall Profit")
+        dummy.profit_plot_var = types.SimpleNamespace(get=lambda: "By Sport")
+        labels, lines, percent_mode = dummy._profit_chart_lines(sport_rows)
+        self.assertFalse(percent_mode)
+        self.assertEqual(labels[:2], ["2026-01", "2026-02"])
+        line_lookup = {line["label"]: line["values"] for line in lines}
+        self.assertEqual(line_lookup["Football"][:3], [20.0, 35.0, 35.0])
+        self.assertEqual(line_lookup["Baseball"][:3], [30.0, 30.0, 30.0])
+        self.assertEqual(line_lookup["Basketball"][:3], [0.0, 25.0, 25.0])
+
         dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Year")
         dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Profit to Sales Ratio")
         dummy.profit_plot_var = types.SimpleNamespace(get=lambda: "By Sport")
@@ -8436,6 +8450,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(labels[:2], ["2026-01", "2026-02"])
         line_lookup = {line["label"]: line["values"] for line in lines}
         self.assertAlmostEqual(line_lookup["Football"][0], 0.20)
+        self.assertAlmostEqual(line_lookup["Football"][1], 0.20)
         self.assertAlmostEqual(line_lookup["Baseball"][0], 0.20)
         self.assertAlmostEqual(line_lookup["Basketball"][1], 0.25)
 
@@ -8461,12 +8476,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual([line["label"] for line in company_chart_lines], ["Fanatics", "Arena Club", "General Sold"])
         self.assertEqual(dummy._profit_chart_title(), "Profit by Company (5 Days)")
 
-    def test_profit_month_period_uses_rolling_thirty_days(self) -> None:
+    def test_profit_periods_include_calendar_month_and_last_thirty_days(self) -> None:
         class ProfitDummy:
             _money_value = app.CardPipelineApp._money_value
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _profit_today = lambda self: datetime(2026, 7, 5).date()
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
+            _canonical_profit_period = app.CardPipelineApp._canonical_profit_period
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
 
         rows = [
@@ -8477,15 +8493,24 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         dummy = ProfitDummy()
         dummy.profit_person_var = types.SimpleNamespace(get=lambda: "")
-        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Month")
         dummy.profit_search_var = types.SimpleNamespace(get=lambda: "")
 
-        period_start, period_end = dummy._profit_period_bounds("Month")
+        period_start, period_end = dummy._profit_period_bounds("Last 30 Days")
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Last 30 Days")
         filtered = dummy._filtered_profit_records(rows)
 
         self.assertEqual(period_start.isoformat(), "2026-06-06")
         self.assertEqual(period_end.isoformat(), "2026-07-05")
         self.assertEqual([record["date_added"] for record in filtered], ["2026-06-06", "2026-07-05"])
+
+        period_start, period_end = dummy._profit_period_bounds("Calendar Month")
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Calendar Month")
+        filtered = dummy._filtered_profit_records(rows)
+
+        self.assertEqual(period_start.isoformat(), "2026-07-01")
+        self.assertEqual(period_end.isoformat(), "2026-07-05")
+        self.assertEqual([record["date_added"] for record in filtered], ["2026-07-05"])
+        self.assertEqual(dummy._canonical_profit_period("Month"), "Calendar Month")
 
     def test_personal_instagram_inventory_plan_separates_post_remove_and_missing_photo(self) -> None:
         class InstagramDummy:
@@ -10308,6 +10333,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _profit_today = lambda self: datetime(2026, 6, 19).date()
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
+            _canonical_profit_period = app.CardPipelineApp._canonical_profit_period
             _mobile_profit_rows = app.CardPipelineApp._mobile_profit_rows
             _mobile_profit_chart_series = app.CardPipelineApp._mobile_profit_chart_series
             mobile_profit_summary = app.CardPipelineApp.mobile_profit_summary
