@@ -2899,7 +2899,8 @@ class CardPipelineApp(tk.Tk):
             item_type = "Raw" if str(normalized.get("item_id") or "").strip().upper().startswith("RAW-") else "Graded"
         normalized["item_type"] = item_type
         normalized["item_id"] = str(normalized.get("item_id") or "").strip()
-        normalized["assigned_person"] = str(normalized.get("assigned_person") or normalized.get("person") or "").strip() or "Unassigned"
+        owner_for_profile = getattr(self, "_owner_for_profile", lambda person="": str(person or "").strip() or "Unassigned")
+        normalized["assigned_person"] = owner_for_profile(normalized.get("assigned_person") or normalized.get("person"))
         sport = str(normalized.get("sport") or normalized.get("category") or "").strip()
         normalized["sport"] = assignment_engine.canonical_sport_label(sport) or sport
         normalized["cert_number"] = str(normalized.get("cert_number") or "").strip()
@@ -4204,6 +4205,11 @@ class CardPipelineApp(tk.Tk):
 
     def _personal_default_person(self) -> str:
         return "Mikey"
+
+    def _owner_for_profile(self, person: object = "") -> str:
+        if self._is_personal_lucas():
+            return self._personal_default_person()
+        return str(person or "").strip() or "Unassigned"
 
     def _personal_instagram_sync_enabled(self) -> bool:
         return str(os.environ.get("LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -5800,10 +5806,9 @@ class CardPipelineApp(tk.Tk):
         return changed
 
     def _general_sold_sheet_name(self, person: str) -> str:
-        person_name = str(person or "").strip()
-        if person_name.lower() in {"", "unassigned"} and getattr(self, "_is_personal_lucas", lambda: False)():
-            person_name = self._personal_default_person()
-        return f"{person_name or 'Unassigned'} General Sold"
+        owner_for_profile = getattr(self, "_owner_for_profile", lambda value="": str(value or "").strip() or "Unassigned")
+        person_name = owner_for_profile(person)
+        return f"{person_name} General Sold"
 
     def _inventory_sale_profit_record(
         self,
@@ -5814,9 +5819,8 @@ class CardPipelineApp(tk.Tk):
         sale_method: str = "",
     ) -> dict[str, object]:
         normalized = self._normalize_inventory_record(record)
-        assigned_person = str(normalized.get("assigned_person") or "Unassigned").strip() or "Unassigned"
-        if assigned_person.lower() == "unassigned" and getattr(self, "_is_personal_lucas", lambda: False)():
-            assigned_person = self._personal_default_person()
+        owner_for_profile = getattr(self, "_owner_for_profile", lambda person="": str(person or "").strip() or "Unassigned")
+        assigned_person = owner_for_profile(normalized.get("assigned_person"))
         company_name = str(company or "").strip()
         source_sheet = normalized.get("source_sheet") or "Inventory"
         original_source_sheet = source_sheet
@@ -8537,10 +8541,8 @@ class CardPipelineApp(tk.Tk):
             normalized["cert_number"] = related_cert if related_type == "Card" else ""
             normalized["weekly_sheet_name"] = ""
             normalized["source_sheet"] = related_sheet if related_type in {"Card", "Sheet"} and related_sheet else "Expenses"
-            assigned_person = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
-            if assigned_person.lower() in {"", "unassigned"} and getattr(self, "_is_personal_lucas", lambda: False)():
-                assigned_person = self._personal_default_person()
-            normalized["assigned_person"] = assigned_person
+            owner_for_profile = getattr(self, "_owner_for_profile", lambda person="": str(person or "").strip() or "Unassigned")
+            normalized["assigned_person"] = owner_for_profile(normalized.get("assigned_person") or normalized.get("person"))
             normalized["notes"] = notes
             normalized["ledger_added_at"] = str(normalized.get("ledger_added_at") or "").strip()
             normalized["ledger_key"] = self._profit_record_key(normalized)
@@ -8559,9 +8561,9 @@ class CardPipelineApp(tk.Tk):
         normalized["weekly_sheet_name"] = str(normalized.get("weekly_sheet_name") or "").strip()
         normalized["source_sheet"] = str(normalized.get("source_sheet") or "").strip()
         normalized["original_source_sheet"] = str(normalized.get("original_source_sheet") or "").strip()
-        assigned_person = str(normalized.get("assigned_person") or normalized.get("person") or "").strip()
-        if assigned_person.lower() in {"", "unassigned"} and getattr(self, "_is_personal_lucas", lambda: False)():
-            assigned_person = self._personal_default_person()
+        owner_for_profile = getattr(self, "_owner_for_profile", lambda person="": str(person or "").strip() or "Unassigned")
+        assigned_person = owner_for_profile(normalized.get("assigned_person") or normalized.get("person"))
+        if getattr(self, "_is_personal_lucas", lambda: False)():
             if str(normalized.get("source_sheet") or "").strip().lower() == "unassigned general sold":
                 normalized["source_sheet"] = self._general_sold_sheet_name(assigned_person)
         normalized["assigned_person"] = assigned_person
@@ -8577,6 +8579,8 @@ class CardPipelineApp(tk.Tk):
         return normalized
 
     def _person_for_profit_record(self, record: dict[str, object]) -> str:
+        if getattr(self, "_is_personal_lucas", lambda: False)():
+            return self._personal_default_person()
         existing = str(record.get("assigned_person") or "").strip()
         if existing:
             return existing
@@ -9182,7 +9186,7 @@ class CardPipelineApp(tk.Tk):
         popup: tk.Toplevel,
     ) -> None:
         person = person_var.get().strip()
-        if not person and self._is_personal_lucas():
+        if getattr(self, "_is_personal_lucas", lambda: False)():
             person = self._personal_default_person()
         if not person:
             messagebox.showinfo("Person required", "Choose the person this expense belongs to.")
@@ -15933,6 +15937,8 @@ class CardPipelineApp(tk.Tk):
         self.events.put(("assignment_recommendations_done", {"job_id": job_id, "total": total, "results": results}))
 
     def _assignment_person_for_row(self, row: WorkbookRow) -> str:
+        if getattr(self, "_is_personal_lucas", lambda: False)():
+            return self._personal_default_person()
         selected_working_sheet = getattr(self, "selected_working_sheet", None)
         source_sheet = (
             getattr(self, "comp_sheet_sources", {}).get(row.excel_row)
@@ -16026,6 +16032,8 @@ class CardPipelineApp(tk.Tk):
         return updated
 
     def _assignment_person_for_row(self, row: WorkbookRow) -> str:
+        if getattr(self, "_is_personal_lucas", lambda: False)():
+            return self._personal_default_person()
         selected_working_sheet = getattr(self, "selected_working_sheet", None)
         source_sheet = (
             getattr(self, "comp_sheet_sources", {}).get(row.excel_row)

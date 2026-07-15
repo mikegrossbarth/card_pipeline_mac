@@ -332,6 +332,7 @@ class SharedStateTests(unittest.TestCase):
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _general_sold_sheet_name = app.CardPipelineApp._general_sold_sheet_name
             _personal_default_person = app.CardPipelineApp._personal_default_person
+            _owner_for_profile = app.CardPipelineApp._owner_for_profile
 
             def __init__(self, personal: bool):
                 self.personal = personal
@@ -344,7 +345,7 @@ class SharedStateTests(unittest.TestCase):
 
         personal_record = personal._normalize_profit_record(
             {
-                "assigned_person": "Unassigned",
+                "assigned_person": "Kevin Hambone",
                 "cert_number": "123",
                 "company": "General Sold",
                 "date_added": "2026-07-15",
@@ -354,14 +355,72 @@ class SharedStateTests(unittest.TestCase):
                 "sale_price": 15,
             }
         )
-        team_record = team._normalize_profit_record(dict(personal_record, assigned_person="Unassigned", source_sheet="Unassigned General Sold"))
+        personal_expense = personal._normalize_profit_record(
+            {
+                "record_type": "expense",
+                "assigned_person": "Kevin Hambone",
+                "date_added": "2026-07-15",
+                "expense_type": "Shipping",
+                "expense_amount": 4,
+            }
+        )
+        team_record = team._normalize_profit_record(
+            {
+                "assigned_person": "Kevin Hambone",
+                "cert_number": "123",
+                "company": "General Sold",
+                "date_added": "2026-07-15",
+                "weekly_sheet_name": "Inventory Sale",
+                "source_sheet": "Unassigned General Sold",
+                "purchase_price": 10,
+                "sale_price": 15,
+            }
+        )
 
         self.assertEqual(personal_record["assigned_person"], "Mikey")
         self.assertEqual(personal_record["source_sheet"], "Mikey General Sold")
         self.assertTrue(personal_record["ledger_key"].endswith("|mikey general sold"))
-        self.assertEqual(personal._general_sold_sheet_name(""), "Mikey General Sold")
-        self.assertEqual(team_record["assigned_person"], "Unassigned")
+        self.assertEqual(personal_expense["assigned_person"], "Mikey")
+        self.assertEqual(personal._general_sold_sheet_name("Kevin Hambone"), "Mikey General Sold")
+        self.assertEqual(team_record["assigned_person"], "Kevin Hambone")
         self.assertEqual(team._general_sold_sheet_name(""), "Unassigned General Sold")
+
+    def test_personal_lucas_inventory_and_assignment_default_to_mikey(self) -> None:
+        class PersonalInventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _assignment_person_for_row = app.CardPipelineApp._assignment_person_for_row
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+            _owner_for_profile = app.CardPipelineApp._owner_for_profile
+
+            def _is_personal_lucas(self):
+                return True
+
+        class TeamInventoryDummy(PersonalInventoryDummy):
+            def _is_personal_lucas(self):
+                return False
+
+        personal = PersonalInventoryDummy()
+        personal.home_sheet_markers = {"Incoming|Lot.xlsx": {"assigned_person": "Kevin Hambone"}}
+        personal.selected_working_sheet = types.SimpleNamespace(get=lambda: "Lot.xlsx")
+        team = TeamInventoryDummy()
+
+        personal_record = personal._normalize_inventory_record(
+            {"assigned_person": "Kevin Hambone", "cert_number": "123", "source_sheet": "Lot.xlsx", "card_title": "Test Card"}
+        )
+        team_record = team._normalize_inventory_record(
+            {"assigned_person": "Kevin Hambone", "cert_number": "123", "source_sheet": "Lot.xlsx", "card_title": "Test Card"}
+        )
+
+        self.assertEqual(personal_record["assigned_person"], "Mikey")
+        self.assertEqual(personal_record["inventory_key"], "123|lot.xlsx|mikey")
+        self.assertEqual(personal._assignment_person_for_row(WorkbookRow(excel_row=2, cert_number="", card_title="", grader="")), "Mikey")
+        self.assertEqual(team_record["assigned_person"], "Kevin Hambone")
+        self.assertEqual(team_record["inventory_key"], "123|lot.xlsx|kevin hambone")
 
     def test_home_sheet_sort_modes(self) -> None:
         class SortVar:
