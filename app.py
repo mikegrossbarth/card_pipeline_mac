@@ -10118,19 +10118,31 @@ class CardPipelineApp(tk.Tk):
     def _accounted_source_key(self, value: object) -> str:
         return Path(str(value or "")).name.strip().lower()
 
-    def _add_accounted_cert(self, index: dict[str, set[str]], source_sheet: object, cert: object) -> None:
-        source_key = self._accounted_source_key(source_sheet)
+    def _accounted_identity_key(self, cert: object = "", item_id: object = "") -> str:
         cert_key = scan_to_cert(cert)
-        if source_key and cert_key:
-            index.setdefault(source_key, set()).add(cert_key)
+        if cert_key:
+            return f"cert:{cert_key}"
+        item_key = str(item_id or "").strip().lower()
+        if item_key:
+            return f"item:{item_key}"
+        return ""
+
+    def _add_accounted_identity(self, index: dict[str, set[str]], source_sheet: object, cert: object = "", item_id: object = "") -> None:
+        source_key = self._accounted_source_key(source_sheet)
+        identity = self._accounted_identity_key(cert, item_id)
+        if source_key and identity:
+            index.setdefault(source_key, set()).add(identity)
+
+    def _add_accounted_cert(self, index: dict[str, set[str]], source_sheet: object, cert: object) -> None:
+        self._add_accounted_identity(index, source_sheet, cert=cert)
 
     def _accounted_sheet_cert_index(self) -> dict[str, set[str]]:
         index: dict[str, set[str]] = {}
         for record in [self._normalize_inventory_record(row) for row in self._load_inventory_ledger()]:
-            self._add_accounted_cert(index, record.get("source_sheet"), record.get("cert_number"))
+            self._add_accounted_identity(index, record.get("source_sheet"), record.get("cert_number"), record.get("item_id"))
         for record in [self._normalize_profit_record(row) for row in self._load_profit_ledger()]:
-            self._add_accounted_cert(index, record.get("source_sheet"), record.get("cert_number"))
-            self._add_accounted_cert(index, record.get("original_source_sheet"), record.get("cert_number"))
+            self._add_accounted_identity(index, record.get("source_sheet"), record.get("cert_number"), record.get("item_id"))
+            self._add_accounted_identity(index, record.get("original_source_sheet"), record.get("cert_number"), record.get("item_id"))
         for entry in self._load_activity_log():
             if str(entry.get("action") or "").strip().lower() != "inventory sold":
                 continue
@@ -10148,6 +10160,28 @@ class CardPipelineApp(tk.Tk):
             if scan_to_cert(row.get("cert_number"))
         }
 
+    def _sheet_accounting_payload(self, path: Path) -> dict[str, object]:
+        identities: set[str] = set()
+        certs: set[str] = set()
+        row_refs_by_identity: dict[str, tuple[str, str, int]] = {}
+        for row in read_simple_spreadsheet(path):
+            identity = self._accounted_identity_key(row.get("cert_number"), row.get("item_id"))
+            if not identity:
+                continue
+            identities.add(identity)
+            cert = scan_to_cert(row.get("cert_number"))
+            if cert:
+                certs.add(cert)
+            elif str(row.get("item_id") or "").strip():
+                workbook_sheet = str(row.get("workbook_sheet") or "").strip()
+                try:
+                    workbook_row = int(row.get("workbook_row") or 0)
+                except (TypeError, ValueError):
+                    workbook_row = 0
+                if workbook_sheet and workbook_row > 0:
+                    row_refs_by_identity[identity] = (path.name, workbook_sheet, workbook_row)
+        return {"identities": identities, "certs": certs, "row_refs_by_identity": row_refs_by_identity}
+
     def _reconcile_accounted_home_sheets(self) -> dict[str, list[str]]:
         result: dict[str, list[str]] = {"moved": [], "warnings": [], "notices": []}
         if not CARD_PIPELINE_DIR.exists():
@@ -10164,19 +10198,20 @@ class CardPipelineApp(tk.Tk):
                 if not accounted_certs:
                     continue
                 try:
-                    sheet_certs = self._sheet_cert_set(path)
+                    sheet_payload = self._sheet_accounting_payload(path)
                 except Exception as error:
                     result["warnings"].append(f"{path.name}: could not inspect duplicate/accounted rows ({error})")
                     continue
-                if not sheet_certs:
+                sheet_identities = set(sheet_payload.get("identities") or set())
+                if not sheet_identities:
                     continue
-                matched = sheet_certs & accounted_certs
+                matched = sheet_identities & accounted_certs
                 if not matched:
                     continue
-                missing = sheet_certs - accounted_certs
+                missing = sheet_identities - accounted_certs
                 if missing:
                     result["notices"].append(
-                        f"{path.name}: {len(matched)}/{len(sheet_certs)} cert(s) already exist in inventory/company/sold ledgers; {len(missing)} still unaccounted."
+                        f"{path.name}: {len(matched)}/{len(sheet_identities)} row(s) already exist in inventory/company/sold ledgers; {len(missing)} still unaccounted."
                     )
                     continue
                 destination = RECEIVED_SHEETS_DIR / path.name
@@ -10184,7 +10219,13 @@ class CardPipelineApp(tk.Tk):
                     result["warnings"].append(f"{path.name}: all rows accounted, but RECEIVED SHEETS already has that file name.")
                     continue
                 try:
-                    mark_result = mark_received_in_workbooks([path], sheet_certs)
+                    row_refs_by_identity = dict(sheet_payload.get("row_refs_by_identity") or {})
+                    row_refs = {
+                        row_ref
+                        for identity, row_ref in row_refs_by_identity.items()
+                        if identity in sheet_identities
+                    }
+                    mark_result = mark_received_in_workbooks([path], set(sheet_payload.get("certs") or set()), row_refs)
                     mark_errors = list(mark_result.get("errors") or [])
                     if mark_errors:
                         result["warnings"].append(f"{path.name}: all rows accounted, but receive marks could not be written: {mark_errors[0]}")
@@ -10202,7 +10243,7 @@ class CardPipelineApp(tk.Tk):
                     self._append_activity(
                         "Sheet Reconcile",
                         f"Moved fully accounted sheet {path.name} from {stage} to Received.",
-                        {"sheet": path.name, "from": stage, "to": "Received", "accounted_certs": len(sheet_certs)},
+                        {"sheet": path.name, "from": stage, "to": "Received", "accounted_rows": len(sheet_identities)},
                     )
                     result["moved"].append(path.name)
                 except Exception as error:

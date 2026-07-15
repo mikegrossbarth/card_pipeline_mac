@@ -4507,10 +4507,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
     def test_accounted_incoming_sheet_reconciles_to_received_without_duplicate_inventory(self) -> None:
         class ReconcileDummy:
+            _accounted_identity_key = app.CardPipelineApp._accounted_identity_key
+            _add_accounted_identity = app.CardPipelineApp._add_accounted_identity
             _accounted_source_key = app.CardPipelineApp._accounted_source_key
             _add_accounted_cert = app.CardPipelineApp._add_accounted_cert
             _accounted_sheet_cert_index = app.CardPipelineApp._accounted_sheet_cert_index
             _sheet_cert_set = app.CardPipelineApp._sheet_cert_set
+            _sheet_accounting_payload = app.CardPipelineApp._sheet_accounting_payload
             _reconcile_accounted_home_sheets = app.CardPipelineApp._reconcile_accounted_home_sheets
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
             _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
@@ -4591,12 +4594,81 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.WORKING_SHEETS_DIR = old_working
                 app.RECEIVED_SHEETS_DIR = old_received
 
+    def test_accounted_incoming_sheet_with_unaccounted_raw_row_does_not_reconcile_to_received(self) -> None:
+        class ReconcileDummy:
+            _accounted_identity_key = app.CardPipelineApp._accounted_identity_key
+            _add_accounted_identity = app.CardPipelineApp._add_accounted_identity
+            _accounted_source_key = app.CardPipelineApp._accounted_source_key
+            _add_accounted_cert = app.CardPipelineApp._add_accounted_cert
+            _accounted_sheet_cert_index = app.CardPipelineApp._accounted_sheet_cert_index
+            _sheet_accounting_payload = app.CardPipelineApp._sheet_accounting_payload
+            _reconcile_accounted_home_sheets = app.CardPipelineApp._reconcile_accounted_home_sheets
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+
+            def _load_inventory_ledger(self):
+                return self.inventory
+
+            def _load_profit_ledger(self):
+                return []
+
+            def _load_activity_log(self):
+                return []
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            app.CARD_PIPELINE_DIR = root
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.RECEIVED_SHEETS_DIR = root / "RECEIVED SHEETS"
+            app.INCOMING_SHEETS_DIR.mkdir(parents=True)
+            app.WORKING_SHEETS_DIR.mkdir(parents=True)
+            app.RECEIVED_SHEETS_DIR.mkdir(parents=True)
+            try:
+                sheet_path = app.INCOMING_SHEETS_DIR / "Raw Lot.xlsx"
+                write_working_sheet(
+                    sheet_path,
+                    [
+                        WorkbookRow(excel_row=2, cert_number="111", grader="PSA", card_title="Accounted Cert", existing_value=10),
+                        WorkbookRow(excel_row=3, cert_number="", item_id="RAW-MIKEY-20260709-0003", grader="PSA", card_title="2018 Topps Fire Shohei Ohtani Gold", existing_value=325),
+                    ],
+                    {2: "manual", 3: "manual"},
+                )
+                dummy = ReconcileDummy()
+                dummy.inventory = [{"cert_number": "111", "source_sheet": "Raw Lot.xlsx", "status": "Active"}]
+
+                result = dummy._reconcile_accounted_home_sheets()
+
+                self.assertEqual(result["moved"], [])
+                self.assertEqual(result["warnings"], [])
+                self.assertEqual(len(result["notices"]), 1)
+                self.assertIn("1/2 row(s) already exist", result["notices"][0])
+                self.assertTrue(sheet_path.exists())
+                self.assertFalse((app.RECEIVED_SHEETS_DIR / "Raw Lot.xlsx").exists())
+                rows = read_simple_spreadsheet(sheet_path)
+                self.assertFalse(rows[1]["received"])
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.RECEIVED_SHEETS_DIR = old_received
+
     def test_partial_accounted_incoming_sheet_notices_without_moving(self) -> None:
         class ReconcileDummy:
+            _accounted_identity_key = app.CardPipelineApp._accounted_identity_key
+            _add_accounted_identity = app.CardPipelineApp._add_accounted_identity
             _accounted_source_key = app.CardPipelineApp._accounted_source_key
             _add_accounted_cert = app.CardPipelineApp._add_accounted_cert
             _accounted_sheet_cert_index = app.CardPipelineApp._accounted_sheet_cert_index
             _sheet_cert_set = app.CardPipelineApp._sheet_cert_set
+            _sheet_accounting_payload = app.CardPipelineApp._sheet_accounting_payload
             _reconcile_accounted_home_sheets = app.CardPipelineApp._reconcile_accounted_home_sheets
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -4644,7 +4716,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(result["moved"], [])
                 self.assertEqual(result["warnings"], [])
                 self.assertEqual(len(result["notices"]), 1)
-                self.assertIn("1/2 cert(s) already exist", result["notices"][0])
+                self.assertIn("1/2 row(s) already exist", result["notices"][0])
                 self.assertTrue(sheet_path.exists())
                 self.assertFalse((app.RECEIVED_SHEETS_DIR / "Lot B.xlsx").exists())
             finally:
