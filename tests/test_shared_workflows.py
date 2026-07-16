@@ -7934,6 +7934,34 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.DELETED_ARCHIVE_DIR = old_deleted_archive
                 app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
 
+    def test_inventory_photo_export_to_desktop_copies_each_photo_without_overwrite(self) -> None:
+        class PhotoExportDummy:
+            _desktop_photo_export_destination = app.CardPipelineApp._desktop_photo_export_destination
+            _export_inventory_photos_to_desktop = app.CardPipelineApp._export_inventory_photos_to_desktop
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            desktop = root / "Desktop"
+            source_dir = root / "photos"
+            source_dir.mkdir(parents=True)
+            first = source_dir / "front.jpg"
+            second = source_dir / "back.jpg"
+            first.write_bytes(b"front")
+            second.write_bytes(b"back")
+            record = {"card_title": "2001 Pokemon Neo Discovery - 1st Ed. 46/75 Scyther CGC 10"}
+            desktop.mkdir(parents=True)
+            preexisting = desktop / "2001-Pokemon-Neo-Discovery-1st-Ed.-46-75-Scyther-CGC-10-photo-1-front.jpg"
+            preexisting.write_bytes(b"existing")
+            dummy = PhotoExportDummy()
+            with patch.object(app.Path, "home", return_value=root):
+                exported = dummy._export_inventory_photos_to_desktop(record, [first, second])
+            self.assertEqual(len(exported), 2)
+            self.assertEqual(exported[0].name, "2001-Pokemon-Neo-Discovery-1st-Ed.-46-75-Scyther-CGC-10-photo-1-front-2.jpg")
+            self.assertEqual(exported[1].name, "2001-Pokemon-Neo-Discovery-1st-Ed.-46-75-Scyther-CGC-10-photo-2-back.jpg")
+            self.assertEqual(preexisting.read_bytes(), b"existing")
+            self.assertEqual(exported[0].read_bytes(), b"front")
+            self.assertEqual(exported[1].read_bytes(), b"back")
+
     def test_inventory_sold_archives_matching_source_and_shared_photo_files(self) -> None:
         class PhotoSoldDummy:
             _money_value = app.CardPipelineApp._money_value

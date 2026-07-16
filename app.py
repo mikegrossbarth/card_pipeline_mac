@@ -6880,6 +6880,7 @@ class CardPipelineApp(tk.Tk):
         if len(records) == 1 and self._inventory_photo_paths_for_record(records[0]):
             menu.add_separator()
             menu.add_command(label="Open Photo", command=self.open_selected_inventory_photo)
+            menu.add_command(label="Export Copy to Desktop", command=self.export_selected_inventory_photos_to_desktop)
             menu.add_command(label="Open Photo Folder", command=self.open_selected_inventory_photo_folder)
             menu.add_command(label="Detach Photo...", command=self.detach_photo_from_selected_inventory_row)
         if len(active_records) == 1 and len(records) == 1:
@@ -6961,6 +6962,59 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("No photo", "This inventory row does not have an existing linked photo.")
             return
         self._open_local_path(paths[0].parent)
+
+    def _desktop_photo_export_destination(self, source_path: Path, record: dict[str, object], index: int = 0, total: int = 1) -> Path:
+        desktop = Path.home() / "Desktop"
+        title = str(record.get("card_title") or record.get("cert_number") or record.get("inventory_key") or source_path.stem).strip()
+        title_slug = re.sub(r"-+", "-", re.sub(r"[^A-Za-z0-9._-]+", "-", title)).strip("-")[:80] or "inventory-photo"
+        source_slug = re.sub(r"-+", "-", re.sub(r"[^A-Za-z0-9._-]+", "-", source_path.stem)).strip("-") or "photo"
+        suffix = source_path.suffix or ".jpg"
+        part = f"-photo-{index + 1}" if total > 1 else ""
+        destination = desktop / f"{title_slug}{part}-{source_slug}{suffix}"
+        counter = 2
+        while destination.exists():
+            destination = desktop / f"{title_slug}{part}-{source_slug}-{counter}{suffix}"
+            counter += 1
+        return destination
+
+    def _export_inventory_photos_to_desktop(self, record: dict[str, object], paths: list[Path]) -> list[Path]:
+        if not paths:
+            return []
+        desktop = Path.home() / "Desktop"
+        desktop.mkdir(parents=True, exist_ok=True)
+        exported: list[Path] = []
+        total = len(paths)
+        for index, path in enumerate(paths):
+            if not path.exists() or not path.is_file():
+                continue
+            destination = self._desktop_photo_export_destination(path, record, index, total)
+            shutil.copy2(path, destination)
+            exported.append(destination)
+        return exported
+
+    def export_selected_inventory_photos_to_desktop(self) -> None:
+        if not hasattr(self, "inventory_tree"):
+            return
+        records = [self.inventory_tree_records.get(iid) for iid in self.inventory_tree.selection()]
+        record = next((item for item in records if item), None)
+        paths = self._inventory_photo_paths_for_record(record)
+        if not record or not paths:
+            messagebox.showinfo("No photo", "This inventory row does not have an existing linked photo.")
+            return
+        try:
+            exported = self._export_inventory_photos_to_desktop(record, paths)
+        except Exception as error:
+            messagebox.showinfo("Export failed", f"Could not export photo copy to Desktop:\n{error}")
+            self.status_var.set(f"Photo export failed: {error}")
+            return
+        if not exported:
+            messagebox.showinfo("Export failed", "No existing photo files could be exported.")
+            return
+        self.status_var.set(f"Exported {len(exported)} inventory photo copy/copies to Desktop.")
+        if len(exported) == 1:
+            messagebox.showinfo("Export complete", f"Copied photo to Desktop:\n\n{exported[0].name}")
+        else:
+            messagebox.showinfo("Export complete", f"Copied {len(exported)} photos to Desktop.")
 
     def _choose_inventory_photo_to_open(self, paths: list[Path]) -> Path | None:
         popup = tk.Toplevel(self)
