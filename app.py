@@ -1540,7 +1540,7 @@ class CardPipelineApp(tk.Tk):
         self.network_seller_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.seller_terms_seller_combo = ttk.Combobox(intake_controls, textvariable=self.seller_terms_seller_var, width=24)
         self.seller_terms_seller_combo.grid(row=1, column=1, sticky="w", padx=(8, 16), pady=(10, 0))
-        self._bind_person_autocomplete(self.seller_terms_seller_combo, refresh_callback=self.apply_create_seller_terms)
+        self._bind_person_autocomplete(self.seller_terms_seller_combo, refresh_callback=self.apply_create_seller_terms, allow_blank=True)
         self.seller_terms_seller_combo.bind("<<ComboboxSelected>>", lambda _event: self.apply_create_seller_terms(), add="+")
         self.network_sheet_type_label = ttk.Label(intake_controls, text="Sheet Type", style="Muted.TLabel")
         self.network_sheet_type_label.grid(row=1, column=2, sticky="e", padx=(0, 6), pady=(10, 0))
@@ -1822,7 +1822,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(person_row, text="Person", style="Muted.TLabel").pack(side=tk.LEFT)
         self.home_person_combo = ttk.Combobox(person_row, textvariable=self.home_person_var, width=24)
         self.home_person_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
-        self._bind_person_autocomplete(self.home_person_combo, refresh_callback=self._on_home_person_filter_changed)
+        self._bind_person_autocomplete(self.home_person_combo, refresh_callback=self._on_home_person_filter_changed, allow_blank=True)
         self.home_person_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_home_person_filter_changed(), add="+")
         toggle_row = tk.Frame(sheet_panel, bg=palette["panel"])
         toggle_row.pack(fill=tk.X, pady=(0, 8))
@@ -2082,7 +2082,7 @@ class CardPipelineApp(tk.Tk):
         self.payout_person_combo = ttk.Combobox(controls, textvariable=self.payout_person_var, width=30)
         if not self._is_personal_lucas():
             self.payout_person_combo.grid(row=0, column=1, sticky="w", padx=(8, 10))
-        self._bind_person_autocomplete(self.payout_person_combo, refresh_callback=self.refresh_payouts_tab)
+        self._bind_person_autocomplete(self.payout_person_combo, refresh_callback=self.refresh_payouts_tab, allow_blank=True)
         self.payout_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_payouts_tab(), add="+")
         controls.columnconfigure(2, weight=1)
         ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
@@ -2148,7 +2148,7 @@ class CardPipelineApp(tk.Tk):
         self.inventory_person_combo = ttk.Combobox(controls, textvariable=self.inventory_person_var, width=22)
         if not self._is_personal_lucas():
             self.inventory_person_combo.grid(row=1, column=1, sticky="w", padx=(8, 14), pady=(10, 0))
-        self._bind_person_autocomplete(self.inventory_person_combo, refresh_callback=self.refresh_inventory_tab)
+        self._bind_person_autocomplete(self.inventory_person_combo, refresh_callback=self.refresh_inventory_tab, allow_blank=True)
         self.inventory_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_inventory_tab(), add="+")
         search_label_column = 0 if self._is_personal_lucas() else 2
         search_entry_column = 1 if self._is_personal_lucas() else 3
@@ -2418,7 +2418,7 @@ class CardPipelineApp(tk.Tk):
         self.profit_person_combo = ttk.Combobox(controls, textvariable=self.profit_person_var, width=28)
         if not self._is_personal_lucas():
             self.profit_person_combo.grid(row=0, column=2, sticky="w")
-        self._bind_person_autocomplete(self.profit_person_combo, refresh_callback=self.refresh_profit_tab)
+        self._bind_person_autocomplete(self.profit_person_combo, refresh_callback=self.refresh_profit_tab, allow_blank=True)
         self.profit_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_profit_tab(), add="+")
         period_label_column = 1 if self._is_personal_lucas() else 3
         period_combo_column = 2 if self._is_personal_lucas() else 4
@@ -4078,7 +4078,12 @@ class CardPipelineApp(tk.Tk):
         for index, (label, var, width) in enumerate(fields):
             row = 1 + index
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 10), pady=(0, 8))
-            ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=1, columnspan=3, sticky="ew", pady=(0, 8))
+            if label == "Person":
+                person_combo = ttk.Combobox(frame, textvariable=var, width=width)
+                person_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(0, 8))
+                self._bind_person_autocomplete(person_combo)
+            else:
+                ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=1, columnspan=3, sticky="ew", pady=(0, 8))
 
         required_text = "Card description and purchase are required." if personal_inventory else "Person, card description, and purchase are required. Cert and grader are optional."
         status_var = tk.StringVar(value=required_text)
@@ -4105,9 +4110,11 @@ class CardPipelineApp(tk.Tk):
             purchase = self._money_value(purchase_var.get())
             if not person and personal_inventory:
                 person = self._personal_default_person()
-            if not person:
-                show_validation("Enter a person.")
+            person_choice = self._canonical_person_choice(person)
+            if person_choice is None:
+                show_validation("Choose an existing person.")
                 return
+            person = person_choice
             if not title:
                 show_validation("Enter a card description.")
                 return
@@ -6057,7 +6064,12 @@ class CardPipelineApp(tk.Tk):
             vars_by_field[field] = var
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=col, sticky="w", padx=(0, 8), pady=(0, 8))
             width = 46 if field == "card_title" else 24
-            ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
+            if field == "assigned_person":
+                person_combo = ttk.Combobox(frame, textvariable=var, width=width)
+                person_combo.grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
+                self._bind_person_autocomplete(person_combo)
+            else:
+                ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
         status_var = tk.StringVar(value="Status changes use Mark Sold, Move, or Delete.")
         status_row = 2 + (len(fields) + 1) // 2
         ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=status_row, column=0, columnspan=4, sticky="w", pady=(4, 14))
@@ -6068,6 +6080,13 @@ class CardPipelineApp(tk.Tk):
                 raw = vars_by_field[field].get().strip()
                 if field in {"item_type", "item_id"}:
                     updates[field] = normalized.get(field) or raw
+                    continue
+                if field == "assigned_person":
+                    person_choice = self._canonical_person_choice(raw)
+                    if person_choice is None:
+                        status_var.set("Choose an existing person.")
+                        return
+                    updates[field] = person_choice
                     continue
                 if field in money_fields:
                     if not raw:
@@ -9288,9 +9307,11 @@ class CardPipelineApp(tk.Tk):
         person = person_var.get().strip()
         if getattr(self, "_is_personal_lucas", lambda: False)():
             person = self._personal_default_person()
-        if not person:
-            messagebox.showinfo("Person required", "Choose the person this expense belongs to.")
+        person_choice = self._canonical_person_choice(person)
+        if person_choice is None:
+            messagebox.showinfo("Person required", "Choose an existing person for this expense.")
             return
+        person = person_choice
         expense_date = date_var.get().strip()
         if self._profit_record_date(expense_date) is None:
             messagebox.showinfo("Date required", "Enter the expense date as YYYY-MM-DD.")
@@ -11687,36 +11708,56 @@ class CardPipelineApp(tk.Tk):
         if filter_text:
             needle = filter_text.strip().lower()
             people = [person for person in people if needle in person.lower()]
+        filter_people = [""] + people
         if hasattr(self, "payout_person_combo"):
-            self.payout_person_combo["values"] = people
+            self.payout_person_combo["values"] = filter_people
         if hasattr(self, "home_person_combo"):
-            self.home_person_combo["values"] = people
+            self.home_person_combo["values"] = filter_people
         if hasattr(self, "profit_person_combo"):
-            self.profit_person_combo["values"] = people
+            self.profit_person_combo["values"] = filter_people
         if hasattr(self, "inventory_person_combo"):
-            self.inventory_person_combo["values"] = people
+            self.inventory_person_combo["values"] = filter_people
         if hasattr(self, "seller_terms_seller_combo"):
-            self.seller_terms_seller_combo["values"] = people
+            self.seller_terms_seller_combo["values"] = filter_people
 
-    def _bind_person_autocomplete(self, combo: ttk.Combobox, refresh_callback=None) -> None:
-        combo["values"] = self._known_people()
-        combo.configure(postcommand=lambda widget=combo: self._refresh_person_combo_widget(widget))
-        combo.bind("<FocusIn>", lambda _event, widget=combo: self._refresh_person_combo_widget(widget), add="+")
-        combo.bind("<KeyRelease>", lambda event, widget=combo: self._filter_person_combo(widget, event, refresh_callback=refresh_callback), add="+")
-
-    def _refresh_person_combo_widget(self, combo: ttk.Combobox) -> None:
-        typed = combo.get().strip().lower()
+    def _person_combo_values(self, allow_blank: bool = False) -> list[str]:
         people = self._known_people()
+        return ([""] if allow_blank else []) + people
+
+    def _bind_person_autocomplete(self, combo: ttk.Combobox, refresh_callback=None, allow_blank: bool = False) -> None:
+        combo["values"] = self._person_combo_values(allow_blank=allow_blank)
+        if not getattr(self, "_is_personal_lucas", lambda: False)():
+            combo.configure(state="readonly")
+        combo.configure(postcommand=lambda widget=combo: self._refresh_person_combo_widget(widget, allow_blank=allow_blank))
+        combo.bind("<FocusIn>", lambda _event, widget=combo: self._refresh_person_combo_widget(widget, allow_blank=allow_blank), add="+")
+        if str(combo.cget("state")) != "readonly":
+            combo.bind("<KeyRelease>", lambda event, widget=combo: self._filter_person_combo(widget, event, refresh_callback=refresh_callback, allow_blank=allow_blank), add="+")
+
+    def _refresh_person_combo_widget(self, combo: ttk.Combobox, allow_blank: bool = False) -> None:
+        if str(combo.cget("state")) == "readonly":
+            combo["values"] = self._person_combo_values(allow_blank=allow_blank)
+            return
+        typed = combo.get().strip().lower()
+        people = self._person_combo_values(allow_blank=allow_blank)
         if typed:
             people = [person for person in people if typed in person.lower()]
         combo["values"] = people
 
-    def _filter_person_combo(self, combo: ttk.Combobox, event, refresh_callback=None) -> None:
+    def _filter_person_combo(self, combo: ttk.Combobox, event, refresh_callback=None, allow_blank: bool = False) -> None:
         if event.keysym in {"Up", "Down", "Left", "Right", "Return", "KP_Enter", "Escape", "Tab"}:
             return
-        self._refresh_person_combo_widget(combo)
+        self._refresh_person_combo_widget(combo, allow_blank=allow_blank)
         if refresh_callback:
             refresh_callback()
+
+    def _canonical_person_choice(self, person: object, allow_blank: bool = False) -> str | None:
+        if getattr(self, "_is_personal_lucas", lambda: False)():
+            return self._personal_default_person()
+        text = str(person or "").strip()
+        if not text:
+            return "" if allow_blank else None
+        people_by_key = {known.strip().lower(): known.strip() for known in self._known_people()}
+        return people_by_key.get(text.lower())
 
     def delete_person_records(self, person: str) -> dict[str, int]:
         target = person.strip().lower()
@@ -11767,7 +11808,7 @@ class CardPipelineApp(tk.Tk):
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text="Delete Person", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
         ttk.Label(frame, text="Person", style="Panel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(0, 12))
-        combo = ttk.Combobox(frame, textvariable=person_var, values=people, width=34)
+        combo = ttk.Combobox(frame, textvariable=person_var, values=people, width=34, state="readonly")
         combo.grid(row=1, column=1, sticky="ew", pady=(0, 12))
 
         def apply_delete() -> None:
@@ -12102,7 +12143,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
         person_combo.grid(row=2, column=1, sticky="ew", pady=(0, 10))
-        self._bind_person_autocomplete(person_combo)
+        self._bind_person_autocomplete(person_combo, allow_blank=True)
         paid_state = tk.NORMAL if payable or bool(marker.get("paid")) else tk.DISABLED
         ttk.Checkbutton(frame, text="Paid", variable=paid_var, state=paid_state, style="Panel.TCheckbutton").grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 14))
         buttons = ttk.Frame(frame, style="Panel.TFrame")
@@ -12134,7 +12175,11 @@ class CardPipelineApp(tk.Tk):
         if paid and payout_item and not bool(payout_item.get("payable", True)):
             messagebox.showinfo("Payout not ready", str(payout_item.get("status") or "This seller payout is still waiting on required values."))
             return
-        marker["assigned_person"] = person.strip()
+        person_choice = self._canonical_person_choice(person, allow_blank=True)
+        if person_choice is None:
+            messagebox.showinfo("Person required", "Choose an existing person.")
+            return
+        marker["assigned_person"] = person_choice
         marker["paid"] = bool(paid)
         if paid:
             marker.setdefault("paid_at", datetime.now().isoformat(timespec="seconds"))
@@ -12543,7 +12588,7 @@ class CardPipelineApp(tk.Tk):
             ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=(0, 14))
             person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
             person_combo.grid(row=5, column=1, sticky="ew", pady=(0, 14))
-            self._bind_person_autocomplete(person_combo)
+            self._bind_person_autocomplete(person_combo, allow_blank=True)
         buttons = ttk.Frame(frame, style="Panel.TFrame")
         buttons.grid(row=6, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
@@ -12583,6 +12628,12 @@ class CardPipelineApp(tk.Tk):
             if self._is_personal_lucas()
             else str(marker.get("assigned_person") or "").strip()
         )
+        if not self._is_personal_lucas():
+            person_choice = self._canonical_person_choice(updated_marker["assigned_person"], allow_blank=True)
+            if person_choice is None:
+                messagebox.showinfo("Person required", "Choose an existing person.")
+                return
+            updated_marker["assigned_person"] = person_choice
         if bool(updated_marker.get("seller_terms_applied") or updated_marker.get("seller_sheet_type")):
             sheet_type = str(updated_marker.get("seller_sheet_type") or "").strip()
             assigned_person = str(updated_marker.get("assigned_person") or "").strip()

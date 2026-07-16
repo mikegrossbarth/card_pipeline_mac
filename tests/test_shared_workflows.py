@@ -385,6 +385,31 @@ class SharedStateTests(unittest.TestCase):
         self.assertEqual(team_record["assigned_person"], "Kevin Hambone")
         self.assertEqual(team._general_sold_sheet_name(""), "Unassigned General Sold")
 
+    def test_team_person_choices_must_already_exist(self) -> None:
+        class PersonChoiceDummy:
+            _canonical_person_choice = app.CardPipelineApp._canonical_person_choice
+            _person_combo_values = app.CardPipelineApp._person_combo_values
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+
+            def __init__(self, personal: bool = False):
+                self.personal = personal
+
+            def _is_personal_lucas(self):
+                return self.personal
+
+            def _known_people(self):
+                return ["James Copeland", "Kevin Hambone"]
+
+        team = PersonChoiceDummy()
+        self.assertEqual(team._canonical_person_choice("james copeland"), "James Copeland")
+        self.assertEqual(team._canonical_person_choice("", allow_blank=True), "")
+        self.assertIsNone(team._canonical_person_choice("New Person"))
+        self.assertIsNone(team._canonical_person_choice(""))
+        self.assertEqual(team._person_combo_values(allow_blank=True), ["", "James Copeland", "Kevin Hambone"])
+
+        personal = PersonChoiceDummy(personal=True)
+        self.assertEqual(personal._canonical_person_choice("New Person"), "Mikey")
+
     def test_personal_lucas_inventory_and_assignment_default_to_mikey(self) -> None:
         class PersonalInventoryDummy:
             _money_value = app.CardPipelineApp._money_value
