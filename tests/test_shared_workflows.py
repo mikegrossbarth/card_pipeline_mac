@@ -8384,6 +8384,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 "date_added": "2026-06-11",
                 "company": "Arena Club",
                 "source_sheet": "Lot A.xlsx",
+                "assigned_person": "Unassigned",
                 "cert_number": "123",
                 "card_title": "Test Card",
                 "purchase_price": 40,

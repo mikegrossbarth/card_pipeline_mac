@@ -8666,11 +8666,11 @@ class CardPipelineApp(tk.Tk):
         if getattr(self, "_is_personal_lucas", lambda: False)():
             return self._personal_default_person()
         existing = str(record.get("assigned_person") or "").strip()
-        if existing:
+        if existing and existing.lower() != "unassigned":
             return existing
         source_sheet = Path(str(record.get("source_sheet") or "")).name
         if not source_sheet:
-            return ""
+            return existing
         for stage in ("Incoming", "Received", "Working"):
             marker = self.home_sheet_markers.get(self._home_sheet_key(stage, source_sheet), {})
             person = str(marker.get("assigned_person") or "").strip()
@@ -8682,7 +8682,7 @@ class CardPipelineApp(tk.Tk):
                 person = str(marker.get("assigned_person") or "").strip()
                 if person:
                     return person
-        return ""
+        return existing
 
     def _enrich_profit_records_with_people(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         enriched: list[dict[str, object]] = []
