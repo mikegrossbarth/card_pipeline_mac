@@ -5030,6 +5030,42 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.inventory_search_var = FieldVar("hidden sold")
         self.assertEqual(dummy._filtered_inventory_records(rows), [])
 
+    def test_inventory_filter_finds_missing_card_descriptions(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
+            _inventory_record_missing_card_description = app.CardPipelineApp._inventory_record_missing_card_description
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+
+        dummy = InventoryDummy()
+        dummy.inventory_person_var = FieldVar("")
+        dummy.inventory_sport_var = FieldVar("")
+        dummy.inventory_grader_var = FieldVar("")
+        dummy.inventory_year_var = FieldVar("")
+        dummy.inventory_search_var = FieldVar("")
+        dummy.inventory_min_var = FieldVar("")
+        dummy.inventory_max_var = FieldVar("")
+        dummy.inventory_date_min_var = FieldVar("")
+        dummy.inventory_date_max_var = FieldVar("")
+        dummy.inventory_missing_title_var = FieldVar(True)
+        dummy.inventory_missing_photos_var = FieldVar(False)
+        rows = [
+            {"status": "Active", "cert_number": "111", "card_title": "", "inventory_value": 50},
+            {"status": "Active", "cert_number": "222", "card_title": "222", "inventory_value": 50},
+            {"status": "Active", "cert_number": "333", "card_title": "2024 Prizm Real Card PSA 10", "inventory_value": 50},
+            {"status": "Sold", "cert_number": "444", "card_title": "", "inventory_value": 50},
+        ]
+
+        self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["111", "222"])
+
     def test_inventory_sport_filter_accepts_multiple_checked_sports(self) -> None:
         class FieldVar:
             def __init__(self, value=""):
