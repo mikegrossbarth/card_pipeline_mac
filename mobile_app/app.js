@@ -646,7 +646,6 @@ async function addInventory(updateExisting = false) {
     const action = state.queue.find((item) => item.id === result.action_id);
     if (action) {
       upsertCachedInventoryRecord(normalizePendingInventoryRecord(action));
-      $("searchInput").value = action.payload.cert_number || action.payload.card_title || "";
       renderCachedInventory(cachedInventoryWrapper(), "Showing queued inventory add from this phone. Sync when desktop LUCAS is reachable.");
     }
     $("addStatus").textContent = `Desktop not reachable. Queued inventory add ${result.action_id}.`;
@@ -666,7 +665,6 @@ async function addInventory(updateExisting = false) {
   $("addStatus").textContent = `${result.action === "updated" ? "Updated" : "Added"} ${result.record?.cert_number || result.record?.card_title || "card"}.`;
   updatePeople(result.people || state.people);
   if (result.record) upsertCachedInventoryRecord(result.record);
-  $("searchInput").value = result.record?.cert_number || result.record?.card_title || "";
   searchInventory();
 }
 
