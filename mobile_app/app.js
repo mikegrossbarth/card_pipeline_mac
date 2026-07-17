@@ -83,9 +83,9 @@ function setUnlocked(unlocked) {
   $("appPanel").classList.toggle("hidden", !unlocked);
 }
 
-async function api(path, body) {
+async function api(path, body, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 9000);
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       method: "POST",
@@ -909,12 +909,47 @@ function fileToDataUrl(file) {
   });
 }
 
+function loadImageUrl(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = url;
+  });
+}
+
+async function imageFileToCompressedDataUrl(file) {
+  if (!file || !String(file.type || "").startsWith("image/")) return fileToDataUrl(file);
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await loadImageUrl(objectUrl);
+    const maxSide = 1600;
+    const sourceWidth = image.naturalWidth || image.width || maxSide;
+    const sourceHeight = image.naturalHeight || image.height || maxSide;
+    const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) return fileToDataUrl(file);
+    context.drawImage(image, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", 0.82);
+  } catch (_error) {
+    return fileToDataUrl(file);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 async function identifyPhoto(file, target) {
   const status = target === "certNumber" ? $("scanAddStatus") : $("scanSearchStatus");
-  status.textContent = "Reading card photo...";
+  status.textContent = "Preparing photo...";
   try {
-    const image = await fileToDataUrl(file);
-    const result = await api("/card/identify", { image });
+    const image = await imageFileToCompressedDataUrl(file);
+    status.textContent = "Reading card photo...";
+    const result = await api("/card/identify", { image }, { timeoutMs: 45000 });
     if (!result.ok) {
       status.textContent = result.error || "Could not read that card.";
       return;

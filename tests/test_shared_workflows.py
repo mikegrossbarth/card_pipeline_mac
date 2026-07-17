@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import queue
@@ -10751,6 +10752,22 @@ class PhotoOcrSpeedTests(unittest.TestCase):
         self.assertEqual(result["query"], "123456789")
         self.assertEqual(result["card"]["grader"], "PSA")
         self.assertIn("Test Player", result["card"]["card_title"])
+        fallback_ocr.assert_not_called()
+
+    def test_mobile_card_identify_rejects_oversized_photos(self) -> None:
+        class MobilePhotoDummy:
+            _load_photo_env = lambda self: None
+            _mobile_image_parts = app.CardPipelineApp._mobile_image_parts
+
+        oversized = base64.b64encode(b"x" * (8 * 1024 * 1024 + 1)).decode("ascii")
+        fake_genai = types.SimpleNamespace(Client=lambda api_key: object())
+        with patch.object(app, "genai", fake_genai), \
+                patch.object(app, "identify_cards_sync") as fallback_ocr, \
+                patch.dict(app.os.environ, {"GOOGLE_API_KEY": "test-key"}):
+            result = app.CardPipelineApp.mobile_card_identify(MobilePhotoDummy(), {"image": f"data:image/jpeg;base64,{oversized}"})
+
+        self.assertFalse(result["ok"])
+        self.assertIn("too large", result["error"])
         fallback_ocr.assert_not_called()
 
 

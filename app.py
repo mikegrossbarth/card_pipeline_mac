@@ -3703,6 +3703,8 @@ class CardPipelineApp(tk.Tk):
             mime_type, image_b64, image_bytes = self._mobile_image_parts(image)
         except Exception as error:
             return {"ok": False, "error": f"Could not read that photo: {error}"}
+        if len(image_bytes) > 8 * 1024 * 1024:
+            return {"ok": False, "error": "That photo is too large for mobile OCR. Retake it a little closer or choose a smaller image."}
         try:
             client = make_photo_ocr_client(api_key)
             row = self._mobile_single_card_quick_read(client, mime_type, image_bytes)

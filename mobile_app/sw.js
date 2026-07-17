@@ -1,7 +1,7 @@
 const swPath = new URL(self.location.href).pathname;
 const profileMatch = swPath.match(/^\/mobile\/(team|personal)\//);
 const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
-const CACHE_NAME = `lucas-mobile-shell-v7-${profileMatch ? profileMatch[1] : "default"}`;
+const CACHE_NAME = `lucas-mobile-shell-v8-${profileMatch ? profileMatch[1] : "default"}`;
 const APP_SHELL = [
   APP_BASE,
   `${APP_BASE}/`,
