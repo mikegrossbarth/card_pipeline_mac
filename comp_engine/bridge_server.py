@@ -22,8 +22,8 @@ from cy_automation.cy_macos import CYMacOSAdapter
 from workbook_io import WorkbookRow
 import assignment_engine
 
-BRIDGE_VERSION = "2026-07-11-cardladder-stale-first-row-retry-v23"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-07-11-stale-first-row-retry-v23"
+BRIDGE_VERSION = "2026-07-17-cardladder-preserve-partial-capture-v24"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-07-17-preserve-partial-capture-v24"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.6"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 DEBUG_LOG = DEBUG_DIR / "bridge.log"
@@ -521,10 +521,11 @@ class BridgeState:
             if row_has_comp_data(row):
                 row.notes = str(result.get("error") or "Partial Card Ladder capture skipped; kept existing comps.")
                 return
-            row.card_ladder_value = None
+            if value is not None:
+                row.card_ladder_value = value
             row.card_ladder_comps_average = None
             row.card_ladder_comps = ""
-            row.card_ladder_screenshot = ""
+            row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
             row.status = "Card Ladder partial capture"
             row.notes = str(result.get("error") or "Card Ladder comp capture was incomplete.")
             return

@@ -6,7 +6,7 @@ const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
-const CARDLADDER_BACKGROUND_VERSION = "2026-07-11-stale-first-row-retry-v23";
+const CARDLADDER_BACKGROUND_VERSION = "2026-07-17-preserve-partial-capture-v24";
 const KEEP_SYNC_TAB_CLOSE_MS = 30000;
 const KEEP_SYNC_RETRY_MS = 60000;
 
@@ -424,7 +424,7 @@ async function lookupRowWithRetries(tabId, row) {
     if (captureResultLooksComplete(lastResult, expectedResultCount)) return lastResult;
     await delay(OCR_RETRY_MS);
   }
-  return markPartialCapture(lastResult || domResult, expectedResultCount);
+  return markPartialCapture(mergeCaptureResults(lastResult, domResult), expectedResultCount);
 }
 
 function isStalePreviousResultSubmit(result) {
@@ -472,6 +472,34 @@ function captureResultLooksComplete(result, expectedResultCount = null) {
   return comps.length >= Math.min(2, resultCount);
 }
 
+function mergeCaptureResults(primary, fallback) {
+  const primaryOcr = primary?.ocr && typeof primary.ocr === "object" ? primary.ocr : {};
+  const fallbackOcr = fallback?.ocr && typeof fallback.ocr === "object" ? fallback.ocr : {};
+  const primaryComps = Array.isArray(primaryOcr.comps) ? primaryOcr.comps : [];
+  const fallbackComps = Array.isArray(fallbackOcr.comps) ? fallbackOcr.comps : [];
+  const bestComps = primaryComps.length >= fallbackComps.length ? primaryComps : fallbackComps;
+  const mergedOcr = {
+    ...fallbackOcr,
+    ...primaryOcr,
+    value: primaryOcr.value ?? fallbackOcr.value ?? primary?.value ?? fallback?.value ?? null,
+    profileTitle: primaryOcr.profileTitle || fallbackOcr.profileTitle || "",
+    profileGrader: primaryOcr.profileGrader || fallbackOcr.profileGrader || "",
+    profileGrade: primaryOcr.profileGrade || fallbackOcr.profileGrade || "",
+    resultCount: primaryOcr.resultCount ?? fallbackOcr.resultCount ?? null,
+    comps: bestComps,
+    evidence: primaryOcr.evidence || fallbackOcr.evidence || "",
+    debugImage: primaryOcr.debugImage || fallbackOcr.debugImage || "",
+  };
+  return {
+    ...(fallback || {}),
+    ...(primary || {}),
+    value: primary?.value ?? fallback?.value ?? mergedOcr.value ?? null,
+    ocr: mergedOcr,
+    pageUrl: primary?.pageUrl || fallback?.pageUrl || "",
+    capturedAt: primary?.capturedAt || fallback?.capturedAt || new Date().toISOString(),
+  };
+}
+
 function markPartialCapture(result, expectedResultCount = null) {
   const comps = Array.isArray(result?.ocr?.comps) ? result.ocr.comps : [];
   const expected = Number.isFinite(expectedResultCount) && expectedResultCount > 0
@@ -479,7 +507,6 @@ function markPartialCapture(result, expectedResultCount = null) {
     : 2;
   return {
     ...(result || {}),
-    value: null,
     status: "partial_comp_capture",
     error: `Only captured ${comps.length} comp(s); expected ${expected}. Re-run this row.`,
   };

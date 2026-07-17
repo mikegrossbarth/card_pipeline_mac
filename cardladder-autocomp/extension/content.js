@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-07-11-stale-first-row-retry-v23";
+const CARDLADDER_CONTENT_VERSION = "2026-07-17-preserve-partial-capture-v24";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",

@@ -834,6 +834,36 @@ class CYLookupTests(unittest.TestCase):
         self.assertEqual(row.card_ladder_comps, "")
         self.assertIn("lookup failed", row.notes)
 
+    def test_cardladder_partial_capture_preserves_value_and_profile(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="45039796", grader="PSA", card_title="")
+        result = {
+            "excelRow": 2,
+            "certNumber": "45039796",
+            "grader": "PSA",
+            "status": "partial_comp_capture",
+            "value": 550,
+            "error": "Only captured 0 comp(s); expected 2. Re-run this row.",
+            "ocr": {
+                "profileTitle": "1965 Topps 350 Mickey Mantle",
+                "profileGrader": "PSA",
+                "profileGrade": "4.5",
+                "resultCount": 12,
+                "comps": [],
+                "debugImage": "data:image/png;base64,debug",
+            },
+        }
+
+        state._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.card_ladder_value, 550)
+        self.assertEqual(row.card_title, "1965 Topps 350 Mickey Mantle PSA 4.5")
+        self.assertEqual(row.card_ladder_comps, "")
+        self.assertIsNone(row.card_ladder_comps_average)
+        self.assertEqual(row.card_ladder_screenshot, "data:image/png;base64,debug")
+        self.assertEqual(row.status, "Card Ladder partial capture")
+        self.assertIn("Only captured 0 comp", row.notes)
+
     def test_cardladder_result_fills_blank_sport_from_profile_title(self) -> None:
         state = bridge_server.BridgeState()
         row = WorkbookRow(excel_row=2, cert_number="99505674", grader="PSA", card_title="")
