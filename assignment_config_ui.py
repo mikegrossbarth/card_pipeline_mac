@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import tkinter as tk
 import urllib.parse
 import webbrowser
@@ -108,6 +109,41 @@ def build_scrollable_dialog_body(parent: tk.Misc, style_name: str, bg: str = "#1
         widget.bind("<MouseWheel>", on_mousewheel, add="+")
         widget.bind("<Shift-MouseWheel>", on_shift_mousewheel, add="+")
     return body
+
+
+def bind_single_paste(widget: tk.Widget) -> tk.Widget:
+    def handle_paste(_event: tk.Event) -> str:
+        now = time.monotonic()
+        try:
+            text = widget.clipboard_get()
+        except tk.TclError:
+            return "break"
+        last = getattr(widget, "_lucas_last_paste", None)
+        if last and now - last[0] < 0.15 and text == last[1]:
+            return "break"
+        setattr(widget, "_lucas_last_paste", (now, text))
+        try:
+            state = str(widget.cget("state") or "")
+            if state == "disabled":
+                return "break"
+            if state == "readonly" and isinstance(widget, ttk.Combobox):
+                values = [str(value) for value in widget.cget("values")]
+                if text in values:
+                    widget.set(text)
+                return "break"
+            try:
+                widget.delete(tk.SEL_FIRST, tk.SEL_LAST)
+            except tk.TclError:
+                pass
+            widget.insert(tk.INSERT, text)
+        except tk.TclError:
+            pass
+        return "break"
+
+    widget.bind("<<Paste>>", handle_paste)
+    widget.bind("<Command-v>", handle_paste)
+    widget.bind("<Control-v>", handle_paste)
+    return widget
 
 
 def read_seller_terms_rows(seller_terms_path: Path) -> list[dict[str, str]]:
@@ -390,7 +426,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         side = ttk.Frame(shell, style="AssignPanel.TFrame", padding=12)
         side.grid(row=1, column=0, sticky="ns", padx=(0, 12))
         ttk.Label(side, text="Companies", style="AssignTitle.TLabel").pack(anchor=tk.W)
-        filter_entry = ttk.Entry(side, textvariable=self.company_filter_text, style="Assign.TEntry")
+        filter_entry = bind_single_paste(ttk.Entry(side, textvariable=self.company_filter_text, style="Assign.TEntry"))
         filter_entry.pack(fill=tk.X, pady=(8, 6))
         filter_modes = ttk.Frame(side, style="AssignPanel.TFrame")
         filter_modes.pack(fill=tk.X)
@@ -427,7 +463,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         details.grid(row=0, column=0, sticky="ew")
         details.columnconfigure(1, weight=1)
         ttk.Label(details, text="Company Name", style="Assign.TLabel").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
-        ttk.Entry(details, textvariable=self.company_name, style="Assign.TEntry").grid(row=0, column=1, sticky="ew")
+        bind_single_paste(ttk.Entry(details, textvariable=self.company_name, style="Assign.TEntry")).grid(row=0, column=1, sticky="ew")
         ttk.Label(details, text="Assignment Value", style="Assign.TLabel").grid(row=1, column=0, sticky=tk.W, padx=(0, 10), pady=(8, 0))
         value_source_frame = ttk.Frame(details, style="AssignPanel.TFrame")
         value_source_frame.grid(row=1, column=1, sticky=tk.W, pady=(8, 0))
@@ -442,15 +478,15 @@ class AssignmentRulesDialog(tk.Toplevel):
         ttk.Label(details, text="Company Sheet Reset", style="Assign.TLabel").grid(row=2, column=0, sticky=tk.W, padx=(0, 10), pady=(8, 0))
         reset_frame = ttk.Frame(details, style="AssignPanel.TFrame")
         reset_frame.grid(row=2, column=1, sticky=tk.W, pady=(8, 0))
-        ttk.Combobox(
+        bind_single_paste(ttk.Combobox(
             reset_frame,
             textvariable=self.reset_weekday,
             values=COMPANY_RESET_WEEKDAYS,
             width=14,
             state="readonly",
             style="Assign.TCombobox",
-        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
-        ttk.Entry(reset_frame, textvariable=self.reset_time, width=12, style="Assign.TEntry").grid(row=0, column=1, sticky=tk.W)
+        )).grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
+        bind_single_paste(ttk.Entry(reset_frame, textvariable=self.reset_time, width=12, style="Assign.TEntry")).grid(row=0, column=1, sticky=tk.W)
         ttk.Label(
             reset_frame,
             text="Starts the next weekly company sheet at this weekday/time.",
@@ -489,9 +525,9 @@ class AssignmentRulesDialog(tk.Toplevel):
         year_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
         ttk.Label(year_frame, text="Company Card Year Range", style="Assign.TLabel").grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
         ttk.Label(year_frame, text="Min Year", style="AssignMuted.TLabel").grid(row=0, column=1, sticky=tk.W, padx=(0, 6))
-        ttk.Entry(year_frame, textvariable=self.manual_min_year, width=10, style="Assign.TEntry").grid(row=0, column=2, sticky=tk.W)
+        bind_single_paste(ttk.Entry(year_frame, textvariable=self.manual_min_year, width=10, style="Assign.TEntry")).grid(row=0, column=2, sticky=tk.W)
         ttk.Label(year_frame, text="Max Year", style="AssignMuted.TLabel").grid(row=0, column=3, sticky=tk.W, padx=(14, 6))
-        ttk.Entry(year_frame, textvariable=self.manual_max_year, width=10, style="Assign.TEntry").grid(row=0, column=4, sticky=tk.W)
+        bind_single_paste(ttk.Entry(year_frame, textvariable=self.manual_max_year, width=10, style="Assign.TEntry")).grid(row=0, column=4, sticky=tk.W)
         ttk.Label(year_frame, text="Example: Fanatics min year 1990.", style="AssignMuted.TLabel").grid(row=0, column=5, sticky=tk.W, padx=(14, 0))
         rules_view = ttk.Frame(self.manual_rule_panel, style="AssignPanel.TFrame")
         rules_view.grid(row=3, column=0, sticky="nsew")
@@ -533,7 +569,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         path_row = ttk.Frame(frame, style="AssignPanel.TFrame")
         path_row.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         path_row.columnconfigure(0, weight=1)
-        self.rule_path_entry = ttk.Entry(path_row, textvariable=self.rule_source_path, style="Assign.TEntry")
+        self.rule_path_entry = bind_single_paste(ttk.Entry(path_row, textvariable=self.rule_source_path, style="Assign.TEntry"))
         self.rule_path_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         ttk.Button(path_row, text="Browse", command=self._browse_rule_source, style="AssignSoft.TButton").grid(row=0, column=1)
         actions = ttk.Frame(frame, style="AssignPanel.TFrame")
@@ -584,7 +620,7 @@ class AssignmentRulesDialog(tk.Toplevel):
         path_row = ttk.Frame(frame, style="AssignPanel.TFrame")
         path_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         path_row.columnconfigure(0, weight=1)
-        self.payout_path_entry = ttk.Entry(path_row, textvariable=self.payout_source_path, style="Assign.TEntry")
+        self.payout_path_entry = bind_single_paste(ttk.Entry(path_row, textvariable=self.payout_source_path, style="Assign.TEntry"))
         self.payout_path_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         ttk.Button(path_row, text="Browse", command=self._browse_payout_source, style="AssignSoft.TButton").grid(row=0, column=1)
         return frame
@@ -926,11 +962,11 @@ class AssignmentRulesDialog(tk.Toplevel):
         payout_var = tk.StringVar(value=str(payout_value))
         ttk.Label(price_frame, text="Price Range & Payout Percentage", style="Assign.TLabel").grid(row=0, column=0, columnspan=6, sticky=tk.W, pady=(0, 6))
         ttk.Label(price_frame, text="Min", style="Assign.TLabel").grid(row=1, column=0, sticky=tk.W, padx=(0, 6))
-        ttk.Entry(price_frame, textvariable=min_var, width=12, style="Assign.TEntry").grid(row=1, column=1, sticky=tk.W)
+        bind_single_paste(ttk.Entry(price_frame, textvariable=min_var, width=12, style="Assign.TEntry")).grid(row=1, column=1, sticky=tk.W)
         ttk.Label(price_frame, text="Max", style="Assign.TLabel").grid(row=1, column=2, sticky=tk.W, padx=(14, 6))
-        ttk.Entry(price_frame, textvariable=max_var, width=12, style="Assign.TEntry").grid(row=1, column=3, sticky=tk.W)
+        bind_single_paste(ttk.Entry(price_frame, textvariable=max_var, width=12, style="Assign.TEntry")).grid(row=1, column=3, sticky=tk.W)
         ttk.Label(price_frame, text="Payout Percentage", style="Assign.TLabel").grid(row=1, column=4, sticky=tk.W, padx=(14, 6))
-        ttk.Entry(price_frame, textvariable=payout_var, width=12, style="Assign.TEntry").grid(row=1, column=5, sticky=tk.W)
+        bind_single_paste(ttk.Entry(price_frame, textvariable=payout_var, width=12, style="Assign.TEntry")).grid(row=1, column=5, sticky=tk.W)
 
         grades_frame = ttk.Frame(frame, style="AssignPanel.TFrame")
         grades_frame.grid(row=4, column=0, sticky="ew", pady=(12, 0))
@@ -952,8 +988,8 @@ class AssignmentRulesDialog(tk.Toplevel):
             max_grade = tk.StringVar(value=str((payload or {}).get("max") or ""))
             ttk.Label(grades_frame, text=company.upper(), style="Assign.TLabel").grid(row=grade_index, column=0, sticky=tk.W, pady=3)
             ttk.Checkbutton(grades_frame, text="", variable=allowed, style="Assign.TCheckbutton").grid(row=grade_index, column=1, sticky=tk.W, pady=3)
-            ttk.Entry(grades_frame, textvariable=min_grade, width=8, style="Assign.TEntry").grid(row=grade_index, column=2, sticky=tk.W, pady=3)
-            ttk.Entry(grades_frame, textvariable=max_grade, width=8, style="Assign.TEntry").grid(row=grade_index, column=3, sticky=tk.W, pady=3)
+            bind_single_paste(ttk.Entry(grades_frame, textvariable=min_grade, width=8, style="Assign.TEntry")).grid(row=grade_index, column=2, sticky=tk.W, pady=3)
+            bind_single_paste(ttk.Entry(grades_frame, textvariable=max_grade, width=8, style="Assign.TEntry")).grid(row=grade_index, column=3, sticky=tk.W, pady=3)
             grade_vars[company] = {"allowed": allowed, "min": min_grade, "max": max_grade}
 
         self.rule_rows.append({"frame": frame, "sports": sport_vars, "min": min_var, "max": max_var, "payout": payout_var, "grades": grade_vars})
@@ -1010,11 +1046,11 @@ class AssignmentRulesDialog(tk.Toplevel):
         max_var = tk.StringVar(value=str((data or {}).get("max") or ""))
         rate_var = tk.StringVar(value=str((data or {}).get("rate") or ""))
         ttk.Label(self.payout_frame, text="Min", style="Assign.TLabel").grid(row=row_index, column=0, sticky=tk.W, padx=(0, 6), pady=4)
-        ttk.Entry(self.payout_frame, textvariable=min_var, width=9, style="Assign.TEntry").grid(row=row_index, column=1, sticky=tk.W, pady=4)
+        bind_single_paste(ttk.Entry(self.payout_frame, textvariable=min_var, width=9, style="Assign.TEntry")).grid(row=row_index, column=1, sticky=tk.W, pady=4)
         ttk.Label(self.payout_frame, text="Max", style="Assign.TLabel").grid(row=row_index, column=2, sticky=tk.W, padx=(10, 6), pady=4)
-        ttk.Entry(self.payout_frame, textvariable=max_var, width=9, style="Assign.TEntry").grid(row=row_index, column=3, sticky=tk.W, pady=4)
+        bind_single_paste(ttk.Entry(self.payout_frame, textvariable=max_var, width=9, style="Assign.TEntry")).grid(row=row_index, column=3, sticky=tk.W, pady=4)
         ttk.Label(self.payout_frame, text="Rate", style="Assign.TLabel").grid(row=row_index, column=4, sticky=tk.W, padx=(10, 6), pady=4)
-        ttk.Entry(self.payout_frame, textvariable=rate_var, width=9, style="Assign.TEntry").grid(row=row_index, column=5, sticky=tk.W, pady=4)
+        bind_single_paste(ttk.Entry(self.payout_frame, textvariable=rate_var, width=9, style="Assign.TEntry")).grid(row=row_index, column=5, sticky=tk.W, pady=4)
         self.payout_rows.append({"min": min_var, "max": max_var, "rate": rate_var})
 
     def _save_company(self) -> bool:
@@ -1578,16 +1614,16 @@ class PeopleRulesDialog(tk.Toplevel):
         sheet_types = self._active_sheet_types()
         for index, vars_by_field in enumerate(self.row_vars, start=1):
             self._bind_rate_deduction_exclusivity(vars_by_field)
-            ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller"], style="Assign.TEntry", width=26).grid(row=index, column=0, sticky="ew", padx=(0, 8), pady=(0, 8))
-            ttk.Combobox(
+            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller"], style="Assign.TEntry", width=26)).grid(row=index, column=0, sticky="ew", padx=(0, 8), pady=(0, 8))
+            bind_single_paste(ttk.Combobox(
                 self.rows_frame,
                 textvariable=vars_by_field["Sheet Type"],
                 values=sheet_types,
                 style="Assign.TCombobox",
                 width=24,
-            ).grid(row=index, column=1, sticky="ew", padx=(0, 8), pady=(0, 8))
-            ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller Rate"], style="Assign.TEntry", width=14).grid(row=index, column=2, sticky="ew", padx=(0, 8), pady=(0, 8))
-            ttk.Entry(self.rows_frame, textvariable=vars_by_field["Deduction"], style="Assign.TEntry", width=14).grid(row=index, column=3, sticky="ew", padx=(0, 8), pady=(0, 8))
+            )).grid(row=index, column=1, sticky="ew", padx=(0, 8), pady=(0, 8))
+            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller Rate"], style="Assign.TEntry", width=14)).grid(row=index, column=2, sticky="ew", padx=(0, 8), pady=(0, 8))
+            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Deduction"], style="Assign.TEntry", width=14)).grid(row=index, column=3, sticky="ew", padx=(0, 8), pady=(0, 8))
             ttk.Button(self.rows_frame, text="Delete", command=lambda row_index=index - 1: self._delete_row(row_index), style="AssignSoft.TButton").grid(row=index, column=4, sticky="ew", pady=(0, 8))
 
     def _validated_rows(self) -> list[dict[str, str]] | None:
