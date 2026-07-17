@@ -6705,8 +6705,23 @@ class CardPipelineApp(tk.Tk):
         return self._tree_row_text(self.inventory_tree, row_id)
 
     def _copy_inventory_text(self, text: str, label: str = "inventory value") -> None:
-        self.clipboard_clear()
-        self.clipboard_append(str(text or ""))
+        clipboard_text = str(text or "")
+        for _attempt in range(2):
+            self.clipboard_clear()
+            try:
+                self.update()
+            except tk.TclError:
+                pass
+            self.clipboard_append(clipboard_text)
+            try:
+                self.update()
+            except tk.TclError:
+                pass
+            try:
+                if self.clipboard_get() == clipboard_text:
+                    break
+            except tk.TclError:
+                break
         if hasattr(self, "status_var"):
             self.status_var.set(f"Copied {label}.")
 

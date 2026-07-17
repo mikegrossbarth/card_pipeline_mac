@@ -5347,6 +5347,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             def clipboard_append(self, text):
                 self.clipboard = text
 
+            def clipboard_get(self):
+                return self.clipboard
+
+            def update(self):
+                pass
+
         dummy = InventoryDummy()
         dummy.copy_inventory_cell_value("row-1", "#4")
         self.assertEqual(dummy.clipboard, "12345678")
@@ -5363,6 +5369,34 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.copy_tree_row_values(dummy.inventory_tree, "row-1", "sheet row")
         self.assertEqual(dummy.clipboard, "2026-06-18\tKevin Hambone\tBasketball\t12345678\tPSA\tTest Card")
         self.assertEqual(dummy.status_var.value, "Copied sheet row.")
+
+    def test_copy_replaces_clipboard_when_first_clear_does_not_settle(self) -> None:
+        class ClipboardDummy:
+            _copy_inventory_text = app.CardPipelineApp._copy_inventory_text
+
+            def __init__(self):
+                self.clipboard = "12345678"
+                self.clear_calls = 0
+
+            def clipboard_clear(self):
+                self.clear_calls += 1
+                if self.clear_calls > 1:
+                    self.clipboard = ""
+
+            def clipboard_append(self, text):
+                self.clipboard += text
+
+            def clipboard_get(self):
+                return self.clipboard
+
+            def update(self):
+                pass
+
+        dummy = ClipboardDummy()
+        dummy._copy_inventory_text("12345678")
+
+        self.assertEqual(dummy.clipboard, "12345678")
+        self.assertEqual(dummy.clear_calls, 2)
 
     def test_inventory_table_shows_source_values_separately(self) -> None:
         class FieldVar:
