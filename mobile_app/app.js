@@ -8,6 +8,7 @@ const state = {
   connected: navigator.onLine !== false,
   viewerRecord: null,
   viewerPhoto: null,
+  searchRequestSeq: 0,
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
 const IS_PERSONAL_PROFILE = Boolean(profileMatch && profileMatch[1] === "personal");
@@ -177,6 +178,7 @@ function updatePeople(people) {
     state.people = people.filter(Boolean);
   }
   ["personFilter", "profitPerson", "payoutPerson"].forEach((id) => fillSelect($(id), state.people));
+  ["assignedPerson", "expensePerson"].forEach((id) => fillSelect($(id), state.people, { allLabel: "Choose person" }));
 }
 
 function cachedInventoryWrapper() {
@@ -512,8 +514,13 @@ function inventorySearchPayload(overrides = {}) {
   };
 }
 
+function certDigits(value) {
+  return String(value || "").replace(/\D+/g, "");
+}
+
 function cachedInventoryMatches(item, payload) {
   const query = String(payload.query || "").trim().toLowerCase();
+  const certQuery = certDigits(query);
   const person = String(payload.person || "").trim().toLowerCase();
   const sports = Array.isArray(payload.sport) ? payload.sport : [payload.sport].filter(Boolean);
   const sportFilters = sports.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
@@ -525,20 +532,11 @@ function cachedInventoryMatches(item, payload) {
     if (!sportFilters.some((sport) => sportText === sport || sportText.includes(sport))) return false;
   }
   if (query) {
-    const haystack = [
-      item.inventory_key,
-      item.item_type,
-      item.item_id,
-      item.cert_number,
-      item.card_title,
-      item.grader,
-      item.assigned_person,
-      item.sport,
-      item.source,
-      item.best_company,
-      item.notes,
-    ].map((value) => String(value || "").toLowerCase()).join(" ");
-    if (query.split(/\s+/).some((part) => part && !haystack.includes(part))) return false;
+    const cert = String(item.cert_number || "").trim().toLowerCase();
+    const title = String(item.card_title || "").trim().toLowerCase();
+    const certMatches = (certQuery && certDigits(cert).includes(certQuery)) || cert.includes(query);
+    const titleMatches = title.includes(query);
+    if (!certMatches && !titleMatches) return false;
   }
   return true;
 }
@@ -587,22 +585,26 @@ function escapeHtml(value) {
 
 async function searchInventory() {
   let result;
+  const requestSeq = ++state.searchRequestSeq;
   const cached = cachedInventoryWrapper();
   const showedCached = renderCachedInventory(
     cached,
     cached ? `Showing last synced inventory (${cacheAgeText(cached.saved_at)}). Checking live LUCAS...` : ""
   );
   if (navigator.onLine === false) {
+    if (requestSeq !== state.searchRequestSeq) return;
     renderCachedSearch(cacheGet(CACHE_KEYS.search), "Phone is offline.");
     return;
   }
   try {
     result = await api("/inventory/search", inventorySearchPayload());
   } catch (error) {
+    if (requestSeq !== state.searchRequestSeq) return;
     if (!showedCached) renderCachedSearch(cacheGet(CACHE_KEYS.search), error);
     else setConnectionStatus(false, `Still showing last synced inventory. Live LUCAS is not reachable yet. ${error.message || error}`);
     return;
   }
+  if (requestSeq !== state.searchRequestSeq) return;
   if (!result.ok) {
     if (/pin/i.test(result.error || "")) setUnlocked(false);
     $("results").innerHTML = `<div class="hint">${escapeHtml(result.error || "Search failed.")}</div>`;

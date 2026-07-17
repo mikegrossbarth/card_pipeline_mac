@@ -3049,11 +3049,13 @@ class CardPipelineApp(tk.Tk):
         cert = scan_to_cert(payload.get("cert_number") or payload.get("cert") or payload.get("barcode") or "")
         card_title = str(payload.get("card_title") or payload.get("card") or "").strip()
         source = str(payload.get("source") or payload.get("seller") or "Mobile").strip() or "Mobile"
-        person = str(payload.get("assigned_person") or payload.get("person") or "").strip() or "Unassigned"
+        person = str(payload.get("assigned_person") or payload.get("person") or "").strip()
         is_personal = getattr(self, "_is_personal_lucas", lambda: False)
         default_person = getattr(self, "_personal_default_person", lambda: "Mikey")
-        if is_personal() and person == "Unassigned":
+        if is_personal() and not person:
             person = default_person()
+        elif not is_personal():
+            person = self._canonical_person_choice(person) or ""
         sport = str(payload.get("sport") or "").strip()
         if not sport and card_title:
             sport = str(assignment_engine.parse_card_for_matching(card_title).get("sport") or "")
@@ -3124,6 +3126,7 @@ class CardPipelineApp(tk.Tk):
 
     def mobile_inventory_search(self, payload: dict) -> dict:
         query = str(payload.get("query") or payload.get("q") or "").strip().lower()
+        cert_query = scan_to_cert(query)
         person = str(payload.get("person") or "").strip().lower()
         sport_filters = self._mobile_inventory_sport_filters(payload)
         include_sold = bool(payload.get("include_sold"))
@@ -3145,12 +3148,17 @@ class CardPipelineApp(tk.Tk):
                 record_sport = (assignment_engine.canonical_sport_label(record_sport_text) or record_sport_text).strip().lower()
                 if record_sport not in sport_filters and not any(sport in record_sport_text for sport in sport_filters):
                     continue
-            haystack = " ".join(
-                str(record.get(field) or "")
-                for field in ("inventory_key", "item_type", "item_id", "cert_number", "card_title", "grader", "assigned_person", "sport", "source", "best_company", "notes")
-            ).lower()
-            if query and any(part not in haystack for part in query.split()):
-                continue
+            if query:
+                record_cert = str(record.get("cert_number") or "").strip().lower()
+                record_cert_digits = scan_to_cert(record_cert)
+                record_title = str(record.get("card_title") or "").strip().lower()
+                cert_matches = bool(
+                    (cert_query and cert_query in record_cert_digits)
+                    or (query and query in record_cert)
+                )
+                title_matches = query in record_title
+                if not (cert_matches or title_matches):
+                    continue
             results.append(self._mobile_inventory_json_record(record))
             if len(results) >= limit:
                 break
@@ -3171,6 +3179,10 @@ class CardPipelineApp(tk.Tk):
         return values
 
     def mobile_inventory_add(self, payload: dict) -> dict:
+        if not getattr(self, "_is_personal_lucas", lambda: False)():
+            raw_person = str(payload.get("assigned_person") or payload.get("person") or "").strip()
+            if self._canonical_person_choice(raw_person) is None:
+                return {"ok": False, "error": "Choose an existing person from People Rules."}
         record = self._mobile_inventory_payload_record(payload)
         if not record.get("cert_number") and not record.get("card_title"):
             return {"ok": False, "error": "Enter or scan a cert number, or enter a card title."}
@@ -3277,7 +3289,16 @@ class CardPipelineApp(tk.Tk):
                 if sold_date is None or sold_date < period_start or sold_date > period_end:
                     continue
             filtered.append(record)
-        return sorted(filtered, key=lambda item: (str(item.get("date_added") or ""), str(item.get("company") or ""), str(item.get("card_title") or "")), reverse=True)
+        return sorted(
+            filtered,
+            key=lambda item: (
+                self._profit_added_sort_value(item),
+                str(item.get("date_added") or ""),
+                str(item.get("company") or ""),
+                str(item.get("card_title") or ""),
+            ),
+            reverse=True,
+        )
 
     def _mobile_profit_chart_series(self, rows: list[dict[str, object]], period: str, graph: str) -> tuple[list[str], list[float]]:
         daily: dict[str, float] = {}
@@ -3373,8 +3394,10 @@ class CardPipelineApp(tk.Tk):
         default_person = getattr(self, "_personal_default_person", lambda: "Mikey")
         if not person and is_personal():
             person = default_person()
+        elif not is_personal():
+            person = self._canonical_person_choice(person) or ""
         if not person:
-            return {"ok": False, "error": "Choose the person this expense belongs to."}
+            return {"ok": False, "error": "Choose an existing person from People Rules."}
         expense_date = str(payload.get("date") or payload.get("date_added") or "").strip() or datetime.now().strftime("%Y-%m-%d")
         if self._profit_record_date(expense_date) is None:
             return {"ok": False, "error": "Enter the expense date as YYYY-MM-DD."}

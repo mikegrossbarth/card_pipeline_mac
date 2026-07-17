@@ -45,7 +45,7 @@
             <select id="personFilter"></select>
           </label>
           <div class="searchRow">
-            <input id="searchInput" placeholder="Cert, player, card, seller">
+            <input id="searchInput" placeholder="Cert number or card description">
             <label class="fileButton" for="photoSearchInput">Scan Photo</label>
             <input id="photoSearchInput" class="fileInput" type="file" accept="image/*" capture="environment">
           </div>
@@ -90,10 +90,16 @@
           </div>
           <div id="scanAddStatus" class="status"></div>
           <div class="grid">
-            <label>Grader<input id="grader" placeholder="PSA"></label>
+            <label>Grader<select id="grader">
+              <option value="">No grader</option>
+              <option value="PSA">PSA</option>
+              <option value="BGS">BGS</option>
+              <option value="CGC">CGC</option>
+              <option value="SGC">SGC</option>
+            </select></label>
             <label>Purchase<input id="purchasePrice" inputmode="decimal" placeholder="0.00"></label>
             <label>Card<input id="cardTitle" placeholder="Year set player grade"></label>
-            <label class="personControl">Person<input id="assignedPerson" placeholder="Owner/person"></label>
+            <label class="personControl">Person<select id="assignedPerson"></select></label>
             <label>Seller/source<input id="source" placeholder="Mobile"></label>
             <label>Value<input id="inventoryValue" inputmode="decimal" placeholder="Optional"></label>
             <label>Notes<textarea id="notes" rows="3"></textarea></label>
@@ -105,7 +111,7 @@
 
         <section id="expenseView" class="view hidden">
           <div class="grid">
-            <label class="personControl">Person<input id="expensePerson" placeholder="Owner/person"></label>
+            <label class="personControl">Person<select id="expensePerson"></select></label>
             <label>Date<input id="expenseDate" type="date"></label>
             <label>Type<select id="expenseType"></select></label>
             <label>Amount<input id="expenseAmount" inputmode="decimal" placeholder="0.00"></label>

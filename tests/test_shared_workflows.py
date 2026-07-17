@@ -10295,6 +10295,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _mobile_inventory_payload_record = app.CardPipelineApp._mobile_inventory_payload_record
             _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
             _mobile_inventory_sport_filters = app.CardPipelineApp._mobile_inventory_sport_filters
+            _canonical_person_choice = app.CardPipelineApp._canonical_person_choice
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
             _raw_item_id_namespace = lambda self: "TEAM"
             mobile_inventory_search = app.CardPipelineApp.mobile_inventory_search
@@ -10304,6 +10305,9 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             def __init__(self, root: Path) -> None:
                 self.events = queue.Queue()
                 self.lucas_identity = {"display_name": "test", "machine": "test"}
+
+            def _is_personal_lucas(self):
+                return False
 
             def _known_people(self):
                 return sorted(
@@ -10363,29 +10367,39 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 multi_category = dummy.mobile_inventory_search({"sport": ["baseball", "basketball"]})
                 self.assertEqual(multi_category["count"], 2)
                 self.assertEqual({item["cert_number"] for item in multi_category["items"]}, {"123456", "654321"})
+                self.assertEqual(dummy.mobile_inventory_search({"query": "Test Player Silver"})["items"][0]["cert_number"], "123456")
+                self.assertEqual(dummy.mobile_inventory_search({"query": "Barcode"})["count"], 0)
+                self.assertEqual(dummy.mobile_inventory_search({"query": "Kevin"})["count"], 0)
+                self.assertEqual(dummy.mobile_inventory_search({"query": "Existing"})["count"], 0)
                 limited = dummy.mobile_inventory_search({"limit": 1})
                 self.assertEqual(limited["count"], 1)
 
-                duplicate = dummy.mobile_inventory_add({"cert_number": "123456", "purchase_price": "50"})
+                duplicate = dummy.mobile_inventory_add({"assigned_person": "Kevin Hambone", "cert_number": "123456", "purchase_price": "50"})
                 self.assertFalse(duplicate["ok"])
                 self.assertTrue(duplicate["duplicate"])
 
-                update = dummy.mobile_inventory_add({"cert_number": "123456", "purchase_price": "50", "update_existing": True})
+                update = dummy.mobile_inventory_add({"assigned_person": "Kevin Hambone", "cert_number": "123456", "purchase_price": "50", "update_existing": True})
                 self.assertTrue(update["ok"])
                 self.assertEqual(update["action"], "updated")
                 self.assertEqual(update["record"]["purchase_price"], 50.0)
 
-                added = dummy.mobile_inventory_add({"cert_number": "777888", "grader": "SGC", "card_title": "Mobile Added Card", "purchase_price": "12.50", "source": "Show"})
+                rejected_person = dummy.mobile_inventory_add({"assigned_person": "New Person", "cert_number": "777888", "purchase_price": "12.50"})
+                self.assertFalse(rejected_person["ok"])
+                self.assertIn("People Rules", rejected_person["error"])
+
+                added = dummy.mobile_inventory_add({"assigned_person": "Kevin Hambone", "cert_number": "777888", "grader": "SGC", "card_title": "Mobile Added Card", "purchase_price": "12.50", "source": "Show"})
                 self.assertTrue(added["ok"])
                 self.assertEqual(added["action"], "added")
                 self.assertEqual(added["record"]["source"], "Show")
 
-                raw_added = dummy.mobile_inventory_add({"card_title": "2024 Panini Prizm Test Raw Card", "purchase_price": "8"})
+                raw_added = dummy.mobile_inventory_add({"assigned_person": "Kevin Hambone", "card_title": "2024 Panini Prizm Test Raw Card", "purchase_price": "8"})
                 self.assertTrue(raw_added["ok"])
                 self.assertEqual(raw_added["record"]["item_type"], "Raw")
                 self.assertTrue(raw_added["record"]["item_id"].startswith("RAW-"))
                 self.assertEqual(raw_added["record"]["cert_number"], "")
                 raw_search = dummy.mobile_inventory_search({"query": raw_added["record"]["item_id"]})
+                self.assertEqual(raw_search["count"], 0)
+                raw_search = dummy.mobile_inventory_search({"query": "Panini Prizm Test Raw"})
                 self.assertEqual(raw_search["count"], 1)
                 self.assertEqual(raw_search["items"][0]["item_id"], raw_added["record"]["item_id"])
             finally:
@@ -10402,8 +10416,10 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
             _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
             _append_profit_records = app.CardPipelineApp._append_profit_records
+            _canonical_person_choice = app.CardPipelineApp._canonical_person_choice
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _profit_today = lambda self: datetime(2026, 6, 19).date()
+            _profit_added_sort_value = app.CardPipelineApp._profit_added_sort_value
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
             _canonical_profit_period = app.CardPipelineApp._canonical_profit_period
             _mobile_profit_rows = app.CardPipelineApp._mobile_profit_rows
@@ -10491,6 +10507,31 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertEqual(payouts["totals"]["balance"], 120.0)
                 self.assertEqual(payouts["summary"][0]["person"], "Mike Seller")
                 self.assertEqual(payouts["details"][0]["status"], "Ready")
+
+                dummy._save_profit_ledger(
+                    [
+                        {
+                            "assigned_person": "Kevin Hambone",
+                            "company": "Z Older",
+                            "card_title": "Older Timestamp",
+                            "purchase_price": 10,
+                            "sale_price": 15,
+                            "date_added": "2026-06-18",
+                            "ledger_added_at": "2026-06-18T08:00:00",
+                        },
+                        {
+                            "assigned_person": "Kevin Hambone",
+                            "company": "A Newer",
+                            "card_title": "Newer Timestamp",
+                            "purchase_price": 10,
+                            "sale_price": 20,
+                            "date_added": "2026-06-18",
+                            "ledger_added_at": "2026-06-18T09:00:00",
+                        },
+                    ]
+                )
+                recent = dummy.mobile_profit_summary({"person": "Kevin", "period": "YTD"})["recent"]
+                self.assertEqual([row["title"] for row in recent[:2]], ["Newer Timestamp", "Older Timestamp"])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
