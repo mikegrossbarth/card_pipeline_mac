@@ -16,6 +16,10 @@ The old visible `Review` workflow was split into `Receive` and `Assignment`. Man
 
 ## Future Ideas
 
+### Single-Row Card Ladder Result Matching
+
+Future idea: make one-card comp runs more tolerant when the Chrome helper successfully returns a result but the desktop bridge cannot match it back to the queued row. Recent logs showed a one-row run where Card Ladder returned cert `0003815085`, CL value `$12,760`, one comp, and `partial_comp_capture`, but the bridge logged `cardladder_result no_target excel_row=2 cert=0003815085`. Preferred fix: if exactly one Card Ladder row is queued/running and exactly one result comes back, attach the result to that queued row even if `excelRow` or cert formatting does not match perfectly. This should reduce intermittent one-card sheet errors, especially for synthetic inventory recomp rows or certs with leading zeros.
+
 ### iPhone Companion App / TestFlight Path
 
 User is interested in a future L.U.C.A.S phone companion, not a full desktop clone. Preferred scope is inventory-only:
