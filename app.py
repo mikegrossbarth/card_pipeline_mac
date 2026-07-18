@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
@@ -3277,6 +3277,7 @@ class CardPipelineApp(tk.Tk):
         sale_date = str(payload.get("sale_date") or payload.get("date") or "").strip() or datetime.now().strftime("%Y-%m-%d")
         if self._profit_record_date(sale_date) is None:
             return {"ok": False, "error": "Enter the sale date as YYYY-MM-DD."}
+        sale_date = self._mobile_local_calendar_date(sale_date)
         sale_method = str(payload.get("sale_method") or payload.get("method") or "").strip()
         company = str(payload.get("company") or payload.get("buyer") or "").strip()
         with shared_lock(CARD_PIPELINE_DIR, "mobile-inventory-sold", self.lucas_identity):
@@ -3334,6 +3335,20 @@ class CardPipelineApp(tk.Tk):
 
     def _mobile_inventory_title_key(self, value: object) -> str:
         return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+    def _mobile_local_calendar_date(self, value: object) -> str:
+        return self._profit_local_calendar_date(value)
+
+    def _profit_local_calendar_date(self, value: object, ledger_added_at: object = "") -> str:
+        date_text = str(value or "").strip()[:10]
+        parsed = self._profit_record_date(date_text)
+        ledger_date = self._profit_record_date(str(ledger_added_at or "").strip()[:10])
+        if parsed is not None and ledger_date is not None and parsed == ledger_date + timedelta(days=1):
+            return ledger_date.isoformat()
+        today = date.today()
+        if parsed == today + timedelta(days=1):
+            return today.isoformat()
+        return date_text
 
     def _mobile_profit_rows(self, person: str = "", period: str = "Total") -> list[dict[str, object]]:
         needle = person.strip().lower()
@@ -3460,6 +3475,7 @@ class CardPipelineApp(tk.Tk):
         expense_date = str(payload.get("date") or payload.get("date_added") or "").strip() or datetime.now().strftime("%Y-%m-%d")
         if self._profit_record_date(expense_date) is None:
             return {"ok": False, "error": "Enter the expense date as YYYY-MM-DD."}
+        expense_date = self._mobile_local_calendar_date(expense_date)
         amount = self._money_value(payload.get("amount") or payload.get("expense_amount"))
         if amount is None or amount <= 0:
             return {"ok": False, "error": "Enter an expense amount greater than zero."}
@@ -8746,7 +8762,10 @@ class CardPipelineApp(tk.Tk):
             normalized["purchase_price"] = None
             normalized["sale_price"] = None
             normalized["profit"] = -round(abs(amount), 2)
-            normalized["date_added"] = str(normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"))[:10]
+            normalized["date_added"] = self._profit_local_calendar_date(
+                normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"),
+                normalized.get("ledger_added_at"),
+            )
             normalized["company"] = f"Expense: {expense_type}"
             normalized["card_title"] = notes or expense_type
             normalized["item_id"] = related_item_id if related_type == "Card" else ""
@@ -8764,7 +8783,10 @@ class CardPipelineApp(tk.Tk):
         normalized["purchase_price"] = purchase
         normalized["sale_price"] = sale
         normalized["profit"] = round(sale - purchase, 2) if sale is not None and purchase is not None else None
-        normalized["date_added"] = str(normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"))
+        normalized["date_added"] = self._profit_local_calendar_date(
+            normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"),
+            normalized.get("ledger_added_at"),
+        )
         normalized["company"] = str(normalized.get("company") or normalized.get("best_company") or "").strip()
         normalized["item_type"] = str(normalized.get("item_type") or normalized.get("type") or "").strip()
         normalized["item_id"] = str(normalized.get("item_id") or "").strip()

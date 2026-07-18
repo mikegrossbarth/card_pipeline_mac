@@ -330,6 +330,8 @@ class SharedStateTests(unittest.TestCase):
         class ProfitDummy:
             _money_value = app.CardPipelineApp._money_value
             _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _general_sold_sheet_name = app.CardPipelineApp._general_sold_sheet_name
             _personal_default_person = app.CardPipelineApp._personal_default_person
@@ -385,6 +387,19 @@ class SharedStateTests(unittest.TestCase):
         self.assertEqual(personal._general_sold_sheet_name("Kevin Hambone"), "Mikey General Sold")
         self.assertEqual(team_record["assigned_person"], "Kevin Hambone")
         self.assertEqual(team._general_sold_sheet_name(""), "Unassigned General Sold")
+
+        mobile_utc_record = personal._normalize_profit_record(
+            {
+                "assigned_person": "Mikey",
+                "cert_number": "157176295",
+                "company": "General Sold",
+                "date_added": "2026-07-18",
+                "ledger_added_at": "2026-07-17T18:54:18.097266",
+                "purchase_price": 4700,
+                "sale_price": 5200,
+            }
+        )
+        self.assertEqual(mobile_utc_record["date_added"], "2026-07-17")
 
     def test_team_person_choices_must_already_exist(self) -> None:
         class PersonChoiceDummy:
@@ -2503,6 +2518,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         result = types.SimpleNamespace(stdout="Michaels-MacBook\n")
         with patch.object(app.subprocess, "run", return_value=result):
             self.assertEqual(app.mobile_app_host({}), "Michaels-MacBook.local")
+
+    def test_mobile_defaults_sale_and_expense_dates_from_local_calendar_day(self) -> None:
+        script = (ROOT / "mobile_app" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("function localDateString(date = new Date())", script)
+        self.assertIn('$("sellDate").value = localDateString();', script)
+        self.assertIn('$("expenseDate").value = localDateString();', script)
+        self.assertNotIn('new Date().toISOString().slice(0, 10)', script)
 
     def test_bridge_keeps_default_mobile_port_stable(self) -> None:
         bridge = app.BridgeServer(app.BridgeState())
@@ -10657,6 +10680,8 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
             _mobile_inventory_sale_match = app.CardPipelineApp._mobile_inventory_sale_match
             _mobile_inventory_title_key = app.CardPipelineApp._mobile_inventory_title_key
+            _mobile_local_calendar_date = app.CardPipelineApp._mobile_local_calendar_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             mobile_inventory_mark_sold = app.CardPipelineApp.mobile_inventory_mark_sold
             _append_activity = lambda self, action, summary, details=None: None
 
@@ -10727,11 +10752,13 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                         "cert_number": "555222",
                         "card_title": "Cached Mobile Sale Card",
                         "sale_price": "60",
-                        "sale_date": "2026-06-21",
+                        "sale_date": (date.today() + timedelta(days=1)).isoformat(),
                     }
                 )
                 self.assertTrue(stale_result["ok"])
                 self.assertEqual(dummy._load_inventory_ledger(), [])
+                profit = [dummy._normalize_profit_record(item) for item in dummy._load_profit_ledger()]
+                self.assertEqual(profit[-1]["date_added"], date.today().isoformat())
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
@@ -10757,6 +10784,8 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
             _append_profit_records = app.CardPipelineApp._append_profit_records
             _profit_record_date = app.CardPipelineApp._profit_record_date
+            _mobile_local_calendar_date = app.CardPipelineApp._mobile_local_calendar_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             mobile_expense_add = app.CardPipelineApp.mobile_expense_add
             _load_mobile_action_log = app.CardPipelineApp._load_mobile_action_log
             _save_mobile_action_log = app.CardPipelineApp._save_mobile_action_log

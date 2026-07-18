@@ -161,6 +161,13 @@ function money(value, fallback = "") {
   return number.toLocaleString(undefined, { style: "currency", currency: "USD" });
 }
 
+function localDateString(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function fillSelect(select, values, options = {}) {
   const current = select.value;
   const allLabel = options.allLabel || "All people";
@@ -335,7 +342,7 @@ function exportQueue() {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `lucas-mobile-queue-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.download = `lucas-mobile-queue-${localDateString()}.json`;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
@@ -673,7 +680,7 @@ function startSell(record) {
   if (!state.sellRecord) return;
   $("sellTitle").textContent = `Mark Sold: ${state.sellRecord.cert_number || state.sellRecord.card_title || "card"}`;
   $("sellPrice").value = state.sellRecord.estimated_payout || state.sellRecord.inventory_value || state.sellRecord.purchase_price || "";
-  $("sellDate").value = new Date().toISOString().slice(0, 10);
+  $("sellDate").value = localDateString();
   $("sellCompany").value = "";
   $("sellStatus").textContent = "";
   $("sellPanel").classList.remove("hidden");
@@ -991,8 +998,8 @@ function bind() {
   hydratePendingInventoryFromQueue();
   document.body.classList.toggle("personalProfile", IS_PERSONAL_PROFILE);
   $("pin").value = state.pin;
-  $("expenseDate").value = new Date().toISOString().slice(0, 10);
-  $("sellDate").value = new Date().toISOString().slice(0, 10);
+  $("expenseDate").value = localDateString();
+  $("sellDate").value = localDateString();
   fillSelect($("sellMethod"), ["Cash", "Wire", "Venmo", "Zelle", "PayPal", "Check", "Trade", "Other"], { includeAll: false });
   fillSelect($("expenseType"), ["Travel", "Supplies", "Travel Meal", "Fees", "Shipping"], { includeAll: false });
   fillSelect($("expenseRelatedType"), ["General", "Card", "Sheet"], { includeAll: false });
