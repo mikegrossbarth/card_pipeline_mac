@@ -3286,8 +3286,18 @@ class CardPipelineApp(tk.Tk):
             if record is None:
                 record = self._mobile_inventory_sale_match(ledger, payload)
             if record is None:
+                already_applied = self._mobile_sold_profit_match(payload, float(sale_price), sale_date)
+                if already_applied is not None:
+                    return self._mobile_sold_already_applied_result(already_applied, sale_date, sale_method, company, float(sale_price))
                 return {"ok": False, "error": "That inventory card was not found."}
             if str(record.get("status") or "").lower() != "active":
+                already_payload = dict(payload)
+                already_payload.setdefault("cert_number", record.get("cert_number"))
+                already_payload.setdefault("item_id", record.get("item_id"))
+                already_payload.setdefault("card_title", record.get("card_title"))
+                already_applied = self._mobile_sold_profit_match(already_payload, float(sale_price), sale_date)
+                if already_applied is not None:
+                    return self._mobile_sold_already_applied_result(already_applied, sale_date, sale_method, company, float(sale_price))
                 return {"ok": False, "error": "Only active inventory cards can be marked sold."}
             sold_inventory_key = str(record.get("inventory_key") or inventory_key)
             profit_record = self._inventory_sale_profit_record(record, company, float(sale_price), sale_date=sale_date, sale_method=sale_method)
@@ -3335,6 +3345,61 @@ class CardPipelineApp(tk.Tk):
 
     def _mobile_inventory_title_key(self, value: object) -> str:
         return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+    def _mobile_sold_profit_match(self, payload: dict, sale_price: float, sale_date: str) -> dict[str, object] | None:
+        inventory_key = str(payload.get("inventory_key") or payload.get("key") or "").strip().lower()
+        key_parts = [part.strip() for part in inventory_key.split("|") if part.strip()]
+        cert = scan_to_cert(payload.get("cert_number") or payload.get("cert") or payload.get("barcode") or "")
+        if not cert and key_parts:
+            cert = scan_to_cert(key_parts[0])
+        item_id = str(payload.get("item_id") or "").strip().lower()
+        if not item_id and inventory_key.startswith("raw-"):
+            item_id = inventory_key
+        title_key = self._mobile_inventory_title_key(payload.get("card_title") or payload.get("card") or "")
+        expected_date = self._profit_record_date(sale_date)
+        matches: list[dict[str, object]] = []
+        for raw_record in self._load_profit_ledger():
+            record = self._normalize_profit_record(raw_record)
+            if str(record.get("status") or "") != "Sold from inventory":
+                continue
+            if self._money_value(record.get("sale_price")) != round(float(sale_price), 2):
+                continue
+            sold_date = self._profit_record_date(record.get("date_added"))
+            if expected_date is not None and sold_date is not None and abs((sold_date - expected_date).days) > 1:
+                continue
+            if cert and scan_to_cert(record.get("cert_number")) == cert:
+                matches.append(record)
+                continue
+            if item_id and str(record.get("item_id") or "").strip().lower() == item_id:
+                matches.append(record)
+                continue
+            if title_key and self._mobile_inventory_title_key(record.get("card_title")) == title_key:
+                matches.append(record)
+        return matches[0] if len(matches) == 1 else None
+
+    def _mobile_sold_already_applied_result(
+        self,
+        record: dict[str, object],
+        sale_date: str,
+        sale_method: str,
+        company: str,
+        sale_price: float,
+    ) -> dict[str, object]:
+        return {
+            "ok": True,
+            "already_applied": True,
+            "record": self._mobile_inventory_json_record(record),
+            "sale": {
+                "date": str(record.get("date_added") or sale_date)[:10],
+                "method": str(record.get("sale_method") or sale_method or ""),
+                "company": str(record.get("company") or company or "General Sold"),
+                "sale_price": round(float(record.get("sale_price") or sale_price), 2),
+                "sale_price_display": format_money(record.get("sale_price") or sale_price),
+                "profit": record.get("profit"),
+                "profit_display": format_money(record.get("profit")),
+            },
+            "people": self._known_people(),
+        }
 
     def _mobile_local_calendar_date(self, value: object) -> str:
         return self._profit_local_calendar_date(value)

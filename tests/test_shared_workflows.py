@@ -10680,6 +10680,8 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
             _mobile_inventory_sale_match = app.CardPipelineApp._mobile_inventory_sale_match
             _mobile_inventory_title_key = app.CardPipelineApp._mobile_inventory_title_key
+            _mobile_sold_profit_match = app.CardPipelineApp._mobile_sold_profit_match
+            _mobile_sold_already_applied_result = app.CardPipelineApp._mobile_sold_already_applied_result
             _mobile_local_calendar_date = app.CardPipelineApp._mobile_local_calendar_date
             _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             mobile_inventory_mark_sold = app.CardPipelineApp.mobile_inventory_mark_sold
@@ -10759,6 +10761,19 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertEqual(dummy._load_inventory_ledger(), [])
                 profit = [dummy._normalize_profit_record(item) for item in dummy._load_profit_ledger()]
                 self.assertEqual(profit[-1]["date_added"], date.today().isoformat())
+
+                already_result = dummy.mobile_inventory_mark_sold(
+                    {
+                        "inventory_key": "old-cached-key",
+                        "cert_number": "555222",
+                        "card_title": "Cached Mobile Sale Card",
+                        "sale_price": "60",
+                        "sale_date": date.today().isoformat(),
+                    }
+                )
+                self.assertTrue(already_result["ok"])
+                self.assertTrue(already_result["already_applied"])
+                self.assertEqual(len(dummy._load_profit_ledger()), len(profit))
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
