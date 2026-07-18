@@ -2535,6 +2535,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn('$("grader").value = "";', script)
         self.assertGreaterEqual(script.count("clearAddForm();"), 2)
 
+    def test_mobile_primary_tab_is_labeled_inventory(self) -> None:
+        html = (ROOT / "mobile_app" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('<button class="tab active" data-view="search" type="button">Inventory</button>', html)
+        self.assertNotIn('<button class="tab active" data-view="search" type="button">Search</button>', html)
+
     def test_bridge_keeps_default_mobile_port_stable(self) -> None:
         bridge = app.BridgeServer(app.BridgeState())
 
