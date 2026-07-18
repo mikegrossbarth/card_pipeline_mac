@@ -2541,6 +2541,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn('<button class="tab active" data-view="search" type="button">Inventory</button>', html)
         self.assertNotIn('<button class="tab active" data-view="search" type="button">Search</button>', html)
 
+    def test_mobile_profit_defaults_to_month_overall_profit(self) -> None:
+        script = (ROOT / "mobile_app" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('$("profitPeriod").value = "Month";', script)
+        self.assertIn('$("profitGraph").value = "Overall Profit";', script)
+
     def test_bridge_keeps_default_mobile_port_stable(self) -> None:
         bridge = app.BridgeServer(app.BridgeState())
 

@@ -1016,6 +1016,8 @@ function bind() {
   fillSelect($("expenseRelatedType"), ["General", "Card", "Sheet"], { includeAll: false });
   fillSelect($("profitPeriod"), ["Total", "Year", "Month", "Week", "5 Days"], { includeAll: false });
   fillSelect($("profitGraph"), ["Daily Trend", "Overall Profit"], { includeAll: false });
+  $("profitPeriod").value = "Month";
+  $("profitGraph").value = "Overall Profit";
   updatePeople([]);
   syncPersonInputs(PERSONAL_DEFAULT_PERSON);
   renderQueue();
