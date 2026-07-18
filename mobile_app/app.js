@@ -691,6 +691,9 @@ async function confirmSell() {
   $("sellStatus").textContent = "Saving sale...";
   const result = await mutationApi("inventory.sold", "/inventory/sold", {
     inventory_key: state.sellRecord.inventory_key,
+    cert_number: state.sellRecord.cert_number || "",
+    item_id: state.sellRecord.item_id || "",
+    card_title: state.sellRecord.card_title || "",
     sale_price: $("sellPrice").value,
     sale_date: $("sellDate").value,
     sale_method: $("sellMethod").value,

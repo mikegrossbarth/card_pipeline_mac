@@ -3057,6 +3057,7 @@ class CardPipelineApp(tk.Tk):
     def _mobile_inventory_payload_record(self, payload: dict) -> dict[str, object]:
         cert = scan_to_cert(payload.get("cert_number") or payload.get("cert") or payload.get("barcode") or "")
         card_title = str(payload.get("card_title") or payload.get("card") or "").strip()
+        grader = normalize_grader(payload.get("grader") or "") or infer_grader(card_title)
         source = str(payload.get("source") or payload.get("seller") or "Mobile").strip() or "Mobile"
         person = str(payload.get("assigned_person") or payload.get("person") or "").strip()
         is_personal = getattr(self, "_is_personal_lucas", lambda: False)
@@ -3068,22 +3069,42 @@ class CardPipelineApp(tk.Tk):
         sport = str(payload.get("sport") or "").strip()
         if not sport and card_title:
             sport = str(assignment_engine.parse_card_for_matching(card_title).get("sport") or "")
+        notes = str(payload.get("notes") or "").strip()
+        item_type = "Graded" if cert and grader else "Raw"
+        if item_type == "Raw" and cert:
+            notes = "\n".join(part for part in [notes, f"Mobile entered cert/item: {cert}"] if part).strip()
+            cert = ""
+        card_title = self._inventory_title_with_grader(card_title, grader)
         return self._normalize_inventory_record(
             {
                 "date_added": datetime.now().strftime("%Y-%m-%d"),
                 "assigned_person": person,
                 "sport": sport,
                 "cert_number": cert,
-                "grader": normalize_grader(payload.get("grader") or ""),
+                "grader": grader,
                 "card_title": card_title,
+                "item_type": item_type,
                 "purchase_price": payload.get("purchase_price") or payload.get("purchase") or payload.get("price_paid"),
                 "inventory_value": payload.get("inventory_value") or payload.get("value"),
                 "source_sheet": str(payload.get("source_sheet") or "Mobile Inventory").strip() or "Mobile Inventory",
                 "source": source,
                 "status": "Active",
-                "notes": str(payload.get("notes") or "").strip(),
+                "notes": notes,
             }
         )
+
+    def _inventory_title_with_grader(self, card_title: object, grader: object) -> str:
+        title = re.sub(r"\s+", " ", str(card_title or "")).strip()
+        normalized_grader = normalize_grader(grader or "")
+        if not title or not normalized_grader:
+            return title
+        if re.search(rf"\b{re.escape(normalized_grader)}\b", title, flags=re.IGNORECASE):
+            return title
+        grade_match = re.search(r"\b(10|9(?:\.5)?|8(?:\.5)?|7(?:\.5)?|6(?:\.5)?|5(?:\.5)?|4(?:\.5)?|3(?:\.5)?|2(?:\.5)?|1(?:\.5)?)\s*$", title)
+        if grade_match:
+            prefix = title[: grade_match.start()].rstrip()
+            return f"{prefix} {normalized_grader} {grade_match.group(1)}".strip()
+        return f"{title} {normalized_grader}".strip()
 
     def _mobile_inventory_json_record(self, record: dict[str, object]) -> dict[str, object]:
         normalized = self._normalize_inventory_record(record)
@@ -3244,7 +3265,11 @@ class CardPipelineApp(tk.Tk):
 
     def mobile_inventory_mark_sold(self, payload: dict) -> dict:
         inventory_key = str(payload.get("inventory_key") or payload.get("key") or "").strip()
-        if not inventory_key:
+        has_fallback_identifier = any(
+            str(payload.get(name) or "").strip()
+            for name in ("cert_number", "cert", "item_id", "card_title", "card")
+        )
+        if not inventory_key and not has_fallback_identifier:
             return {"ok": False, "error": "Choose an inventory card to mark sold."}
         sale_price = self._money_value(payload.get("sale_price") or payload.get("amount") or payload.get("price"))
         if sale_price is None or sale_price < 0:
@@ -3258,18 +3283,21 @@ class CardPipelineApp(tk.Tk):
             ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
             record = next((item for item in ledger if str(item.get("inventory_key") or "") == inventory_key), None)
             if record is None:
+                record = self._mobile_inventory_sale_match(ledger, payload)
+            if record is None:
                 return {"ok": False, "error": "That inventory card was not found."}
             if str(record.get("status") or "").lower() != "active":
                 return {"ok": False, "error": "Only active inventory cards can be marked sold."}
+            sold_inventory_key = str(record.get("inventory_key") or inventory_key)
             profit_record = self._inventory_sale_profit_record(record, company, float(sale_price), sale_date=sale_date, sale_method=sale_method)
             added = self._append_profit_records([profit_record])
-            changed = self._mark_inventory_record_sold(inventory_key, company or "General Sold", float(sale_price))
+            changed = self._mark_inventory_record_sold(sold_inventory_key, company or "General Sold", float(sale_price))
         if not (added or changed):
             return {"ok": False, "error": "That sale already exists."}
         title = record.get("cert_number") or record.get("card_title") or "card"
         self.events.put(("inventory_refresh", f"Mobile marked sold: {title} for {format_money(sale_price)}."))
         self.events.put(("profit_refresh", f"Mobile marked sold: {title} for {format_money(sale_price)}."))
-        self._append_activity("Mobile Sold", f"Mobile marked sold: {title} for {format_money(sale_price)}.", {"inventory_key": inventory_key, "company": company or "General Sold", "sale_price": sale_price})
+        self._append_activity("Mobile Sold", f"Mobile marked sold: {title} for {format_money(sale_price)}.", {"inventory_key": sold_inventory_key, "company": company or "General Sold", "sale_price": sale_price})
         return {
             "ok": True,
             "record": self._mobile_inventory_json_record(record),
@@ -3284,6 +3312,28 @@ class CardPipelineApp(tk.Tk):
             },
             "people": self._known_people(),
         }
+
+    def _mobile_inventory_sale_match(self, ledger: list[dict[str, object]], payload: dict) -> dict[str, object] | None:
+        active = [record for record in ledger if str(record.get("status") or "").lower() == "active"]
+        cert = scan_to_cert(payload.get("cert_number") or payload.get("cert") or payload.get("barcode") or "")
+        if cert:
+            matches = [record for record in active if scan_to_cert(record.get("cert_number")) == cert]
+            if len(matches) == 1:
+                return matches[0]
+        item_id = str(payload.get("item_id") or "").strip().lower()
+        if item_id:
+            matches = [record for record in active if str(record.get("item_id") or "").strip().lower() == item_id]
+            if len(matches) == 1:
+                return matches[0]
+        title_key = self._mobile_inventory_title_key(payload.get("card_title") or payload.get("card") or "")
+        if title_key:
+            matches = [record for record in active if self._mobile_inventory_title_key(record.get("card_title")) == title_key]
+            if len(matches) == 1:
+                return matches[0]
+        return None
+
+    def _mobile_inventory_title_key(self, value: object) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
 
     def _mobile_profit_rows(self, person: str = "", period: str = "Total") -> list[dict[str, object]]:
         needle = person.strip().lower()

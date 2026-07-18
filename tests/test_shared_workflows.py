@@ -10655,6 +10655,8 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _append_profit_records = app.CardPipelineApp._append_profit_records
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
+            _mobile_inventory_sale_match = app.CardPipelineApp._mobile_inventory_sale_match
+            _mobile_inventory_title_key = app.CardPipelineApp._mobile_inventory_title_key
             mobile_inventory_mark_sold = app.CardPipelineApp.mobile_inventory_mark_sold
             _append_activity = lambda self, action, summary, details=None: None
 
@@ -10707,6 +10709,29 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertEqual(profit[0]["profit"], 85.0)
                 self.assertEqual(profit[0]["sale_method"], "Venmo")
                 self.assertIn("Sale method: Venmo", profit[0]["notes"])
+
+                stale_key_record = dummy._normalize_inventory_record(
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "cert_number": "555222",
+                        "grader": "PSA",
+                        "card_title": "Cached Mobile Sale Card",
+                        "purchase_price": 25,
+                        "source_sheet": "Lot B.xlsx",
+                    }
+                )
+                dummy._save_inventory_ledger([stale_key_record])
+                stale_result = dummy.mobile_inventory_mark_sold(
+                    {
+                        "inventory_key": "old-cached-key",
+                        "cert_number": "555222",
+                        "card_title": "Cached Mobile Sale Card",
+                        "sale_price": "60",
+                        "sale_date": "2026-06-21",
+                    }
+                )
+                self.assertTrue(stale_result["ok"])
+                self.assertEqual(dummy._load_inventory_ledger(), [])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
@@ -10721,6 +10746,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _mobile_inventory_payload_record = app.CardPipelineApp._mobile_inventory_payload_record
             _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            _inventory_title_with_grader = app.CardPipelineApp._inventory_title_with_grader
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
             _raw_item_id_namespace = lambda self: "TEAM"
             mobile_inventory_add = app.CardPipelineApp.mobile_inventory_add
@@ -10745,6 +10771,10 @@ class PhotoOcrSpeedTests(unittest.TestCase):
 
             def _known_people(self):
                 return ["Kevin Hambone"]
+
+            def _canonical_person_choice(self, value):
+                text = str(value or "").strip()
+                return text if text == "Kevin Hambone" else None
 
             def _enrich_inventory_record_assignment(self, record, force=False):
                 return self._normalize_inventory_record(record)
@@ -10799,6 +10829,32 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertEqual(second["skipped"], 2)
                 self.assertEqual(len(dummy._load_inventory_ledger()), 1)
                 self.assertEqual(len(dummy._load_profit_ledger()), 1)
+
+                title_result = dummy.mobile_inventory_add(
+                    {
+                        "cert_number": "123321",
+                        "grader": "PSA",
+                        "card_title": "2025 DONRUSS JAXSON DART #14 DOWNTOWN! DOWNTOWN 10",
+                        "purchase_price": "100",
+                        "assigned_person": "Kevin Hambone",
+                    }
+                )
+                self.assertTrue(title_result["ok"])
+                self.assertIn("PSA 10", title_result["record"]["card_title"])
+
+                raw_result = dummy.mobile_inventory_add(
+                    {
+                        "cert_number": "4710408",
+                        "card_title": "1996 Skybox Rising Stars Kobe Bryant Blank Rookie",
+                        "purchase_price": "425",
+                        "assigned_person": "Kevin Hambone",
+                    }
+                )
+                self.assertTrue(raw_result["ok"])
+                self.assertEqual(raw_result["record"]["item_type"], "Raw")
+                self.assertTrue(str(raw_result["record"]["item_id"]).startswith("RAW-TEAM-"))
+                self.assertEqual(raw_result["record"]["cert_number"], "")
+                self.assertIn("Mobile entered cert/item: 4710408", raw_result["record"]["notes"])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
