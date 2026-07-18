@@ -2527,6 +2527,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn('$("expenseDate").value = localDateString();', script)
         self.assertNotIn('new Date().toISOString().slice(0, 10)', script)
 
+    def test_mobile_add_inventory_success_clears_entire_add_form(self) -> None:
+        script = (ROOT / "mobile_app" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("function clearAddForm()", script)
+        self.assertIn('["certNumber", "purchasePrice", "cardTitle", "source", "inventoryValue", "notes"]', script)
+        self.assertIn('$("grader").value = "";', script)
+        self.assertGreaterEqual(script.count("clearAddForm();"), 2)
+
     def test_bridge_keeps_default_mobile_port_stable(self) -> None:
         bridge = app.BridgeServer(app.BridgeState())
 

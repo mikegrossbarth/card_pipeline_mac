@@ -645,6 +645,15 @@ function addPayload(updateExisting = false) {
   };
 }
 
+function clearAddForm() {
+  ["certNumber", "purchasePrice", "cardTitle", "source", "inventoryValue", "notes"].forEach((id) => {
+    $(id).value = "";
+  });
+  $("grader").value = "";
+  $("scanAddStatus").textContent = "";
+  $("updateDuplicate").classList.add("hidden");
+}
+
 async function addInventory(updateExisting = false) {
   $("addStatus").textContent = "Saving...";
   $("updateDuplicate").classList.add("hidden");
@@ -656,6 +665,7 @@ async function addInventory(updateExisting = false) {
       renderCachedInventory(cachedInventoryWrapper(), "Showing queued inventory add from this phone. Sync when desktop LUCAS is reachable.");
     }
     $("addStatus").textContent = `Desktop not reachable. Queued inventory add ${result.action_id}.`;
+    clearAddForm();
     return;
   }
   if (result.duplicate) {
@@ -672,6 +682,7 @@ async function addInventory(updateExisting = false) {
   $("addStatus").textContent = `${result.action === "updated" ? "Updated" : "Added"} ${result.record?.cert_number || result.record?.card_title || "card"}.`;
   updatePeople(result.people || state.people);
   if (result.record) upsertCachedInventoryRecord(result.record);
+  clearAddForm();
   searchInventory();
 }
 
