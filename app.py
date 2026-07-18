@@ -1996,8 +1996,12 @@ class CardPipelineApp(tk.Tk):
             return added_at
         expense_id = str(record.get("expense_id") or "").strip()
         if re.fullmatch(r"\d{14,20}", expense_id):
-            return expense_id
-        return ""
+            return (
+                f"{expense_id[0:4]}-{expense_id[4:6]}-{expense_id[6:8]}"
+                f"T{expense_id[8:10]}:{expense_id[10:12]}:{expense_id[12:14]}.{expense_id[14:]}"
+            )
+        date_text = str(record.get("date_added") or "").strip()[:10]
+        return f"{date_text}T00:00:00" if self._profit_record_date(date_text) is not None else ""
 
     def _record_sort_value(self, record: dict[str, object], column: str, table: str, mode: str = "") -> tuple[bool, object]:
         money_columns = {"purchase", "sale", "profit", "amount", "payout", "card_ladder", "comps", "cy_estimate", "volume"}

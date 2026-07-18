@@ -5272,6 +5272,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class SortDummy:
             _money_value = app.CardPipelineApp._money_value
             _expense_related_label = app.CardPipelineApp._expense_related_label
+            _profit_record_date = app.CardPipelineApp._profit_record_date
             _profit_added_sort_value = app.CardPipelineApp._profit_added_sort_value
             _record_sort_value = app.CardPipelineApp._record_sort_value
             _sorted_records = app.CardPipelineApp._sorted_records
@@ -5297,6 +5298,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class SortDummy:
             _money_value = app.CardPipelineApp._money_value
             _expense_related_label = app.CardPipelineApp._expense_related_label
+            _profit_record_date = app.CardPipelineApp._profit_record_date
             _profit_added_sort_value = app.CardPipelineApp._profit_added_sort_value
             _record_sort_value = app.CardPipelineApp._record_sort_value
             _sorted_records = app.CardPipelineApp._sorted_records
@@ -10542,6 +10544,8 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _append_profit_records = app.CardPipelineApp._append_profit_records
             _canonical_person_choice = app.CardPipelineApp._canonical_person_choice
             _profit_record_date = app.CardPipelineApp._profit_record_date
+            _mobile_local_calendar_date = app.CardPipelineApp._mobile_local_calendar_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _profit_today = lambda self: datetime(2026, 6, 19).date()
             _profit_added_sort_value = app.CardPipelineApp._profit_added_sort_value
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
@@ -10652,10 +10656,20 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                             "date_added": "2026-06-18",
                             "ledger_added_at": "2026-06-18T09:00:00",
                         },
+                        {
+                            "record_type": "expense",
+                            "assigned_person": "Kevin Hambone",
+                            "card_title": "Middle Expense",
+                            "date_added": "2026-06-18",
+                            "expense_type": "Fees",
+                            "expense_amount": 3,
+                            "expense_id": "20260618083000000000",
+                            "notes": "Middle Expense",
+                        },
                     ]
                 )
                 recent = dummy.mobile_profit_summary({"person": "Kevin", "period": "YTD"})["recent"]
-                self.assertEqual([row["title"] for row in recent[:2]], ["Newer Timestamp", "Older Timestamp"])
+                self.assertEqual([row["title"] for row in recent[:3]], ["Newer Timestamp", "Middle Expense", "Older Timestamp"])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
