@@ -192,7 +192,7 @@ NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
 PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Last 30 Days", "Calendar Month", "Year", "YTD", "Total")
 PROFIT_GRAPH_OPTIONS = ("Overall Profit", "Profit to Sales Ratio", "Daily Trend", "Profit by Company")
 PROFIT_PLOT_OPTIONS = ("Overall", "By Sport")
-DEFAULT_PROFIT_PERIOD = "Year"
+DEFAULT_PROFIT_PERIOD = "Calendar Month"
 DEFAULT_PROFIT_GRAPH = "Overall Profit"
 DEFAULT_PROFIT_PLOT = "Overall"
 COMPANY_RESET_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -876,6 +876,7 @@ class CardPipelineApp(tk.Tk):
         self.review_mode = tk.StringVar(value="Automatic Receive")
         self.review_input_mode = tk.StringVar(value="Barcode Scanner")
         self.comp_strategy_label = tk.StringVar(value="Average last 5")
+        self.comp_stddev_floor_var = tk.StringVar()
         self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
         self.comp_source_label = tk.StringVar(value=COMP_SOURCE_BOTH)
         self.working_sheet_title = tk.StringVar()
@@ -1609,6 +1610,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(comp_actions, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Add Row", command=self.add_comp_row, style="Soft.TButton").pack(side=tk.LEFT)
+        ttk.Button(comp_actions, text="Lot Price Fill", command=self.open_lot_purchase_fill_popup, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         self.comp_scope_combo = ttk.Combobox(
             comp_options,
             textvariable=self.comp_scope_label,
@@ -1637,6 +1639,11 @@ class CardPipelineApp(tk.Tk):
         self.comp_method_combo.pack(side=tk.RIGHT, padx=(8, 0))
         self.comp_method_combo.bind("<<ComboboxSelected>>", self.recalculate_comp_method)
         ttk.Label(comp_options, text="Comp Method", style="Panel.TLabel").pack(side=tk.RIGHT)
+        self.comp_stddev_entry = ttk.Entry(comp_options, textvariable=self.comp_stddev_floor_var, width=8)
+        self.comp_stddev_entry.pack(side=tk.RIGHT, padx=(8, 0))
+        self.comp_stddev_entry.bind("<Return>", self.recalculate_comp_method)
+        self.comp_stddev_entry.bind("<FocusOut>", self.recalculate_comp_method)
+        ttk.Label(comp_options, text="Low Outlier SD", style="Panel.TLabel").pack(side=tk.RIGHT)
 
         receive_controls = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
         receive_controls.pack(fill=tk.X, pady=(0, 10))
@@ -8020,6 +8027,135 @@ class CardPipelineApp(tk.Tk):
         self.inventory_status_var.set(f"Updated payouts for {visible_count} visible inventory card(s); changed {changed_count}.")
         record_performance_event("inventory.update_payouts", perf_start, f"visible={visible_count} changed={changed_count}")
 
+    def _comp_stddev_floor(self) -> float | None:
+        text = str(self.comp_stddev_floor_var.get() if hasattr(self, "comp_stddev_floor_var") else "").strip()
+        if not text:
+            return None
+        value = self._money_value(text)
+        return value if value is not None and value > 0 else None
+
+    def _lot_purchase_base_value(self, row: WorkbookRow, source: str) -> float | None:
+        label = str(source or "").strip().lower()
+        if label == "card ladder value":
+            return self._money_value(row.card_ladder_value)
+        if label == "comps average":
+            return self._money_value(row.card_ladder_comps_average)
+        if label == "cy estimate":
+            return self._money_value(row.cy_value)
+        for value in (row.card_ladder_comps_average, row.card_ladder_value, row.cy_value):
+            parsed = self._money_value(value)
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _lot_purchase_allocations(self, rows: list[WorkbookRow], lot_total: float, percent: float, source: str) -> tuple[list[float], dict[str, object]]:
+        target = max(float(lot_total or 0), 0.0)
+        rate = max(float(percent or 0), 0.0) / 100.0
+        allocations: list[float] = []
+        running = 0.0
+        capped = False
+        value_missing = 0
+        for row in rows:
+            if capped:
+                allocations.append(0.0)
+                continue
+            base_value = self._lot_purchase_base_value(row, source)
+            if base_value is None:
+                value_missing += 1
+                planned = 0.0
+            else:
+                planned = round(base_value * rate, 2)
+            remaining = round(target - running, 2)
+            if planned >= remaining and remaining > 0:
+                allocations.append(remaining)
+                running = target
+                capped = True
+                continue
+            allocations.append(planned)
+            running = round(running + planned, 2)
+        info = {
+            "allocated": round(sum(allocations), 2),
+            "target": round(target, 2),
+            "remaining": round(target - sum(allocations), 2),
+            "capped": capped,
+            "value_missing": value_missing,
+        }
+        return allocations, info
+
+    def open_lot_purchase_fill_popup(self) -> None:
+        with self.state.lock:
+            rows = list(self.state.rows)
+        if not rows:
+            messagebox.showinfo("No comp rows", "Load or add comp rows before filling purchase prices.")
+            return
+        total_var = tk.StringVar()
+        percent_var = tk.StringVar(value="70")
+        source_var = tk.StringVar(value="Best Available")
+        popup = tk.Toplevel(self)
+        popup.title("Lot Price Fill")
+        popup.configure(bg="#1f1f1f")
+        popup.transient(self)
+        popup.grab_set()
+        popup.resizable(False, False)
+        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Lot Price Fill", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(frame, text=f"Comp rows: {len(rows)}", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 14))
+        ttk.Label(frame, text="Lot buy price", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 8))
+        ttk.Entry(frame, textvariable=total_var, width=18).grid(row=2, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text="Percent of value", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=(0, 8))
+        ttk.Entry(frame, textvariable=percent_var, width=18).grid(row=3, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text="Value source", style="Panel.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 10), pady=(0, 8))
+        ttk.Combobox(
+            frame,
+            textvariable=source_var,
+            values=("Best Available", "Comps Average", "Card Ladder Value", "CY Estimate"),
+            width=20,
+            state="readonly",
+        ).grid(row=4, column=1, sticky="w", pady=(0, 8))
+
+        def submit() -> None:
+            total = self._money_value(total_var.get())
+            percent = self._money_value(percent_var.get())
+            if total is None or total <= 0:
+                messagebox.showinfo("Lot buy price", "Enter the total lot buy price.", parent=popup)
+                return
+            if percent is None or percent <= 0:
+                messagebox.showinfo("Percent", "Enter the percent of value to use.", parent=popup)
+                return
+            popup.destroy()
+            self.apply_lot_purchase_fill(float(total), float(percent), source_var.get())
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=5, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(buttons, text="Apply", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
+        popup.bind("<Return>", lambda _event: submit())
+        popup.bind("<Escape>", lambda _event: popup.destroy())
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+
+    def apply_lot_purchase_fill(self, lot_total: float, percent: float, source: str) -> None:
+        with self.state.lock:
+            rows = list(self.state.rows)
+            allocations, info = self._lot_purchase_allocations(rows, lot_total, percent, source)
+            for row, allocation in zip(rows, allocations):
+                row.existing_value = allocation
+        self.comp_output_saved = False
+        self._refresh_comp_table(schedule_recommendations=True)
+        message = f"Filled purchase prices: {format_money(info['allocated'])} across {len(rows)} comp row(s)."
+        if info.get("capped"):
+            message += " Lot total was hit; remaining rows were set to $0.00."
+            messagebox.showwarning("Lot total hit", message)
+        elif info.get("remaining"):
+            message += f" Remaining unallocated balance: {format_money(info['remaining'])}."
+            messagebox.showwarning("Lot total not fully allocated", message)
+        elif info.get("value_missing"):
+            message += f" {info['value_missing']} row(s) had no value and received $0.00."
+        self.status_var.set(message)
+
     def open_inventory_recomp_popup(self) -> None:
         self.refresh_inventory_tab()
         visible_count = len(getattr(self, "filtered_inventory_rows", []))
@@ -8140,7 +8276,7 @@ class CardPipelineApp(tk.Tk):
         }
         strategy_label = str(features.get("strategy_label") or self.comp_strategy_label.get() or "Average last 5")
         self.comp_strategy_label.set(strategy_label)
-        self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(strategy_label, COMP_STRATEGY_AVERAGE))
+        self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(strategy_label, COMP_STRATEGY_AVERAGE), self._comp_stddev_floor())
         self.state.set_rows(temp_rows)
         self.row_sources = {row.excel_row: "Inventory" for row in temp_rows}
         self.comp_sheet_sources = {}
@@ -15316,7 +15452,7 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("No eligible rows", message)
             self.status_var.set(message)
             return
-        self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE))
+        self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE), self._comp_stddev_floor())
         self.pending_comp_assignment_row_ids = {id(row) for row in [*card_ladder_eligible, *cy_eligible]}
         command_id = 0
         card_ladder_command_id = 0
@@ -15389,21 +15525,23 @@ class CardPipelineApp(tk.Tk):
 
     def recalculate_comp_method(self, _event=None) -> None:
         strategy = COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE)
-        self.state.set_comp_strategy(strategy)
+        stddev_floor = self._comp_stddev_floor()
+        self.state.set_comp_strategy(strategy, stddev_floor)
         updated = 0
         with self.state.lock:
             for row in self.state.rows:
                 comps = parse_formatted_comps(row.card_ladder_comps)
                 if not comps:
                     continue
-                row.card_ladder_comps_average = comp_price(comps, strategy)
-                row.card_ladder_comps = format_comps(comps, strategy)
+                row.card_ladder_comps_average = comp_price(comps, strategy, stddev_floor)
+                row.card_ladder_comps = format_comps(comps, strategy, stddev_floor)
                 updated += 1
         if updated:
             self.comp_output_saved = False
         self._refresh_table(schedule_recommendations=bool(updated))
         if updated:
-            self.status_var.set(f"Recalculated {updated} comp row(s) with {self.comp_strategy_label.get()}.")
+            suffix = f" and low outlier SD {stddev_floor:g}" if stddev_floor else ""
+            self.status_var.set(f"Recalculated {updated} comp row(s) with {self.comp_strategy_label.get()}{suffix}.")
         elif self.state.rows:
             self.status_var.set("Comp method updated. No stored comp details were available to recalculate.")
         else:

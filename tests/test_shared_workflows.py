@@ -2136,6 +2136,20 @@ class AssignmentEngineTests(unittest.TestCase):
 
         self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 25.0)
 
+    def test_comp_price_can_filter_low_standard_deviation_outliers(self) -> None:
+        comps = [
+            {"date_sold": "Jul 1, 2026", "price": "$1,500.00", "source": "EBAY", "title": "Test Card PSA 10 auction"},
+            {"date_sold": "Jul 2, 2026", "price": "$1,500.00", "source": "ALT", "title": "Test Card PSA 10 fixed price"},
+            {"date_sold": "Jul 3, 2026", "price": "$1,500.00", "source": "PWCC", "title": "Test Card PSA 10 premier"},
+            {"date_sold": "Jul 4, 2026", "price": "$1,500.00", "source": "GOLDIN", "title": "Test Card PSA 10 elite"},
+            {"date_sold": "Jul 5, 2026", "price": "$100.00", "title": "Damaged/fake Test Card PSA 10"},
+        ]
+
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_AVERAGE), 1220.0)
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_AVERAGE, 1), 1500.0)
+        formatted = app.format_comps(comps, app.COMP_STRATEGY_AVERAGE, 1)
+        self.assertIn("Low outlier filter: removed 1 comp", formatted)
+
     def test_date_weighted_averages_when_two_newest_are_within_seven_days(self) -> None:
         newest = datetime.now() - timedelta(days=2)
         second = newest - timedelta(days=4)
@@ -2730,6 +2744,42 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.comp_sheet_sources, {2: "sheet-2", 3: "sheet-4"})
         self.assertFalse(dummy.comp_output_saved)
         self.assertIn("Save back to source sheet", dummy.status_var.value)
+
+    def test_lot_purchase_fill_caps_at_lot_total_and_zeroes_remaining_rows(self) -> None:
+        class Dummy:
+            _money_value = app.CardPipelineApp._money_value
+            _lot_purchase_base_value = app.CardPipelineApp._lot_purchase_base_value
+            _lot_purchase_allocations = app.CardPipelineApp._lot_purchase_allocations
+
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="One", card_ladder_comps_average=1000),
+            WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Two", card_ladder_comps_average=3000),
+            WorkbookRow(excel_row=4, cert_number="3", grader="PSA", card_title="Three", card_ladder_comps_average=3000),
+            WorkbookRow(excel_row=5, cert_number="4", grader="PSA", card_title="Four", card_ladder_comps_average=3000),
+        ]
+
+        allocations, info = Dummy()._lot_purchase_allocations(rows, 2500, 50, "Comps Average")
+
+        self.assertEqual(allocations, [500.0, 1500.0, 500.0, 0.0])
+        self.assertTrue(info["capped"])
+        self.assertEqual(info["allocated"], 2500.0)
+
+    def test_lot_purchase_fill_reports_unallocated_balance_when_values_run_short(self) -> None:
+        class Dummy:
+            _money_value = app.CardPipelineApp._money_value
+            _lot_purchase_base_value = app.CardPipelineApp._lot_purchase_base_value
+            _lot_purchase_allocations = app.CardPipelineApp._lot_purchase_allocations
+
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="One", card_ladder_comps_average=1000),
+            WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Two", card_ladder_comps_average=1000),
+        ]
+
+        allocations, info = Dummy()._lot_purchase_allocations(rows, 4000, 50, "Comps Average")
+
+        self.assertEqual(allocations, [500.0, 500.0])
+        self.assertFalse(info["capped"])
+        self.assertEqual(info["remaining"], 3000.0)
 
     def test_unassigned_player_is_recorded_for_unmatched_valued_row(self) -> None:
         class Dummy:
@@ -8604,9 +8654,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         ]
 
         dummy = ProfitDummy()
-        self.assertEqual(dummy._profit_period_label(), "Year")
+        self.assertEqual(dummy._profit_period_label(), "Calendar Month")
         self.assertEqual(dummy._profit_graph_label(), "Overall Profit")
-        self.assertEqual(dummy._profit_chart_title(), "Overall Profit (Year)")
+        self.assertEqual(dummy._profit_chart_title(), "Overall Profit (Calendar Month)")
         self.assertEqual(dummy._profit_chart_tooltip_value(123.45, False), "$123.45")
         self.assertEqual(dummy._profit_chart_tooltip_value(0.1234, True), "12.34%")
 
