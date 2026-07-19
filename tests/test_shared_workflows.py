@@ -2781,6 +2781,18 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertFalse(info["capped"])
         self.assertEqual(info["remaining"], 3000.0)
 
+    def test_personal_lucas_moves_person_column_to_end(self) -> None:
+        class Dummy:
+            _personal_person_last_columns = app.CardPipelineApp._personal_person_last_columns
+
+            def _is_personal_lucas(self):
+                return True
+
+        self.assertEqual(
+            Dummy()._personal_person_last_columns(("date", "person", "cert", "card")),
+            ("date", "cert", "card", "person"),
+        )
+
     def test_unassigned_player_is_recorded_for_unmatched_valued_row(self) -> None:
         class Dummy:
             _load_unassigned_players = app.CardPipelineApp._load_unassigned_players

@@ -597,6 +597,7 @@ INVENTORY_TABLE_COLUMNS = (
 
 ADD_INTAKE_ROW_IID = "__add_intake_row__"
 ADD_REVIEW_ROW_IID = "__add_review_row__"
+ADD_COMP_ROW_IID = "__add_comp_row__"
 
 EDITABLE_COLUMNS = {
     "source",
@@ -876,7 +877,7 @@ class CardPipelineApp(tk.Tk):
         self.review_mode = tk.StringVar(value="Automatic Receive")
         self.review_input_mode = tk.StringVar(value="Barcode Scanner")
         self.comp_strategy_label = tk.StringVar(value="Average last 5")
-        self.comp_stddev_floor_var = tk.StringVar()
+        self.comp_stddev_floor_var = tk.StringVar(value="Off")
         self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
         self.comp_source_label = tk.StringVar(value=COMP_SOURCE_BOTH)
         self.working_sheet_title = tk.StringVar()
@@ -1528,16 +1529,15 @@ class CardPipelineApp(tk.Tk):
         )
         mode.grid(row=0, column=1, sticky="w", padx=(8, 16))
         mode.bind("<<ComboboxSelected>>", lambda _event: self._show_mode())
-        ttk.Button(intake_controls, text="Delete Selected", command=self.delete_selected_intake_rows, style="Soft.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
-        ttk.Button(intake_controls, text="Clear Rows", command=self.clear_rows, style="Soft.TButton").grid(row=0, column=3, sticky="w")
+        ttk.Button(intake_controls, text="Clear Rows", command=self.clear_rows, style="Soft.TButton").grid(row=0, column=2, sticky="w", padx=(0, 8))
         ttk.Checkbutton(
             intake_controls,
             text="Network Mode",
             variable=self.create_network_mode_var,
             command=self._toggle_create_network_mode,
             style="Panel.TCheckbutton",
-        ).grid(row=0, column=4, sticky="e", padx=(16, 0))
-        intake_controls.columnconfigure(4, weight=1)
+        ).grid(row=0, column=3, sticky="e", padx=(16, 0))
+        intake_controls.columnconfigure(3, weight=1)
         self.network_seller_label = ttk.Label(intake_controls, text="Seller", style="Muted.TLabel")
         self.network_seller_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.seller_terms_seller_combo = ttk.Combobox(intake_controls, textvariable=self.seller_terms_seller_var, width=24)
@@ -1556,6 +1556,7 @@ class CardPipelineApp(tk.Tk):
         self.mode_host = ttk.Frame(self.intake_tab, style="Panel.TFrame", padding=(16, 12))
         self.mode_host.pack(fill=tk.X, pady=(0, 10))
         self.intake_tree = self._build_table(self.intake_tab, editable=True, columns=INTAKE_COLUMNS)
+        self._bind_context_menu(self.intake_tree, self._show_intake_context_menu)
         intake_save = ttk.Frame(self.intake_tab, style="Panel.TFrame", padding=(16, 12))
         intake_save.pack(fill=tk.X, pady=(10, 0))
         ttk.Label(intake_save, text="Working Sheet Title", style="Panel.TLabel").pack(side=tk.LEFT, padx=(0, 8))
@@ -1609,7 +1610,6 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(comp_actions, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(comp_actions, text="Add Row", command=self.add_comp_row, style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(comp_actions, text="Lot Price Fill", command=self.open_lot_purchase_fill_popup, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         self.comp_scope_combo = ttk.Combobox(
             comp_options,
@@ -1639,10 +1639,15 @@ class CardPipelineApp(tk.Tk):
         self.comp_method_combo.pack(side=tk.RIGHT, padx=(8, 0))
         self.comp_method_combo.bind("<<ComboboxSelected>>", self.recalculate_comp_method)
         ttk.Label(comp_options, text="Comp Method", style="Panel.TLabel").pack(side=tk.RIGHT)
-        self.comp_stddev_entry = ttk.Entry(comp_options, textvariable=self.comp_stddev_floor_var, width=8)
-        self.comp_stddev_entry.pack(side=tk.RIGHT, padx=(8, 0))
-        self.comp_stddev_entry.bind("<Return>", self.recalculate_comp_method)
-        self.comp_stddev_entry.bind("<FocusOut>", self.recalculate_comp_method)
+        self.comp_stddev_combo = ttk.Combobox(
+            comp_options,
+            textvariable=self.comp_stddev_floor_var,
+            state="readonly",
+            values=("Off", "1", "2", "3"),
+            width=7,
+        )
+        self.comp_stddev_combo.pack(side=tk.RIGHT, padx=(8, 0))
+        self.comp_stddev_combo.bind("<<ComboboxSelected>>", self.recalculate_comp_method)
         ttk.Label(comp_options, text="Low Outlier SD", style="Panel.TLabel").pack(side=tk.RIGHT)
 
         receive_controls = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
@@ -1662,7 +1667,7 @@ class CardPipelineApp(tk.Tk):
 
         self.review_mode_host = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
         self.review_mode_host.pack(fill=tk.X, pady=(0, 10))
-        self.receive_tree = self._build_table(self.receive_tab, editable=True, columns=RECEIVE_COLUMNS)
+        self.receive_tree = self._build_table(self.receive_tab, editable=True, columns=self._personal_person_last_columns(RECEIVE_COLUMNS))
         self._bind_context_menu(self.receive_tree, self._show_receive_context_menu)
         receive_bottom = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
         receive_bottom.pack(fill=tk.X, pady=(10, 0))
@@ -1951,6 +1956,11 @@ class CardPipelineApp(tk.Tk):
         container.rowconfigure(0, weight=1)
         return tree
 
+    def _personal_person_last_columns(self, columns: tuple[str, ...]) -> tuple[str, ...]:
+        if not getattr(self, "_is_personal_lucas", lambda: False)() or "person" not in columns:
+            return columns
+        return tuple(column for column in columns if column != "person") + ("person",)
+
     def _configure_sortable_tree_headings(self, tree: ttk.Treeview, headings: dict[str, str], table: str) -> None:
         if table == "inventory":
             sort_column = self.inventory_sort_column
@@ -2205,7 +2215,7 @@ class CardPipelineApp(tk.Tk):
 
         self.inventory_tree = self._build_home_tree(
             self.inventory_tab,
-            columns=INVENTORY_TABLE_COLUMNS,
+            columns=self._personal_person_last_columns(INVENTORY_TABLE_COLUMNS),
             headings=INVENTORY_HEADINGS,
             widths=INVENTORY_COLUMN_WIDTHS,
             height=22,
@@ -6427,7 +6437,7 @@ class CardPipelineApp(tk.Tk):
             )
 
     def _inventory_editable_columns(self) -> list[str]:
-        return [column for column in INVENTORY_TABLE_COLUMNS if column in INVENTORY_EDIT_COLUMN_FIELDS]
+        return [column for column in self._personal_person_last_columns(INVENTORY_TABLE_COLUMNS) if column in INVENTORY_EDIT_COLUMN_FIELDS]
 
     def _inventory_bulk_click(self, event: tk.Event) -> None:
         if not getattr(self, "inventory_bulk_edit_var", None) or not self.inventory_bulk_edit_var.get():
@@ -7023,7 +7033,7 @@ class CardPipelineApp(tk.Tk):
         if not hasattr(self, "comp_tree"):
             return "break"
         row_id = self.comp_tree.identify_row(event.y)
-        if not row_id:
+        if not row_id or row_id == ADD_COMP_ROW_IID:
             return "break"
         column_id = self.comp_tree.identify_column(event.x)
         if row_id not in self.comp_tree.selection():
@@ -7034,8 +7044,28 @@ class CardPipelineApp(tk.Tk):
         menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_tree_row_values(self.comp_tree, row, "comp row"))
         menu.add_separator()
         menu.add_command(label="Explain Assignment", command=lambda target=self.comp_tree: self.explain_selected_workflow_assignment(target))
-        menu.add_command(label="Add Row", command=self.add_comp_row)
         menu.add_command(label="Delete Selected", command=self.delete_selected_comp_rows)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
+    def _show_intake_context_menu(self, event: tk.Event) -> str:
+        if not hasattr(self, "intake_tree"):
+            return "break"
+        row_id = self.intake_tree.identify_row(event.y)
+        if not row_id or row_id == ADD_INTAKE_ROW_IID:
+            return "break"
+        column_id = self.intake_tree.identify_column(event.x)
+        if row_id not in self.intake_tree.selection():
+            self.intake_tree.selection_set(row_id)
+            self.intake_tree.focus(row_id)
+        menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
+        menu.add_command(label="Copy Cell", command=lambda row=row_id, column=column_id: self.copy_tree_cell_value(self.intake_tree, row, column, "create cell"))
+        menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_tree_row_values(self.intake_tree, row, "create row"))
+        menu.add_separator()
+        menu.add_command(label="Delete Selected", command=self.delete_selected_intake_rows)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -7967,31 +7997,32 @@ class CardPipelineApp(tk.Tk):
                 total_purchase += purchase
             if value is not None:
                 total_value += value
+            values_by_column = {
+                "date": record.get("date_added") or "",
+                "type": record.get("item_type") or "",
+                "item_id": record.get("item_id") or "",
+                "person": record.get("assigned_person") or "Unassigned",
+                "sport": record.get("sport") or "",
+                "cert": record.get("cert_number") or "",
+                "grader": record.get("grader") or "",
+                "card": record.get("card_title") or "",
+                "purchase": format_money(purchase),
+                "card_ladder": format_money(card_ladder),
+                "comps": format_money(comps),
+                "cy_estimate": format_money(cy_value),
+                "cy_confidence": record.get("cy_confidence") if record.get("cy_confidence") is not None else "",
+                "company": record.get("best_company") or "",
+                "payout": format_money(record.get("estimated_payout")),
+                "paid_with": record.get("paid_with") or "",
+                "source": record.get("source_sheet") or "",
+                "status": record.get("status") or "",
+                "photos": str(len(record.get("photo_paths") or [])),
+                "notes": inventory_display_notes(record),
+            }
             iid = self.inventory_tree.insert(
                 "",
                 tk.END,
-                values=(
-                    record.get("date_added") or "",
-                    record.get("item_type") or "",
-                    record.get("item_id") or "",
-                    record.get("assigned_person") or "Unassigned",
-                    record.get("sport") or "",
-                    record.get("cert_number") or "",
-                    record.get("grader") or "",
-                    record.get("card_title") or "",
-                    format_money(purchase),
-                    format_money(card_ladder),
-                    format_money(comps),
-                    format_money(cy_value),
-                    record.get("cy_confidence") if record.get("cy_confidence") is not None else "",
-                    record.get("best_company") or "",
-                    format_money(record.get("estimated_payout")),
-                    record.get("paid_with") or "",
-                    record.get("source_sheet") or "",
-                    record.get("status") or "",
-                    str(len(record.get("photo_paths") or [])),
-                    inventory_display_notes(record),
-                ),
+                values=tuple(values_by_column.get(column, "") for column in self.inventory_tree["columns"]),
             )
             self.inventory_tree_records[iid] = record
         self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Purchase Total: {format_money(total_purchase)}   Source Value: {format_money(total_value)}")
@@ -8029,7 +8060,7 @@ class CardPipelineApp(tk.Tk):
 
     def _comp_stddev_floor(self) -> float | None:
         text = str(self.comp_stddev_floor_var.get() if hasattr(self, "comp_stddev_floor_var") else "").strip()
-        if not text:
+        if not text or text.lower() == "off":
             return None
         value = self._money_value(text)
         return value if value is not None and value > 0 else None
@@ -8042,10 +8073,6 @@ class CardPipelineApp(tk.Tk):
             return self._money_value(row.card_ladder_comps_average)
         if label == "cy estimate":
             return self._money_value(row.cy_value)
-        for value in (row.card_ladder_comps_average, row.card_ladder_value, row.cy_value):
-            parsed = self._money_value(value)
-            if parsed is not None:
-                return parsed
         return None
 
     def _lot_purchase_allocations(self, rows: list[WorkbookRow], lot_total: float, percent: float, source: str) -> tuple[list[float], dict[str, object]]:
@@ -8090,7 +8117,7 @@ class CardPipelineApp(tk.Tk):
             return
         total_var = tk.StringVar()
         percent_var = tk.StringVar(value="70")
-        source_var = tk.StringVar(value="Best Available")
+        source_var = tk.StringVar(value="Comps Average")
         popup = tk.Toplevel(self)
         popup.title("Lot Price Fill")
         popup.configure(bg="#1f1f1f")
@@ -8109,7 +8136,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Combobox(
             frame,
             textvariable=source_var,
-            values=("Best Available", "Comps Average", "Card Ladder Value", "CY Estimate"),
+            values=("Comps Average", "Card Ladder Value", "CY Estimate"),
             width=20,
             state="readonly",
         ).grid(row=4, column=1, sticky="w", pady=(0, 8))
@@ -9361,6 +9388,7 @@ class CardPipelineApp(tk.Tk):
                 "sheet": "Company Sheet",
             }
             widths = {"date": 95, "person": 135, "company": 140, "card": 390, "cert": 100, "purchase": 105, "sale": 105, "profit": 105, "sheet": 200}
+        columns = self._personal_person_last_columns(columns)
         self.profit_tree.configure(columns=columns)
         if self.profit_sort_column not in columns:
             self.profit_sort_column = columns[0]
@@ -9996,36 +10024,38 @@ class CardPipelineApp(tk.Tk):
             if mode == "Expenses":
                 if not is_expense:
                     continue
+                values_by_column = {
+                    "date": record.get("date_added") or "",
+                    "person": record.get("assigned_person") or "Unassigned",
+                    "type": record.get("expense_type") or "",
+                    "amount": format_money(record.get("expense_amount")),
+                    "related": self._expense_related_label(record),
+                    "notes": record.get("notes") or "",
+                }
                 iid = self.profit_tree.insert(
                     "",
                     tk.END,
-                    values=(
-                        record.get("date_added") or "",
-                        record.get("assigned_person") or "Unassigned",
-                        record.get("expense_type") or "",
-                        format_money(record.get("expense_amount")),
-                        self._expense_related_label(record),
-                        record.get("notes") or "",
-                    ),
+                    values=tuple(values_by_column.get(column, "") for column in self.profit_tree["columns"]),
                     tags=("profit_negative",),
                 )
                 self.profit_tree_records[iid] = record
             elif mode != "Sold Sheets":
                 tag = "profit_negative" if profit is not None and profit < 0 else "profit_positive"
+                values_by_column = {
+                    "date": record.get("date_added") or "",
+                    "person": record.get("assigned_person") or "Unassigned",
+                    "company": record.get("company") or "",
+                    "card": record.get("card_title") or "",
+                    "cert": record.get("cert_number") or record.get("item_id") or "",
+                    "purchase": format_money(purchase),
+                    "sale": format_money(sale),
+                    "profit": format_money(profit),
+                    "sheet": record.get("weekly_sheet_name") or record.get("source_sheet") or "",
+                }
                 iid = self.profit_tree.insert(
                     "",
                     tk.END,
-                    values=(
-                        record.get("date_added") or "",
-                        record.get("assigned_person") or "Unassigned",
-                        record.get("company") or "",
-                        record.get("card_title") or "",
-                        record.get("cert_number") or record.get("item_id") or "",
-                        format_money(purchase),
-                        format_money(sale),
-                        format_money(profit),
-                        record.get("weekly_sheet_name") or record.get("source_sheet") or "",
-                    ),
+                    values=tuple(values_by_column.get(column, "") for column in self.profit_tree["columns"]),
                     tags=(tag,),
                 )
                 self.profit_tree_records[iid] = record
@@ -10042,35 +10072,46 @@ class CardPipelineApp(tk.Tk):
             for sheet_row in sheet_rows:
                 profit = self._money_value(sheet_row.get("profit"))
                 tag = "profit_negative" if profit is not None and profit < 0 else "profit_positive"
+                values_by_column = {
+                    "person": sheet_row.get("person") or "",
+                    "sheet": sheet_row.get("sheet") or "",
+                    "companies": sheet_row.get("companies") or "",
+                    "cards": sheet_row.get("cards") or 0,
+                    "purchase": format_money(sheet_row.get("purchase")),
+                    "sale": format_money(sheet_row.get("sale")),
+                    "profit": format_money(profit),
+                    "last_sale": sheet_row.get("last_sale") or "",
+                }
                 self.profit_tree.insert(
                     "",
                     tk.END,
-                    values=(
-                        sheet_row.get("person") or "",
-                        sheet_row.get("sheet") or "",
-                        sheet_row.get("companies") or "",
-                        sheet_row.get("cards") or 0,
-                        format_money(sheet_row.get("purchase")),
-                        format_money(sheet_row.get("sale")),
-                        format_money(profit),
-                        sheet_row.get("last_sale") or "",
-                    ),
+                    values=tuple(values_by_column.get(column, "") for column in self.profit_tree["columns"]),
                     tags=(tag,),
                 )
         display_count = len([record for record in self.filtered_profit_rows if str(record.get("record_type") or "").strip().lower() == "expense"]) if mode == "Expenses" else len(self.filtered_profit_rows)
         if self.filtered_profit_rows:
-            total_values = (
-                ("TOTAL", "", "", format_money(total_expenses), "", "")
-                if mode == "Expenses"
-                else
-                ("TOTAL", "", "", f"{len(self.filtered_profit_rows)} card(s)", format_money(total_purchase), format_money(total_sale), format_money(total_profit), "")
-                if mode == "Sold Sheets"
-                else ("TOTAL", "", "", f"{len(self.filtered_profit_rows)} card(s)", "", format_money(total_purchase), format_money(total_sale), format_money(total_profit), "")
-            )
+            if mode == "Expenses":
+                total_by_column = {"date": "TOTAL", "amount": format_money(total_expenses)}
+            elif mode == "Sold Sheets":
+                total_by_column = {
+                    "person": "TOTAL",
+                    "cards": f"{len(self.filtered_profit_rows)} card(s)",
+                    "purchase": format_money(total_purchase),
+                    "sale": format_money(total_sale),
+                    "profit": format_money(total_profit),
+                }
+            else:
+                total_by_column = {
+                    "date": "TOTAL",
+                    "card": f"{len(self.filtered_profit_rows)} card(s)",
+                    "purchase": format_money(total_purchase),
+                    "sale": format_money(total_sale),
+                    "profit": format_money(total_profit),
+                }
             self.profit_tree.insert(
                 "",
                 tk.END,
-                values=total_values,
+                values=tuple(total_by_column.get(column, "") for column in self.profit_tree["columns"]),
                 tags=("total_row",),
             )
         self.profit_metric_var.set(
@@ -16660,6 +16701,9 @@ class CardPipelineApp(tk.Tk):
         if tree is self.intake_tree and self.input_mode.get() == "Manual Entry":
             add_row_iid = ADD_INTAKE_ROW_IID
             should_show_add_row = True
+        elif tree is self.comp_tree:
+            add_row_iid = ADD_COMP_ROW_IID
+            should_show_add_row = True
         elif self._is_receive_tree(tree) and self.review_mode.get() == "Manual Receive":
             add_row_iid = ADD_REVIEW_ROW_IID
             should_show_add_row = True
@@ -16760,7 +16804,7 @@ class CardPipelineApp(tk.Tk):
         selected_rows = {
             int(iid)
             for iid in tree.selection()
-            if str(iid).isdigit() and str(iid) not in {ADD_INTAKE_ROW_IID, ADD_REVIEW_ROW_IID}
+            if str(iid).isdigit() and str(iid) not in {ADD_INTAKE_ROW_IID, ADD_REVIEW_ROW_IID, ADD_COMP_ROW_IID}
         }
         if not selected_rows:
             return 0
@@ -16830,6 +16874,9 @@ class CardPipelineApp(tk.Tk):
         if tree is self.intake_tree and row_id == ADD_INTAKE_ROW_IID:
             self.add_manual_intake_row()
             return "break"
+        if tree is self.comp_tree and row_id == ADD_COMP_ROW_IID:
+            self.add_comp_row()
+            return "break"
         if self._is_receive_tree(tree) and row_id == ADD_REVIEW_ROW_IID:
             self.add_manual_review_row()
             return "break"
@@ -16859,6 +16906,9 @@ class CardPipelineApp(tk.Tk):
         column_id = tree.identify_column(event.x)
         if tree is self.intake_tree and row_id == ADD_INTAKE_ROW_IID:
             self.add_manual_intake_row()
+            return
+        if tree is self.comp_tree and row_id == ADD_COMP_ROW_IID:
+            self.add_comp_row()
             return
         if self._is_receive_tree(tree) and row_id == ADD_REVIEW_ROW_IID:
             self.add_manual_review_row()
