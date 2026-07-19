@@ -877,7 +877,7 @@ class CardPipelineApp(tk.Tk):
         self.review_mode = tk.StringVar(value="Automatic Receive")
         self.review_input_mode = tk.StringVar(value="Barcode Scanner")
         self.comp_strategy_label = tk.StringVar(value="Average last 5")
-        self.comp_stddev_floor_var = tk.StringVar(value="Off")
+        self.comp_low_outlier_pct_var = tk.StringVar(value="Off")
         self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
         self.comp_source_label = tk.StringVar(value=COMP_SOURCE_BOTH)
         self.working_sheet_title = tk.StringVar()
@@ -1639,16 +1639,16 @@ class CardPipelineApp(tk.Tk):
         self.comp_method_combo.pack(side=tk.RIGHT, padx=(8, 0))
         self.comp_method_combo.bind("<<ComboboxSelected>>", self.recalculate_comp_method)
         ttk.Label(comp_options, text="Comp Method", style="Panel.TLabel").pack(side=tk.RIGHT)
-        self.comp_stddev_combo = ttk.Combobox(
+        self.comp_low_outlier_combo = ttk.Combobox(
             comp_options,
-            textvariable=self.comp_stddev_floor_var,
+            textvariable=self.comp_low_outlier_pct_var,
             state="readonly",
-            values=("Off", "1", "2", "3"),
+            values=("Off", "50%", "75%", "90%"),
             width=7,
         )
-        self.comp_stddev_combo.pack(side=tk.RIGHT, padx=(8, 0))
-        self.comp_stddev_combo.bind("<<ComboboxSelected>>", self.recalculate_comp_method)
-        ttk.Label(comp_options, text="Low Outlier SD", style="Panel.TLabel").pack(side=tk.RIGHT)
+        self.comp_low_outlier_combo.pack(side=tk.RIGHT, padx=(8, 0))
+        self.comp_low_outlier_combo.bind("<<ComboboxSelected>>", self.recalculate_comp_method)
+        ttk.Label(comp_options, text="Low Comp % Avg", style="Panel.TLabel").pack(side=tk.RIGHT)
 
         receive_controls = ttk.Frame(self.receive_tab, style="Panel.TFrame", padding=(16, 12))
         receive_controls.pack(fill=tk.X, pady=(0, 10))
@@ -8058,11 +8058,13 @@ class CardPipelineApp(tk.Tk):
         self.inventory_status_var.set(f"Updated payouts for {visible_count} visible inventory card(s); changed {changed_count}.")
         record_performance_event("inventory.update_payouts", perf_start, f"visible={visible_count} changed={changed_count}")
 
-    def _comp_stddev_floor(self) -> float | None:
-        text = str(self.comp_stddev_floor_var.get() if hasattr(self, "comp_stddev_floor_var") else "").strip()
+    def _comp_low_outlier_pct(self) -> float | None:
+        text = str(self.comp_low_outlier_pct_var.get() if hasattr(self, "comp_low_outlier_pct_var") else "").strip()
         if not text or text.lower() == "off":
             return None
-        value = self._money_value(text)
+        value = self._money_value(text.rstrip("%"))
+        if value is not None and value > 100:
+            value = 100.0
         return value if value is not None and value > 0 else None
 
     def _lot_purchase_base_value(self, row: WorkbookRow, source: str) -> float | None:
@@ -8303,7 +8305,7 @@ class CardPipelineApp(tk.Tk):
         }
         strategy_label = str(features.get("strategy_label") or self.comp_strategy_label.get() or "Average last 5")
         self.comp_strategy_label.set(strategy_label)
-        self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(strategy_label, COMP_STRATEGY_AVERAGE), self._comp_stddev_floor())
+        self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(strategy_label, COMP_STRATEGY_AVERAGE), self._comp_low_outlier_pct())
         self.state.set_rows(temp_rows)
         self.row_sources = {row.excel_row: "Inventory" for row in temp_rows}
         self.comp_sheet_sources = {}
@@ -15493,7 +15495,7 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("No eligible rows", message)
             self.status_var.set(message)
             return
-        self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE), self._comp_stddev_floor())
+        self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE), self._comp_low_outlier_pct())
         self.pending_comp_assignment_row_ids = {id(row) for row in [*card_ladder_eligible, *cy_eligible]}
         command_id = 0
         card_ladder_command_id = 0
@@ -15566,22 +15568,22 @@ class CardPipelineApp(tk.Tk):
 
     def recalculate_comp_method(self, _event=None) -> None:
         strategy = COMP_STRATEGY_DISPLAY.get(self.comp_strategy_label.get(), COMP_STRATEGY_AVERAGE)
-        stddev_floor = self._comp_stddev_floor()
-        self.state.set_comp_strategy(strategy, stddev_floor)
+        low_outlier_pct = self._comp_low_outlier_pct()
+        self.state.set_comp_strategy(strategy, low_outlier_pct)
         updated = 0
         with self.state.lock:
             for row in self.state.rows:
                 comps = parse_formatted_comps(row.card_ladder_comps)
                 if not comps:
                     continue
-                row.card_ladder_comps_average = comp_price(comps, strategy, stddev_floor)
-                row.card_ladder_comps = format_comps(comps, strategy, stddev_floor)
+                row.card_ladder_comps_average = comp_price(comps, strategy, low_outlier_pct)
+                row.card_ladder_comps = format_comps(comps, strategy, low_outlier_pct)
                 updated += 1
         if updated:
             self.comp_output_saved = False
         self._refresh_table(schedule_recommendations=bool(updated))
         if updated:
-            suffix = f" and low outlier SD {stddev_floor:g}" if stddev_floor else ""
+            suffix = f" and low comp filter {low_outlier_pct:g}% of average" if low_outlier_pct else ""
             self.status_var.set(f"Recalculated {updated} comp row(s) with {self.comp_strategy_label.get()}{suffix}.")
         elif self.state.rows:
             self.status_var.set("Comp method updated. No stored comp details were available to recalculate.")

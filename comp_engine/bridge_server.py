@@ -106,7 +106,7 @@ class BridgeState:
         self.cardladder_running = False
         self.cancel_requested = False
         self.comp_strategy = COMP_STRATEGY_AVERAGE
-        self.comp_stddev_floor: float | None = None
+        self.comp_low_outlier_pct: float | None = None
         self.updated_row_ids: set[int] = set()
         self.on_update: Callable[[], None] | None = None
         self.mobile_pin_provider: Callable[[], str] | None = None
@@ -134,10 +134,10 @@ class BridgeState:
             self.rows = rows
             self.updated_row_ids = set()
 
-    def set_comp_strategy(self, strategy: str, stddev_floor: float | None = None) -> None:
+    def set_comp_strategy(self, strategy: str, low_outlier_pct: float | None = None) -> None:
         with self.lock:
             self.comp_strategy = strategy if strategy in COMP_STRATEGY_LABELS else COMP_STRATEGY_AVERAGE
-            self.comp_stddev_floor = stddev_floor if isinstance(stddev_floor, (int, float)) and stddev_floor > 0 else None
+            self.comp_low_outlier_pct = low_outlier_pct if isinstance(low_outlier_pct, (int, float)) and low_outlier_pct > 0 else None
 
     def register_keep_note_sources(self, sources: list[dict[str, object]]) -> None:
         normalized: list[dict[str, str]] = []
@@ -572,8 +572,8 @@ class BridgeState:
         if profile_title:
             row.card_title = build_card_title(profile_title, profile_grader, profile_grade)
             fill_missing_category_from_title(row)
-        row.card_ladder_comps_average = comp_price(comps, self.comp_strategy, self.comp_stddev_floor)
-        row.card_ladder_comps = format_comps(comps, self.comp_strategy, self.comp_stddev_floor)
+        row.card_ladder_comps_average = comp_price(comps, self.comp_strategy, self.comp_low_outlier_pct)
+        row.card_ladder_comps = format_comps(comps, self.comp_strategy, self.comp_low_outlier_pct)
         row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
         if result_status == "no_results":
             row.status = "Card Ladder no results"
@@ -1077,8 +1077,8 @@ def comp_price_conflicts_with_title(comp: dict) -> bool:
     return bool(title_values and all(abs(value - price) > 0.01 for value in title_values))
 
 
-def comp_price(comps: list[dict], strategy: str, stddev_floor: float | None = None) -> float | None:
-    comps, _removed, _cutoff = filter_low_outlier_comps(comps, stddev_floor)
+def comp_price(comps: list[dict], strategy: str, low_outlier_pct: float | None = None) -> float | None:
+    comps, _removed, _cutoff = filter_low_outlier_comps(comps, low_outlier_pct)
     values = comp_values(comps)
     if not values:
         return None
@@ -1097,9 +1097,9 @@ def comp_values(comps: list[dict]) -> list[float]:
     return [value for value in values if value is not None]
 
 
-def filter_low_outlier_comps(comps: list[dict], stddev_floor: float | None = None) -> tuple[list[dict], int, float | None]:
+def filter_low_outlier_comps(comps: list[dict], low_outlier_pct: float | None = None) -> tuple[list[dict], int, float | None]:
     deduped = dedupe_comps(comps)
-    if not isinstance(stddev_floor, (int, float)) or stddev_floor <= 0:
+    if not isinstance(low_outlier_pct, (int, float)) or low_outlier_pct <= 0:
         return deduped, 0, None
     first_five = [comp for comp in deduped[:5] if isinstance(comp, dict)]
     values = [parse_value(comp.get("price")) for comp in first_five]
@@ -1107,8 +1107,7 @@ def filter_low_outlier_comps(comps: list[dict], stddev_floor: float | None = Non
     if len(numeric_values) < 2:
         return deduped, 0, None
     mean = sum(numeric_values) / len(numeric_values)
-    variance = sum((value - mean) ** 2 for value in numeric_values) / len(numeric_values)
-    cutoff = mean - (float(stddev_floor) * (variance ** 0.5))
+    cutoff = mean * (float(low_outlier_pct) / 100.0)
     filtered_first: list[dict] = []
     removed = 0
     for comp in first_five:
@@ -1204,15 +1203,15 @@ def parse_comp_date(value) -> datetime | None:
     return None
 
 
-def format_comps(comps: list[dict], strategy: str = COMP_STRATEGY_AVERAGE, stddev_floor: float | None = None) -> str:
-    comps, removed, cutoff = filter_low_outlier_comps(comps, stddev_floor)
+def format_comps(comps: list[dict], strategy: str = COMP_STRATEGY_AVERAGE, low_outlier_pct: float | None = None) -> str:
+    comps, removed, cutoff = filter_low_outlier_comps(comps, low_outlier_pct)
     lines: list[str] = []
     selected_value = comp_price(comps, strategy)
     label = COMP_STRATEGY_LABELS.get(strategy, COMP_STRATEGY_LABELS[COMP_STRATEGY_AVERAGE])
     if selected_value is not None:
         lines.append(f"Comp method: {label} -> ${selected_value:,.2f}")
     if removed and cutoff is not None:
-        lines.append(f"Low outlier filter: removed {removed} comp(s) below ${cutoff:,.2f}")
+        lines.append(f"Low comp filter: removed {removed} comp(s) below ${cutoff:,.2f}")
     for index, comp in enumerate(comps[:5], start=1):
         if not isinstance(comp, dict):
             continue

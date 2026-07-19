@@ -2136,7 +2136,7 @@ class AssignmentEngineTests(unittest.TestCase):
 
         self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_STALE_NEWEST), 25.0)
 
-    def test_comp_price_can_filter_low_standard_deviation_outliers(self) -> None:
+    def test_comp_price_can_filter_low_percentage_outliers(self) -> None:
         comps = [
             {"date_sold": "Jul 1, 2026", "price": "$1,500.00", "source": "EBAY", "title": "Test Card PSA 10 auction"},
             {"date_sold": "Jul 2, 2026", "price": "$1,500.00", "source": "ALT", "title": "Test Card PSA 10 fixed price"},
@@ -2146,9 +2146,9 @@ class AssignmentEngineTests(unittest.TestCase):
         ]
 
         self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_AVERAGE), 1220.0)
-        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_AVERAGE, 1), 1500.0)
-        formatted = app.format_comps(comps, app.COMP_STRATEGY_AVERAGE, 1)
-        self.assertIn("Low outlier filter: removed 1 comp", formatted)
+        self.assertEqual(app.comp_price(comps, app.COMP_STRATEGY_AVERAGE, 75), 1500.0)
+        formatted = app.format_comps(comps, app.COMP_STRATEGY_AVERAGE, 75)
+        self.assertIn("Low comp filter: removed 1 comp(s) below $915.00", formatted)
 
     def test_date_weighted_averages_when_two_newest_are_within_seven_days(self) -> None:
         newest = datetime.now() - timedelta(days=2)
