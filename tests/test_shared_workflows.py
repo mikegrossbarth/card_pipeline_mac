@@ -2781,6 +2781,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertFalse(info["capped"])
         self.assertEqual(info["remaining"], 3000.0)
 
+    def test_mac_comp_hides_cy_run_options_but_keeps_cy_fields(self) -> None:
+        self.assertFalse(app.COMP_CY_ENABLED)
+        self.assertEqual(app.COMP_SOURCE_OPTIONS, (app.COMP_SOURCE_CARD_LADDER,))
+        self.assertIn("cy_value", app.COMP_COLUMNS)
+        self.assertIn("CY Estimate", app.COMP_LOT_VALUE_SOURCE_OPTIONS)
+
     def test_personal_lucas_moves_person_column_to_end(self) -> None:
         class Dummy:
             _personal_person_last_columns = app.CardPipelineApp._personal_person_last_columns

@@ -188,6 +188,9 @@ COMP_SCOPE_ALL = "Recomp All"
 COMP_SOURCE_BOTH = "Card Ladder + CY"
 COMP_SOURCE_CARD_LADDER = "Card Ladder"
 COMP_SOURCE_CY = "CY"
+COMP_CY_ENABLED = False
+COMP_SOURCE_OPTIONS = (COMP_SOURCE_BOTH, COMP_SOURCE_CARD_LADDER, COMP_SOURCE_CY) if COMP_CY_ENABLED else (COMP_SOURCE_CARD_LADDER,)
+COMP_LOT_VALUE_SOURCE_OPTIONS = ("Comps Average", "Card Ladder Value", "CY Estimate")
 NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
 PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Last 30 Days", "Calendar Month", "Year", "YTD", "Total")
 PROFIT_GRAPH_OPTIONS = ("Overall Profit", "Profit to Sales Ratio", "Daily Trend", "Profit by Company")
@@ -879,7 +882,7 @@ class CardPipelineApp(tk.Tk):
         self.comp_strategy_label = tk.StringVar(value="Average last 5")
         self.comp_low_outlier_pct_var = tk.StringVar(value="Off")
         self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
-        self.comp_source_label = tk.StringVar(value=COMP_SOURCE_BOTH)
+        self.comp_source_label = tk.StringVar(value=COMP_SOURCE_CARD_LADDER)
         self.working_sheet_title = tk.StringVar()
         self.create_network_mode_var = tk.BooleanVar(value=bool(self.app_settings.get("network_mode")))
         self.seller_terms_seller_var = tk.StringVar()
@@ -1624,7 +1627,7 @@ class CardPipelineApp(tk.Tk):
             comp_options,
             textvariable=self.comp_source_label,
             state="readonly",
-            values=(COMP_SOURCE_BOTH, COMP_SOURCE_CARD_LADDER, COMP_SOURCE_CY),
+            values=COMP_SOURCE_OPTIONS,
             width=18,
         )
         self.comp_source_combo.pack(side=tk.RIGHT, padx=(8, 0))
@@ -8138,7 +8141,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Combobox(
             frame,
             textvariable=source_var,
-            values=("Comps Average", "Card Ladder Value", "CY Estimate"),
+            values=COMP_LOT_VALUE_SOURCE_OPTIONS,
             width=20,
             state="readonly",
         ).grid(row=4, column=1, sticky="w", pady=(0, 8))
@@ -8195,7 +8198,7 @@ class CardPipelineApp(tk.Tk):
         )
         cl_value_var = tk.BooleanVar(value=True)
         cl_comps_var = tk.BooleanVar(value=True)
-        cy_var = tk.BooleanVar(value=True)
+        cy_var = tk.BooleanVar(value=False)
         strategy_var = tk.StringVar(value=self.comp_strategy_label.get() or "Average last 5")
         scope_var = tk.StringVar(value=COMP_SCOPE_EMPTY)
 
@@ -8212,7 +8215,8 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(frame, text=f"Filtered rows: {visible_count}   Eligible: {eligible_count}", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 14))
         ttk.Checkbutton(frame, text="Card Ladder value", variable=cl_value_var, style="Panel.TCheckbutton").grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 8))
         ttk.Checkbutton(frame, text="Card Ladder comps", variable=cl_comps_var, style="Panel.TCheckbutton").grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        ttk.Checkbutton(frame, text="CY estimate", variable=cy_var, style="Panel.TCheckbutton").grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        if COMP_CY_ENABLED:
+            ttk.Checkbutton(frame, text="CY estimate", variable=cy_var, style="Panel.TCheckbutton").grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
         ttk.Label(frame, text="Scope", style="Muted.TLabel").grid(row=5, column=0, sticky="w", pady=(0, 6))
         ttk.Combobox(frame, textvariable=scope_var, values=(COMP_SCOPE_EMPTY, COMP_SCOPE_ALL), width=24, state="readonly").grid(row=5, column=1, sticky="w", pady=(0, 6))
         ttk.Label(frame, text="Comp Method", style="Muted.TLabel").grid(row=6, column=0, sticky="w", pady=(0, 6))
@@ -8222,7 +8226,7 @@ class CardPipelineApp(tk.Tk):
             features = {
                 "card_ladder_value": bool(cl_value_var.get()),
                 "card_ladder_comps": bool(cl_comps_var.get()),
-                "cy": bool(cy_var.get()),
+                "cy": bool(cy_var.get()) and COMP_CY_ENABLED,
                 "strategy_label": strategy_var.get(),
                 "scope": scope_var.get(),
             }
@@ -8244,12 +8248,14 @@ class CardPipelineApp(tk.Tk):
         popup.geometry(f"+{x}+{y}")
 
     def recomp_inventory_visible_rows(self, features: dict[str, object] | None = None) -> None:
-        features = dict(features or {"card_ladder_value": True, "card_ladder_comps": True, "cy": True, "strategy_label": self.comp_strategy_label.get(), "scope": COMP_SCOPE_EMPTY})
+        features = dict(features or {"card_ladder_value": True, "card_ladder_comps": True, "cy": False, "strategy_label": self.comp_strategy_label.get(), "scope": COMP_SCOPE_EMPTY})
+        if not COMP_CY_ENABLED:
+            features["cy"] = False
         if self.inventory_recomp_context:
             messagebox.showinfo("Inventory recomp running", "Wait for the current Inventory recomp run to finish.")
             return
         run_card_ladder = bool(features.get("card_ladder_value") or features.get("card_ladder_comps"))
-        run_cy = bool(features.get("cy"))
+        run_cy = bool(features.get("cy")) and COMP_CY_ENABLED
         if run_card_ladder:
             extension_warning = self._cardladder_extension_warning()
             if extension_warning:
@@ -15468,8 +15474,11 @@ class CardPipelineApp(tk.Tk):
             return
         requery_all = self.comp_scope_label.get() == COMP_SCOPE_ALL
         source_label = self.comp_source_label.get()
+        if not COMP_CY_ENABLED and source_label != COMP_SOURCE_CARD_LADDER:
+            source_label = COMP_SOURCE_CARD_LADDER
+            self.comp_source_label.set(COMP_SOURCE_CARD_LADDER)
         run_card_ladder = source_label in {COMP_SOURCE_BOTH, COMP_SOURCE_CARD_LADDER}
-        run_cy = source_label in {COMP_SOURCE_BOTH, COMP_SOURCE_CY}
+        run_cy = COMP_CY_ENABLED and source_label in {COMP_SOURCE_BOTH, COMP_SOURCE_CY}
         card_ladder_eligible = [
             row
             for row in self.state.rows
@@ -15500,7 +15509,7 @@ class CardPipelineApp(tk.Tk):
         command_id = 0
         card_ladder_command_id = 0
         if card_ladder_eligible:
-            card_ladder_command_id = self.state.start_all_comps(requery_all=requery_all, allow_deferred_cy=run_cy)
+            card_ladder_command_id = self.state.start_all_comps(requery_all=requery_all, allow_deferred_cy=False)
             command_id = card_ladder_command_id
         if cy_eligible:
             command_id = self.state.start_cy_lookups(cy_eligible, defer=bool(card_ladder_eligible))
