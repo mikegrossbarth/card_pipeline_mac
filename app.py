@@ -3395,6 +3395,9 @@ class CardPipelineApp(tk.Tk):
             "cash_paid": round(float(paid), 2),
             "cash_received": round(float(received), 2),
             "incoming_value": total_value,
+            "outgoing_side": round(outgoing_basis + float(paid), 2),
+            "incoming_side": round(total_value + float(received), 2),
+            "difference": round((outgoing_basis + float(paid)) - (total_value + float(received)), 2),
             "total_cost": total_cost,
             "allocations": allocations,
         }
@@ -3408,6 +3411,10 @@ class CardPipelineApp(tk.Tk):
             return {"ok": False, "error": "Choose outgoing inventory or enter incoming trade cards."}
         if incoming_payloads and not any(str(item.get("cert_number") or item.get("cert") or item.get("card_title") or item.get("card") or "").strip() for item in incoming_payloads):
             return {"ok": False, "error": "Enter at least one incoming card."}
+        for item in incoming_payloads:
+            value = self._money_value(item.get("trade_value") or item.get("inventory_value") or item.get("value"))
+            if value is None or value <= 0:
+                return {"ok": False, "error": "Every incoming trade card needs a trade value."}
         if not getattr(self, "_is_personal_lucas", lambda: False)():
             raw_person = str(payload.get("assigned_person") or payload.get("person") or "").strip()
             if self._canonical_person_choice(raw_person) is None:
@@ -3416,7 +3423,7 @@ class CardPipelineApp(tk.Tk):
         if self._profit_record_date(trade_date) is None:
             return {"ok": False, "error": "Enter the trade date as YYYY-MM-DD."}
         trade_date = self._mobile_local_calendar_date(trade_date)
-        trade_partner = str(payload.get("trade_partner") or payload.get("company") or "Trade").strip() or "Trade"
+        trade_partner = "Trade"
         trade_notes = str(payload.get("notes") or "").strip()
         with shared_lock(CARD_PIPELINE_DIR, "mobile-inventory-trade", self.lucas_identity):
             ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
@@ -3432,6 +3439,12 @@ class CardPipelineApp(tk.Tk):
                 if str(record.get("inventory_key") or "") not in {str(existing.get("inventory_key") or "") for existing in outgoing_records}:
                     outgoing_records.append(record)
             allocation = self._mobile_trade_allocations(outgoing_records, incoming_payloads, payload.get("cash_paid"), payload.get("cash_received"))
+            if abs(float(allocation.get("difference") or 0.0)) > 0.01:
+                return {
+                    "ok": False,
+                    "error": f"Trade is not balanced. Difference: {format_money(abs(float(allocation.get('difference') or 0.0)))}.",
+                    "trade": allocation,
+                }
             sale_records = [
                 self._inventory_sale_profit_record(
                     record,
@@ -3487,6 +3500,7 @@ class CardPipelineApp(tk.Tk):
             "trade": {
                 **allocation,
                 "total_cost_display": format_money(allocation["total_cost"]),
+                "difference_display": format_money(abs(float(allocation.get("difference") or 0.0))),
                 "outgoing_count": len(outgoing_records),
                 "incoming_count": len(added_records),
                 "trade_partner": trade_partner,

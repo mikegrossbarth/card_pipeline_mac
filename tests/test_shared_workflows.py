@@ -10973,13 +10973,12 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                             "payload": {
                                 "assigned_person": "Kevin Hambone",
                                 "trade_date": "2026-06-22",
-                                "trade_partner": "Show Trade",
                                 "cash_paid": "25",
                                 "cash_received": "5",
                                 "outgoing": [{"cert_number": "777888"}],
                                 "incoming": [
-                                    {"card_title": "Incoming Trade Card A", "trade_value": "60"},
-                                    {"card_title": "Incoming Trade Card B", "trade_value": "40"},
+                                    {"card_title": "Incoming Trade Card A", "trade_value": "19.50"},
+                                    {"card_title": "Incoming Trade Card B", "trade_value": "13"},
                                 ],
                             },
                         },

@@ -770,6 +770,9 @@ function tradeAllocationPreview() {
   const cashReceived = parseMoneyInput($("tradeCashReceived").value);
   const totalCost = Math.max(0, outgoingBasis + cashPaid - cashReceived);
   const incomingValue = incoming.reduce((total, item) => total + parseMoneyInput(item.trade_value), 0);
+  const outgoingSide = outgoingBasis + cashPaid;
+  const incomingSide = incomingValue + cashReceived;
+  const difference = Math.round((outgoingSide - incomingSide) * 100) / 100;
   let allocations = [];
   if (incoming.length) {
     if (incomingValue > 0) {
@@ -790,16 +793,19 @@ function tradeAllocationPreview() {
       });
     }
   }
-  return { outgoingBasis, cashPaid, cashReceived, totalCost, incomingValue, allocations };
+  return { outgoingBasis, cashPaid, cashReceived, totalCost, incomingValue, outgoingSide, incomingSide, difference, balanced: Math.abs(difference) <= 0.01, allocations };
 }
 
 function updateTradeSummary() {
   const preview = tradeAllocationPreview();
   const incoming = tradeIncomingRows();
+  const missingValues = incoming.filter((item) => parseMoneyInput(item.trade_value) <= 0).length;
   const allocationText = incoming.length
     ? preview.allocations.map((amount, index) => `${incoming[index].card_title || incoming[index].cert_number || `Incoming ${index + 1}`}: ${money(amount)}`).join(" | ")
-    : "Add incoming cards to allocate cost.";
-  $("tradeSummary").textContent = `Outgoing cost ${money(preview.outgoingBasis)} + cash paid ${money(preview.cashPaid)} - cash received ${money(preview.cashReceived)} = incoming basis ${money(preview.totalCost)}. ${allocationText}`;
+    : "No incoming cards.";
+  const balanceText = preview.balanced ? "Balanced." : `Not balanced by ${money(Math.abs(preview.difference))}.`;
+  const valueText = missingValues ? ` ${missingValues} incoming card(s) need a trade value.` : "";
+  $("tradeSummary").textContent = `${balanceText} Outgoing side ${money(preview.outgoingSide)}. Incoming side ${money(preview.incomingSide)}. Incoming basis ${money(preview.totalCost)}. ${allocationText}${valueText}`;
 }
 
 function renderTradeOutgoing() {
@@ -852,6 +858,9 @@ function renderTradeSearchResults(items) {
         state.tradeOutgoing.push(item);
         renderTradeOutgoing();
       }
+      $("tradeSearchInput").value = "";
+      $("tradeSearchResults").innerHTML = "";
+      $("tradeStatus").textContent = "";
     });
   });
 }
@@ -915,7 +924,6 @@ function addTradeIncomingRow(values = {}) {
 function clearTradeForm() {
   state.tradeOutgoing = [];
   $("tradeSearchInput").value = "";
-  $("tradePartner").value = "";
   $("tradeCashPaid").value = "";
   $("tradeCashReceived").value = "";
   $("tradeNotes").value = "";
@@ -929,7 +937,6 @@ function tradePayload() {
   return {
     assigned_person: personalPersonValue($("tradePerson").value),
     trade_date: $("tradeDate").value,
-    trade_partner: $("tradePartner").value || "Trade",
     cash_paid: $("tradeCashPaid").value,
     cash_received: $("tradeCashReceived").value,
     notes: $("tradeNotes").value,
@@ -944,6 +951,19 @@ function tradePayload() {
 }
 
 async function saveTrade() {
+  const preview = tradeAllocationPreview();
+  const incoming = tradeIncomingRows();
+  const missingValues = incoming.filter((item) => parseMoneyInput(item.trade_value) <= 0).length;
+  if (missingValues) {
+    $("tradeStatus").textContent = "Every incoming card needs a trade value so the trade can balance.";
+    updateTradeSummary();
+    return;
+  }
+  if (!preview.balanced) {
+    $("tradeStatus").textContent = `Trade is not balanced. Fix the ${money(Math.abs(preview.difference))} difference before saving.`;
+    updateTradeSummary();
+    return;
+  }
   $("tradeStatus").textContent = "Saving trade...";
   const result = await mutationApi("inventory.trade", "/inventory/trade", tradePayload());
   if (result.queued) {
@@ -1288,7 +1308,7 @@ function bind() {
   $("tradeSearchInput").addEventListener("input", () => searchTradeInventory());
   $("tradeSearchButton").addEventListener("click", () => searchTradeInventory());
   $("addTradeIncoming").addEventListener("click", () => addTradeIncomingRow());
-  ["tradeCashPaid", "tradeCashReceived", "tradeNotes", "tradePartner", "tradeDate"].forEach((id) => {
+  ["tradeCashPaid", "tradeCashReceived", "tradeNotes", "tradeDate"].forEach((id) => {
     $(id).addEventListener("input", () => updateTradeSummary());
     $(id).addEventListener("change", () => updateTradeSummary());
   });

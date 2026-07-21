@@ -128,8 +128,16 @@
           <div class="grid">
             <label class="personControl">Person<select id="tradePerson"></select></label>
             <label>Date<input id="tradeDate" type="date"></label>
-            <label>Trade Partner<input id="tradePartner" placeholder="Show dealer, shop, etc."></label>
           </div>
+          <section class="panel inlinePanel">
+            <h2>Cash</h2>
+            <div class="grid">
+              <label>Cash Paid<input id="tradeCashPaid" inputmode="decimal" placeholder="0.00"></label>
+              <label>Cash Received<input id="tradeCashReceived" inputmode="decimal" placeholder="0.00"></label>
+              <label>Notes<textarea id="tradeNotes" rows="3"></textarea></label>
+            </div>
+            <div id="tradeSummary" class="status"></div>
+          </section>
           <section class="panel inlinePanel">
             <h2>Outgoing</h2>
             <div class="searchRow">
@@ -145,13 +153,6 @@
             <button id="addTradeIncoming" class="secondary" type="button">Add Incoming Card</button>
           </section>
           <section class="panel inlinePanel">
-            <h2>Cash</h2>
-            <div class="grid">
-              <label>Cash Paid<input id="tradeCashPaid" inputmode="decimal" placeholder="0.00"></label>
-              <label>Cash Received<input id="tradeCashReceived" inputmode="decimal" placeholder="0.00"></label>
-              <label>Notes<textarea id="tradeNotes" rows="3"></textarea></label>
-            </div>
-            <div id="tradeSummary" class="status"></div>
             <button id="saveTrade" class="primary" type="button">Save Trade</button>
             <div id="tradeStatus" class="status"></div>
           </section>
