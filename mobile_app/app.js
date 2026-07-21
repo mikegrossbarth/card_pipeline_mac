@@ -9,6 +9,7 @@ const state = {
   viewerRecord: null,
   viewerPhoto: null,
   searchRequestSeq: 0,
+  tradeSearchRequestSeq: 0,
   tradeOutgoing: [],
   tradeIncomingSeq: 0,
 };
@@ -753,6 +754,10 @@ function tradeRecordCost(record) {
   return parseMoneyInput(record.purchase_price || record.inventory_value || record.estimated_payout || 0);
 }
 
+function tradeRecordKey(record) {
+  return String(record.inventory_key || record.cert_number || record.item_id || record.card_title || "").trim().toLowerCase();
+}
+
 function tradeIncomingRows() {
   return Array.from(document.querySelectorAll(".tradeIncomingRow")).map((row) => ({
     cert_number: row.querySelector(".tradeCert")?.value || "",
@@ -836,11 +841,13 @@ function renderTradeOutgoing() {
 
 function renderTradeSearchResults(items) {
   const host = $("tradeSearchResults");
-  if (!items.length) {
+  const selectedKeys = new Set(state.tradeOutgoing.map((record) => tradeRecordKey(record)).filter(Boolean));
+  const visibleItems = items.filter((item) => !selectedKeys.has(tradeRecordKey(item)));
+  if (!visibleItems.length) {
     host.innerHTML = '<div class="hint">No active inventory matched.</div>';
     return;
   }
-  host.innerHTML = items.map((item, index) => `
+  host.innerHTML = visibleItems.map((item, index) => `
     <article class="result slim">
       <h2>${escapeHtml(item.card_title || item.cert_number || "Untitled card")}</h2>
       <div class="meta">
@@ -853,11 +860,13 @@ function renderTradeSearchResults(items) {
   `).join("");
   document.querySelectorAll(".addTradeOutgoing").forEach((button) => {
     button.addEventListener("click", () => {
-      const item = items[Number(button.dataset.index)];
-      if (!state.tradeOutgoing.some((record) => record.inventory_key === item.inventory_key)) {
+      const item = visibleItems[Number(button.dataset.index)];
+      const key = tradeRecordKey(item);
+      if (key && !state.tradeOutgoing.some((record) => tradeRecordKey(record) === key)) {
         state.tradeOutgoing.push(item);
         renderTradeOutgoing();
       }
+      state.tradeSearchRequestSeq += 1;
       $("tradeSearchInput").value = "";
       $("tradeSearchResults").innerHTML = "";
       $("tradeStatus").textContent = "";
@@ -866,6 +875,7 @@ function renderTradeSearchResults(items) {
 }
 
 async function searchTradeInventory() {
+  const requestSeq = ++state.tradeSearchRequestSeq;
   const payload = {
     query: $("tradeSearchInput").value,
     person: IS_PERSONAL_PROFILE ? "" : $("tradePerson").value,
@@ -875,10 +885,12 @@ async function searchTradeInventory() {
   };
   try {
     const result = await api("/inventory/search", payload);
+    if (requestSeq !== state.tradeSearchRequestSeq) return;
     if (!result.ok) throw new Error(result.error || "Trade search failed.");
     renderTradeSearchResults(result.items || []);
     cacheSet(CACHE_KEYS.search, result);
   } catch (error) {
+    if (requestSeq !== state.tradeSearchRequestSeq) return;
     const cached = cachedInventoryWrapper();
     const items = cached && cached.payload ? (cached.payload.items || []).filter((item) => cachedInventoryMatches(item, payload)).slice(0, 25) : [];
     renderTradeSearchResults(items);
