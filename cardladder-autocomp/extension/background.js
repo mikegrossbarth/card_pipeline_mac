@@ -6,7 +6,7 @@ const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
-const CARDLADDER_BACKGROUND_VERSION = "2026-07-17-preserve-partial-capture-v24";
+const CARDLADDER_BACKGROUND_VERSION = "2026-07-21-visible-cert-partial-v25";
 const KEEP_SYNC_TAB_CLOSE_MS = 30000;
 const KEEP_SYNC_RETRY_MS = 60000;
 

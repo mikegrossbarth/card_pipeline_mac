@@ -36,9 +36,12 @@ ${functionSource("currentCompChunkOnly")}
 ${functionSource("cleanCompTitle")}
 ${functionSource("parseCompChunk")}
 ${functionSource("parseMoneyValue")}
+${functionSource("escapeRegExp")}
+${functionSource("visibleTextMatchesCert")}
 globalThis.parseCompChunk = parseCompChunk;
 globalThis.sourceLineMatch = sourceLineMatch;
 globalThis.parseMoneyValue = parseMoneyValue;
+globalThis.visibleTextMatchesCert = visibleTextMatchesCert;
 `;
 
 const context = {};
@@ -63,5 +66,17 @@ assert.doesNotMatch(comp.title, /Chet Holmgren/);
 assert.strictEqual(context.parseMoneyValue("$15.92k"), 15920);
 assert.strictEqual(context.parseMoneyValue("$20.27k"), 20270);
 assert.strictEqual(context.parseMoneyValue("$15.92"), 15.92);
+assert.strictEqual(
+  context.visibleTextMatchesCert("Cert # 121465724 Grade: GEM MT 10 Profile: 2024 Topps Chrome", "121465724"),
+  true,
+);
+assert.strictEqual(
+  context.visibleTextMatchesCert("Cert 0007 434 213 Grade: BGS 9.5", "0007434213"),
+  true,
+);
+assert.strictEqual(
+  context.visibleTextMatchesCert("Cert # 121465725 Grade: GEM MT 10", "121465724"),
+  false,
+);
 
 console.log("extension parser regression ok");

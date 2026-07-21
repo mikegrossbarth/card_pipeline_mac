@@ -134,9 +134,9 @@ Future idea: let the user's OpenClaw agent talk to L.U.C.A.S through a narrow co
 - L.U.C.A.S writes lightweight performance timings to `CARD_PIPELINE/lucas_performance.log` for operations slower than `0.25s` by default. Set `LUCAS_PERF_LOG_SECONDS` to a lower value for more detail. Timed areas include app init, startup sheet scans, Google Sheet cache refresh, Home, Inventory, Profit/company-sheet scans, Payouts, assignment rule loads, and assignment recommendation batches.
 - `Delete Person` is intentionally not exposed in the visible app UI. A backend helper still exists for maintainer/Codex-driven cleanup; it removes a person's name from sheet markers, inventory ownership, and profit ownership while leaving cards/sheets/ledger rows intact.
 - Create now has `Manual Entry` mode. Use the `+ Add row` line in the Create table, then double-click cells to edit. The extra toolbar button was removed.
-- Card Ladder recovery note, 2026-06-17: known-good helper version is `2026-07-11-stale-first-row-retry-v23`. The verified CGC grader test opens the cert modal, uses trusted debugger clicks only when synthetic clicks fail, selects CGC, and leaves the modal open. Do not restore blind guessed grader-option coordinates; they closed/submitted the modal.
+- Card Ladder recovery note, 2026-06-17: known-good helper version is `2026-07-21-visible-cert-partial-v25`. The verified CGC grader test opens the cert modal, uses trusted debugger clicks only when synthetic clicks fail, selects CGC, and leaves the modal open. Do not restore blind guessed grader-option coordinates; they closed/submitted the modal.
 
-- Card Ladder helper update, 2026-07-11: current helper version is `2026-07-11-stale-first-row-retry-v23`. It preserves the v22 CGC/trusted-click behavior and adds a one-time retry when the first queued cert stays on a previous Card Ladder result page after submit.
+- Card Ladder helper update, 2026-07-21: current helper version is `2026-07-21-visible-cert-partial-v25`. It preserves the v22 CGC/trusted-click behavior, keeps the v23 one-time retry when the first queued cert stays on a previous Card Ladder result page after submit, preserves partial capture values when Card Ladder exposes a value without comps, and treats a page as loaded when the requested cert is visibly present even if the Card Ladder URL/value text is slow or unchanged.
 
 ## Mac-Only CourtYard/CY Automation
 
@@ -317,9 +317,9 @@ Common gotchas:
 
 - User must be logged into Card Ladder in the Chrome profile where the unpacked extension is loaded.
 - Old unpacked extension versions should be removed or disabled.
-- Current extension/background version: `2026-07-11-stale-first-row-retry-v23`.
-- Current content-script version: `2026-07-11-stale-first-row-retry-v23`.
-- Current bridge expected helper version: `2026-07-11-stale-first-row-retry-v23`.
+- Current extension/background version: `2026-07-21-visible-cert-partial-v25`.
+- Current content-script version: `2026-07-21-visible-cert-partial-v25`.
+- Current bridge expected helper version: `2026-07-21-visible-cert-partial-v25`.
 - App warns if the extension version seen by the bridge is stale.
 - No-results pages preserve the Card Ladder title when available.
 - If a Card Ladder lookup visibly opens a cert but the helper throws before capture completes, the extension now posts an `extension_error` row result; LUCAS records `Card Ladder extension error` instead of leaving the row blank. Bridge result posts retry before failing.
@@ -438,5 +438,5 @@ Recommended continuation:
 Tell a new chat:
 
 ```text
-Work in C:\Users\User\Documents\Codex\2026-06-04\card_pipeline for Windows and C:\Users\User\Documents\Codex\2026-06-13\card-pipeline-mac for Mac. Read HANDOFF_CONTEXT.md first. Current known-good Card Ladder helper is 2026-07-11-stale-first-row-retry-v23. Do not reintroduce blind guessed grader-option coordinates; v22 fixed CGC by opening the cert modal, avoiding blind option clicks, re-preparing the modal if synthetic selection closes it, then using trusted chrome.debugger clicks on the visible grader bar only as fallback. The debugger banner is expected during trusted fallback because Chrome owns that UI. Windows has no CourtYard automation; Mac keeps CY automation. Keep main and master in both repos pushed.
+Work in C:\Users\User\Documents\Codex\2026-06-04\card_pipeline for Windows and C:\Users\User\Documents\Codex\2026-06-13\card-pipeline-mac for Mac. Read HANDOFF_CONTEXT.md first. Current known-good Card Ladder helper is 2026-07-21-visible-cert-partial-v25. Do not reintroduce blind guessed grader-option coordinates; v22 fixed CGC by opening the cert modal, avoiding blind option clicks, re-preparing the modal if synthetic selection closes it, then using trusted chrome.debugger clicks on the visible grader bar only as fallback. The debugger banner is expected during trusted fallback because Chrome owns that UI. Windows has no CourtYard automation; Mac keeps CY automation. Keep main and master in both repos pushed.
 ```

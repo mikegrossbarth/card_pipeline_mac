@@ -22,9 +22,9 @@ from cy_automation.cy_macos import CYMacOSAdapter
 from workbook_io import WorkbookRow
 import assignment_engine
 
-BRIDGE_VERSION = "2026-07-17-cardladder-preserve-partial-capture-v24"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-07-17-preserve-partial-capture-v24"
-EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.6"
+BRIDGE_VERSION = "2026-07-21-cardladder-visible-cert-partial-v25"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-07-21-visible-cert-partial-v25"
+EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.7"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 DEBUG_LOG = DEBUG_DIR / "bridge.log"
 MOBILE_APP_DIR = Path(__file__).resolve().parent.parent / "mobile_app"
@@ -88,6 +88,11 @@ def fill_missing_category_from_title(row: WorkbookRow) -> None:
     sport = str(parsed.get("sport") or "").strip()
     if sport:
         row.category = sport
+
+
+def normalize_result_cert(value: object) -> str:
+    cert = re.sub(r"\D", "", str(value or ""))
+    return cert if len(cert) >= 6 else ""
 
 
 class BridgeState:
@@ -516,6 +521,14 @@ class BridgeState:
         value = parse_value(result.get("value"))
         row.card_ladder_value = value
         ocr = result.get("ocr") if isinstance(result.get("ocr"), dict) else {}
+        result_cert = (
+            normalize_result_cert(result.get("certNumber"))
+            or normalize_result_cert(result.get("cert_number"))
+            or normalize_result_cert(ocr.get("certNumber"))
+            or normalize_result_cert(ocr.get("cert_number"))
+        )
+        if result_cert and not normalize_result_cert(row.cert_number):
+            row.cert_number = result_cert
         comps = ocr.get("comps") if isinstance(ocr.get("comps"), list) else []
         profile_title = clean_profile_title(ocr.get("profileTitle") or ocr.get("profile_title") or ocr.get("profile"))
         profile_grader = clean_grader(ocr.get("profileGrader") or ocr.get("profile_grader") or row.grader)

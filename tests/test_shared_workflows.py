@@ -901,6 +901,49 @@ class CYLookupTests(unittest.TestCase):
         self.assertEqual(row.card_title, "2022 Panini Donruss 202 Chet Holmgren Yellow Holo Laser PSA 9")
         self.assertEqual(row.category, "basketball")
 
+    def test_cardladder_result_fills_blank_cert_from_result_payload(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="", grader="PSA", card_title="")
+        result = {
+            "excelRow": 2,
+            "certNumber": "121465724",
+            "grader": "PSA",
+            "status": "ok",
+            "value": 170,
+            "ocr": {
+                "profileTitle": "2024 Topps Chrome Test Card",
+                "profileGrader": "PSA",
+                "profileGrade": "10",
+                "comps": [{"title": "2024 Topps Chrome Test Card PSA 10", "date_sold": "Jul 1, 2026", "price": "$170.00"}],
+            },
+        }
+
+        state._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.cert_number, "121465724")
+        self.assertEqual(row.status, "Card Ladder OK")
+
+    def test_cardladder_result_does_not_overwrite_existing_cert(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="99999999", grader="PSA", card_title="")
+        result = {
+            "excelRow": 2,
+            "certNumber": "121465724",
+            "grader": "PSA",
+            "status": "ok",
+            "value": 170,
+            "ocr": {
+                "profileTitle": "2024 Topps Chrome Test Card",
+                "profileGrader": "PSA",
+                "profileGrade": "10",
+                "comps": [{"title": "2024 Topps Chrome Test Card PSA 10", "date_sold": "Jul 1, 2026", "price": "$170.00"}],
+            },
+        }
+
+        state._apply_cardladder_result_to_row(row, result)
+
+        self.assertEqual(row.cert_number, "99999999")
+
     def test_cardladder_result_does_not_overwrite_manual_sport(self) -> None:
         state = bridge_server.BridgeState()
         row = WorkbookRow(excel_row=2, cert_number="99505674", grader="PSA", card_title="", category="baseball")

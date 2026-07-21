@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-07-17-preserve-partial-capture-v24";
+const CARDLADDER_CONTENT_VERSION = "2026-07-21-visible-cert-partial-v25";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
@@ -232,10 +232,20 @@ async function waitForResultsPage(row = {}, beforeUrl = "", beforeSignature = ""
   const startedAt = Date.now();
   for (let i = 0; i < 45; i += 1) {
     const text = document.body.innerText || "";
+    const pageShowsRequestedCert = visibleTextMatchesCert(text, row.certNumber);
     if (pageUrlMatchesCert(row.certNumber, beforeUrl)) {
       await sleep(300);
       const lateInvalidCertReason = invalidCertToastReason() || invalidCertReasonFromText(document.body.innerText || "");
       if (lateInvalidCertReason) return { status: "invalid_cert", reason: lateInvalidCertReason };
+      return { status: "results" };
+    }
+    if (pageShowsRequestedCert && !certSearchModalVisible()) {
+      await sleep(300);
+      const settledText = document.body.innerText || "";
+      const lateInvalidCertReason = invalidCertToastReason() || invalidCertReasonFromText(settledText);
+      if (lateInvalidCertReason) return { status: "invalid_cert", reason: lateInvalidCertReason };
+      const noResultsReason = noResultsReasonFromText(settledText);
+      if (noResultsReason) return { status: "no_results", reason: noResultsReason };
       return { status: "results" };
     }
     const invalidCertReason = invalidCertToastReason() || invalidCertReasonFromText(text);
@@ -250,7 +260,8 @@ async function waitForResultsPage(row = {}, beforeUrl = "", beforeSignature = ""
       await sleep(300);
       const lateInvalidCertReason = invalidCertToastReason() || invalidCertReasonFromText(document.body.innerText || "");
       if (lateInvalidCertReason) return { status: "invalid_cert", reason: lateInvalidCertReason };
-      if (!resultPageChanged(beforeUrl, beforeSignature) && !profileMatchesRequestedRow(row, document.body.innerText || "")) {
+      const settledText = document.body.innerText || "";
+      if (!resultPageChanged(beforeUrl, beforeSignature) && !visibleTextMatchesCert(settledText, row.certNumber) && !profileMatchesRequestedRow(row, settledText)) {
         return { status: "stale_result", reason: "Card Ladder stayed on the previous result page after submit." };
       }
       return { status: "results" };
@@ -308,6 +319,17 @@ function pageUrlMatchesCert(certNumber, beforeUrl = "") {
   const url = location.href || "";
   if (beforeUrl && url === beforeUrl) return false;
   return new RegExp(`(?:psa|bgs|sgc|cgc|beckett)[^0-9]{0,12}${escapeRegExp(cert)}|${escapeRegExp(cert)}`, "i").test(decodeURIComponent(url));
+}
+
+function visibleTextMatchesCert(text, certNumber) {
+  const cert = String(certNumber || "").replace(/\D/g, "");
+  if (cert.length < 7) return false;
+  const normalized = String(text || "").replace(/\s+/g, " ");
+  if (!normalized) return false;
+  const compactDigitGroups = normalized.match(/\d[\d\s.-]{5,}\d/g) || [];
+  if (compactDigitGroups.some((group) => group.replace(/\D/g, "") === cert)) return true;
+  const flexibleCert = cert.split("").map(escapeRegExp).join("\\D{0,3}");
+  return new RegExp(`(^|\\D)${flexibleCert}(\\D|$)`).test(normalized);
 }
 
 function invalidCertReasonFromText(text) {
