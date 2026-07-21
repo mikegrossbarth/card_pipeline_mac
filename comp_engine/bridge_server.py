@@ -113,6 +113,7 @@ class BridgeState:
         self.mobile_inventory_search: Callable[[dict], dict] | None = None
         self.mobile_inventory_add: Callable[[dict], dict] | None = None
         self.mobile_inventory_mark_sold: Callable[[dict], dict] | None = None
+        self.mobile_inventory_trade: Callable[[dict], dict] | None = None
         self.mobile_card_identify: Callable[[dict], dict] | None = None
         self.mobile_profit_summary: Callable[[dict], dict] | None = None
         self.mobile_expense_add: Callable[[dict], dict] | None = None
@@ -217,6 +218,13 @@ class BridgeState:
         if not self.mobile_inventory_mark_sold:
             return {"ok": False, "error": "Inventory sale is not available."}
         return self.mobile_inventory_mark_sold(payload)
+
+    def trade_mobile_inventory(self, payload: dict) -> dict:
+        if not self.mobile_auth_ok(payload):
+            return {"ok": False, "error": "Invalid mobile PIN."}
+        if not self.mobile_inventory_trade:
+            return {"ok": False, "error": "Inventory trade is not available."}
+        return self.mobile_inventory_trade(payload)
 
     def identify_mobile_card(self, payload: dict) -> dict:
         if not self.mobile_auth_ok(payload):
@@ -1382,6 +1390,9 @@ class BridgeServer:
                     return
                 if mobile_api_path.startswith("/mobile/api/inventory/sold"):
                     self._send_json(state.mark_mobile_inventory_sold(payload))
+                    return
+                if mobile_api_path.startswith("/mobile/api/inventory/trade"):
+                    self._send_json(state.trade_mobile_inventory(payload))
                     return
                 if mobile_api_path.startswith("/mobile/api/card/identify"):
                     self._send_json(state.identify_mobile_card(payload))

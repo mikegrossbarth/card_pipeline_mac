@@ -64,7 +64,7 @@ main {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
   gap: 8px;
   max-width: 720px;
   margin: 0 auto 14px;
@@ -208,6 +208,16 @@ body.personalProfile .teamControl {
 .grid {
   display: grid;
   gap: 2px;
+}
+
+.tradeRows {
+  display: grid;
+  gap: 10px;
+}
+
+.tradeIncomingRow {
+  margin: 0;
+  background: #13202a;
 }
 
 .controlGrid,

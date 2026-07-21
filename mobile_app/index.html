@@ -34,6 +34,7 @@
         <nav class="tabs" aria-label="Inventory actions">
           <button class="tab active" data-view="search" type="button">Inventory</button>
           <button class="tab" data-view="add" type="button">Add</button>
+          <button class="tab" data-view="trade" type="button">Trade</button>
           <button class="tab" data-view="expense" type="button">Expense</button>
           <button class="tab" data-view="profit" type="button">Profit</button>
           <button class="tab teamControl" data-view="payout" type="button">Payouts</button>
@@ -121,6 +122,39 @@
           </div>
           <button id="addExpense" class="primary" type="button">Add Expense</button>
           <div id="expenseStatus" class="status"></div>
+        </section>
+
+        <section id="tradeView" class="view hidden">
+          <div class="grid">
+            <label class="personControl">Person<select id="tradePerson"></select></label>
+            <label>Date<input id="tradeDate" type="date"></label>
+            <label>Trade Partner<input id="tradePartner" placeholder="Show dealer, shop, etc."></label>
+          </div>
+          <section class="panel inlinePanel">
+            <h2>Outgoing</h2>
+            <div class="searchRow">
+              <input id="tradeSearchInput" placeholder="Search inventory to trade out">
+              <button id="tradeSearchButton" class="secondary" type="button">Search</button>
+            </div>
+            <div id="tradeOutgoingList" class="results compact"></div>
+            <div id="tradeSearchResults" class="results compact"></div>
+          </section>
+          <section class="panel inlinePanel">
+            <h2>Incoming</h2>
+            <div id="tradeIncomingRows" class="tradeRows"></div>
+            <button id="addTradeIncoming" class="secondary" type="button">Add Incoming Card</button>
+          </section>
+          <section class="panel inlinePanel">
+            <h2>Cash</h2>
+            <div class="grid">
+              <label>Cash Paid<input id="tradeCashPaid" inputmode="decimal" placeholder="0.00"></label>
+              <label>Cash Received<input id="tradeCashReceived" inputmode="decimal" placeholder="0.00"></label>
+              <label>Notes<textarea id="tradeNotes" rows="3"></textarea></label>
+            </div>
+            <div id="tradeSummary" class="status"></div>
+            <button id="saveTrade" class="primary" type="button">Save Trade</button>
+            <div id="tradeStatus" class="status"></div>
+          </section>
         </section>
 
         <section id="profitView" class="view hidden">

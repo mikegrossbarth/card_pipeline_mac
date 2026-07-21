@@ -10508,6 +10508,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
             _mobile_inventory_payload_record = app.CardPipelineApp._mobile_inventory_payload_record
             _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            _inventory_title_with_grader = app.CardPipelineApp._inventory_title_with_grader
             _mobile_inventory_sport_filters = app.CardPipelineApp._mobile_inventory_sport_filters
             _canonical_person_choice = app.CardPipelineApp._canonical_person_choice
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
@@ -10588,11 +10589,11 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 limited = dummy.mobile_inventory_search({"limit": 1})
                 self.assertEqual(limited["count"], 1)
 
-                duplicate = dummy.mobile_inventory_add({"assigned_person": "Kevin Hambone", "cert_number": "123456", "purchase_price": "50"})
+                duplicate = dummy.mobile_inventory_add({"assigned_person": "Kevin Hambone", "cert_number": "123456", "grader": "PSA", "purchase_price": "50"})
                 self.assertFalse(duplicate["ok"])
                 self.assertTrue(duplicate["duplicate"])
 
-                update = dummy.mobile_inventory_add({"assigned_person": "Kevin Hambone", "cert_number": "123456", "purchase_price": "50", "update_existing": True})
+                update = dummy.mobile_inventory_add({"assigned_person": "Kevin Hambone", "cert_number": "123456", "grader": "PSA", "purchase_price": "50", "update_existing": True})
                 self.assertTrue(update["ok"])
                 self.assertEqual(update["action"], "updated")
                 self.assertEqual(update["record"]["purchase_price"], 50.0)
@@ -10894,11 +10895,17 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
             _raw_item_id_namespace = lambda self: "TEAM"
             mobile_inventory_add = app.CardPipelineApp.mobile_inventory_add
+            _mobile_inventory_sale_match = app.CardPipelineApp._mobile_inventory_sale_match
+            _mobile_inventory_title_key = app.CardPipelineApp._mobile_inventory_title_key
+            _mobile_trade_basis = app.CardPipelineApp._mobile_trade_basis
+            _mobile_trade_allocations = app.CardPipelineApp._mobile_trade_allocations
+            mobile_inventory_trade = app.CardPipelineApp.mobile_inventory_trade
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
             _append_profit_records = app.CardPipelineApp._append_profit_records
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _mobile_local_calendar_date = app.CardPipelineApp._mobile_local_calendar_date
@@ -10960,21 +10967,39 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                                 "amount": "5",
                             },
                         },
+                        {
+                            "id": "phone-1-trade-1",
+                            "type": "inventory.trade",
+                            "payload": {
+                                "assigned_person": "Kevin Hambone",
+                                "trade_date": "2026-06-22",
+                                "trade_partner": "Show Trade",
+                                "cash_paid": "25",
+                                "cash_received": "5",
+                                "outgoing": [{"cert_number": "777888"}],
+                                "incoming": [
+                                    {"card_title": "Incoming Trade Card A", "trade_value": "60"},
+                                    {"card_title": "Incoming Trade Card B", "trade_value": "40"},
+                                ],
+                            },
+                        },
                     ],
                 }
                 first = dummy.mobile_queue_sync(payload)
                 self.assertTrue(first["ok"])
-                self.assertEqual(first["applied"], 2)
+                self.assertEqual(first["applied"], 3)
                 self.assertEqual(first["skipped"], 0)
-                self.assertEqual(len(dummy._load_inventory_ledger()), 1)
-                self.assertEqual(len(dummy._load_profit_ledger()), 1)
+                inventory = dummy._load_inventory_ledger()
+                self.assertEqual(len(inventory), 2)
+                self.assertEqual([record["purchase_price"] for record in inventory], [19.5, 13.0])
+                self.assertEqual(len(dummy._load_profit_ledger()), 2)
 
                 second = dummy.mobile_queue_sync(payload)
                 self.assertTrue(second["ok"])
                 self.assertEqual(second["applied"], 0)
-                self.assertEqual(second["skipped"], 2)
-                self.assertEqual(len(dummy._load_inventory_ledger()), 1)
-                self.assertEqual(len(dummy._load_profit_ledger()), 1)
+                self.assertEqual(second["skipped"], 3)
+                self.assertEqual(len(dummy._load_inventory_ledger()), 2)
+                self.assertEqual(len(dummy._load_profit_ledger()), 2)
 
                 title_result = dummy.mobile_inventory_add(
                     {

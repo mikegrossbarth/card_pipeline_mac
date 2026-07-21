@@ -856,6 +856,7 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_inventory_search = self.mobile_inventory_search
         self.state.mobile_inventory_add = self.mobile_inventory_add
         self.state.mobile_inventory_mark_sold = self.mobile_inventory_mark_sold
+        self.state.mobile_inventory_trade = self.mobile_inventory_trade
         self.state.mobile_card_identify = self.mobile_card_identify
         self.state.mobile_profit_summary = self.mobile_profit_summary
         self.state.mobile_expense_add = self.mobile_expense_add
@@ -3348,6 +3349,153 @@ class CardPipelineApp(tk.Tk):
             "people": self._known_people(),
         }
 
+    def _mobile_trade_basis(self, record: dict[str, object]) -> float:
+        for key in ("purchase_price", "inventory_value", "estimated_payout"):
+            value = self._money_value(record.get(key))
+            if value is not None and value > 0:
+                return round(float(value), 2)
+        return 0.0
+
+    def _mobile_trade_allocations(
+        self,
+        outgoing_records: list[dict[str, object]],
+        incoming_payloads: list[dict[str, object]],
+        cash_paid: object = "",
+        cash_received: object = "",
+    ) -> dict[str, object]:
+        paid = self._money_value(cash_paid) or 0.0
+        received = self._money_value(cash_received) or 0.0
+        outgoing_basis = round(sum(self._mobile_trade_basis(record) for record in outgoing_records), 2)
+        incoming_values = [self._money_value(item.get("trade_value") or item.get("inventory_value") or item.get("value")) or 0.0 for item in incoming_payloads]
+        total_cost = round(max(0.0, outgoing_basis + float(paid) - float(received)), 2)
+        total_value = round(sum(max(0.0, value) for value in incoming_values), 2)
+        allocations: list[float] = []
+        if incoming_payloads:
+            if total_value > 0:
+                remaining = total_cost
+                for index, value in enumerate(incoming_values):
+                    if index == len(incoming_values) - 1:
+                        amount = remaining
+                    else:
+                        amount = round(total_cost * (max(0.0, value) / total_value), 2)
+                        remaining = round(remaining - amount, 2)
+                    allocations.append(round(max(0.0, amount), 2))
+            else:
+                split = round(total_cost / len(incoming_payloads), 2)
+                remaining = total_cost
+                for index in range(len(incoming_payloads)):
+                    if index == len(incoming_payloads) - 1:
+                        amount = remaining
+                    else:
+                        amount = split
+                        remaining = round(remaining - amount, 2)
+                    allocations.append(round(max(0.0, amount), 2))
+        return {
+            "outgoing_basis": outgoing_basis,
+            "cash_paid": round(float(paid), 2),
+            "cash_received": round(float(received), 2),
+            "incoming_value": total_value,
+            "total_cost": total_cost,
+            "allocations": allocations,
+        }
+
+    def mobile_inventory_trade(self, payload: dict) -> dict:
+        raw_outgoing = payload.get("outgoing")
+        raw_incoming = payload.get("incoming")
+        outgoing_payloads = [item for item in raw_outgoing if isinstance(item, dict)] if isinstance(raw_outgoing, list) else []
+        incoming_payloads = [item for item in raw_incoming if isinstance(item, dict)] if isinstance(raw_incoming, list) else []
+        if not outgoing_payloads and not incoming_payloads:
+            return {"ok": False, "error": "Choose outgoing inventory or enter incoming trade cards."}
+        if incoming_payloads and not any(str(item.get("cert_number") or item.get("cert") or item.get("card_title") or item.get("card") or "").strip() for item in incoming_payloads):
+            return {"ok": False, "error": "Enter at least one incoming card."}
+        if not getattr(self, "_is_personal_lucas", lambda: False)():
+            raw_person = str(payload.get("assigned_person") or payload.get("person") or "").strip()
+            if self._canonical_person_choice(raw_person) is None:
+                return {"ok": False, "error": "Choose an existing person from People Rules."}
+        trade_date = str(payload.get("trade_date") or payload.get("date") or "").strip() or datetime.now().strftime("%Y-%m-%d")
+        if self._profit_record_date(trade_date) is None:
+            return {"ok": False, "error": "Enter the trade date as YYYY-MM-DD."}
+        trade_date = self._mobile_local_calendar_date(trade_date)
+        trade_partner = str(payload.get("trade_partner") or payload.get("company") or "Trade").strip() or "Trade"
+        trade_notes = str(payload.get("notes") or "").strip()
+        with shared_lock(CARD_PIPELINE_DIR, "mobile-inventory-trade", self.lucas_identity):
+            ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+            outgoing_records: list[dict[str, object]] = []
+            for item in outgoing_payloads:
+                record = next((row for row in ledger if str(row.get("inventory_key") or "") == str(item.get("inventory_key") or item.get("key") or "").strip()), None)
+                if record is None:
+                    record = self._mobile_inventory_sale_match(ledger, item)
+                if record is None:
+                    return {"ok": False, "error": f"Outgoing card not found: {item.get('card_title') or item.get('cert_number') or item.get('inventory_key') or 'unknown'}"}
+                if str(record.get("status") or "").lower() != "active":
+                    return {"ok": False, "error": f"Outgoing card is not active: {record.get('card_title') or record.get('cert_number') or 'card'}"}
+                if str(record.get("inventory_key") or "") not in {str(existing.get("inventory_key") or "") for existing in outgoing_records}:
+                    outgoing_records.append(record)
+            allocation = self._mobile_trade_allocations(outgoing_records, incoming_payloads, payload.get("cash_paid"), payload.get("cash_received"))
+            sale_records = [
+                self._inventory_sale_profit_record(
+                    record,
+                    trade_partner,
+                    self._mobile_trade_basis(record),
+                    sale_date=trade_date,
+                    sale_method="Trade",
+                )
+                for record in outgoing_records
+            ]
+            sold_keys = {str(record.get("inventory_key") or "") for record in outgoing_records}
+            added_records: list[dict[str, object]] = []
+            for index, incoming in enumerate(incoming_payloads):
+                incoming_payload = dict(incoming)
+                incoming_payload["purchase_price"] = allocation["allocations"][index] if index < len(allocation["allocations"]) else 0.0
+                incoming_payload.setdefault("inventory_value", incoming.get("trade_value") or incoming.get("value") or "")
+                incoming_payload.setdefault("assigned_person", payload.get("assigned_person") or payload.get("person") or "")
+                incoming_payload.setdefault("source", trade_partner)
+                incoming_payload.setdefault("source_sheet", "Mobile Trade")
+                notes = "\n".join(part for part in [str(incoming_payload.get("notes") or "").strip(), trade_notes, "Added from mobile trade."] if part)
+                incoming_payload["notes"] = notes
+                record = self._mobile_inventory_payload_record(incoming_payload)
+                if not record.get("cert_number") and not record.get("card_title"):
+                    return {"ok": False, "error": "Incoming trade cards need a title or cert."}
+                cert = scan_to_cert(record.get("cert_number"))
+                if cert and any(scan_to_cert(row.get("cert_number")) == cert and str(row.get("status") or "").lower() == "active" and str(row.get("inventory_key") or "") not in sold_keys for row in ledger + added_records):
+                    return {"ok": False, "error": f"Incoming cert is already active in inventory: {cert}"}
+                if not record.get("cert_number") and not str(record.get("item_id") or "").strip():
+                    record["item_type"] = "Raw"
+                    record["item_id"] = self._next_raw_item_id(ledger + added_records)
+                    record["source_sheet"] = "Raw Inventory"
+                    record["source"] = record.get("source") or trade_partner
+                    record.pop("inventory_key", None)
+                    record = self._normalize_inventory_record(record)
+                added_records.append(self._enrich_inventory_record_assignment(record))
+            if sale_records:
+                self._append_profit_records(sale_records)
+            kept = [record for record in ledger if str(record.get("inventory_key") or "") not in sold_keys]
+            kept.extend(added_records)
+            self._save_inventory_ledger(kept)
+            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
+            if callable(cleanup) and outgoing_records:
+                cleanup(outgoing_records, kept)
+        self.events.put(("inventory_refresh", f"Mobile trade saved: {len(outgoing_records)} outgoing, {len(added_records)} incoming."))
+        self.events.put(("profit_refresh", f"Mobile trade saved: {len(outgoing_records)} outgoing, {len(added_records)} incoming."))
+        self._append_activity(
+            "Mobile Trade",
+            f"Mobile trade saved: {len(outgoing_records)} outgoing, {len(added_records)} incoming, basis {format_money(allocation['total_cost'])}.",
+            {"outgoing": len(outgoing_records), "incoming": len(added_records), "trade_partner": trade_partner, "total_cost": allocation["total_cost"]},
+        )
+        return {
+            "ok": True,
+            "trade": {
+                **allocation,
+                "total_cost_display": format_money(allocation["total_cost"]),
+                "outgoing_count": len(outgoing_records),
+                "incoming_count": len(added_records),
+                "trade_partner": trade_partner,
+            },
+            "outgoing": [self._mobile_inventory_json_record(record) for record in outgoing_records],
+            "records": [self._mobile_inventory_json_record(record) for record in added_records],
+            "people": self._known_people(),
+        }
+
     def _mobile_inventory_sale_match(self, ledger: list[dict[str, object]], payload: dict) -> dict[str, object] | None:
         active = [record for record in ledger if str(record.get("status") or "").lower() == "active"]
         cert = scan_to_cert(payload.get("cert_number") or payload.get("cert") or payload.get("barcode") or "")
@@ -3634,6 +3782,8 @@ class CardPipelineApp(tk.Tk):
             return self.mobile_inventory_add(dict(payload))
         if action_type in {"inventory.sold", "inventory.mark_sold", "inventory_sold", "mark_sold"}:
             return self.mobile_inventory_mark_sold(dict(payload))
+        if action_type in {"inventory.trade", "inventory_trade", "trade_inventory"}:
+            return self.mobile_inventory_trade(dict(payload))
         if action_type in {"expense.add", "expense_add", "add_expense"}:
             return self.mobile_expense_add(dict(payload))
         return {"ok": False, "error": f"Unsupported mobile queue action type: {action_type or 'blank'}."}

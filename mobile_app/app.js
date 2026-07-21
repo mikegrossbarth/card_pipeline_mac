@@ -9,6 +9,8 @@ const state = {
   viewerRecord: null,
   viewerPhoto: null,
   searchRequestSeq: 0,
+  tradeOutgoing: [],
+  tradeIncomingSeq: 0,
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
 const IS_PERSONAL_PROFILE = Boolean(profileMatch && profileMatch[1] === "personal");
@@ -185,7 +187,7 @@ function updatePeople(people) {
     state.people = people.filter(Boolean);
   }
   ["personFilter", "profitPerson", "payoutPerson"].forEach((id) => fillSelect($(id), state.people));
-  ["assignedPerson", "expensePerson"].forEach((id) => fillSelect($(id), state.people, { allLabel: "Choose person" }));
+  ["assignedPerson", "expensePerson", "tradePerson"].forEach((id) => fillSelect($(id), state.people, { allLabel: "Choose person" }));
 }
 
 function cachedInventoryWrapper() {
@@ -269,6 +271,11 @@ function queueTitle(action) {
   }
   if (action.type === "inventory.sold") {
     return payload.inventory_key || payload.company || "Inventory sale";
+  }
+  if (action.type === "inventory.trade") {
+    const incoming = Array.isArray(payload.incoming) ? payload.incoming.length : 0;
+    const outgoing = Array.isArray(payload.outgoing) ? payload.outgoing.length : 0;
+    return `Trade ${outgoing} out / ${incoming} in`;
   }
   if (action.type === "expense.add") {
     return `${payload.person || payload.assigned_person || "Expense"} ${money(payload.amount || payload.expense_amount, "")}`.trim();
@@ -354,11 +361,13 @@ function syncPersonInputs(person) {
   if (IS_PERSONAL_PROFILE) {
     $("assignedPerson").value = PERSONAL_DEFAULT_PERSON;
     $("expensePerson").value = PERSONAL_DEFAULT_PERSON;
+    $("tradePerson").value = PERSONAL_DEFAULT_PERSON;
     return;
   }
   const value = person || $("personFilter").value || $("profitPerson").value || $("payoutPerson").value || "";
   if (value && !$("assignedPerson").value) $("assignedPerson").value = value;
   if (value && !$("expensePerson").value) $("expensePerson").value = value;
+  if (value && !$("tradePerson").value) $("tradePerson").value = value;
 }
 
 function personalPersonValue(value = "") {
@@ -735,6 +744,227 @@ async function confirmSell() {
   loadPayouts();
 }
 
+function parseMoneyInput(value) {
+  const number = Number(String(value || "").replace(/[$,]/g, ""));
+  return Number.isFinite(number) ? number : 0;
+}
+
+function tradeRecordCost(record) {
+  return parseMoneyInput(record.purchase_price || record.inventory_value || record.estimated_payout || 0);
+}
+
+function tradeIncomingRows() {
+  return Array.from(document.querySelectorAll(".tradeIncomingRow")).map((row) => ({
+    cert_number: row.querySelector(".tradeCert")?.value || "",
+    grader: row.querySelector(".tradeGrader")?.value || "",
+    card_title: row.querySelector(".tradeTitle")?.value || "",
+    trade_value: row.querySelector(".tradeValue")?.value || "",
+    notes: row.querySelector(".tradeRowNotes")?.value || "",
+  })).filter((item) => item.cert_number || item.card_title || item.trade_value || item.notes);
+}
+
+function tradeAllocationPreview() {
+  const incoming = tradeIncomingRows();
+  const outgoingBasis = state.tradeOutgoing.reduce((total, record) => total + tradeRecordCost(record), 0);
+  const cashPaid = parseMoneyInput($("tradeCashPaid").value);
+  const cashReceived = parseMoneyInput($("tradeCashReceived").value);
+  const totalCost = Math.max(0, outgoingBasis + cashPaid - cashReceived);
+  const incomingValue = incoming.reduce((total, item) => total + parseMoneyInput(item.trade_value), 0);
+  let allocations = [];
+  if (incoming.length) {
+    if (incomingValue > 0) {
+      let remaining = totalCost;
+      allocations = incoming.map((item, index) => {
+        if (index === incoming.length - 1) return Math.max(0, remaining);
+        const amount = Math.round(totalCost * (parseMoneyInput(item.trade_value) / incomingValue) * 100) / 100;
+        remaining = Math.round((remaining - amount) * 100) / 100;
+        return Math.max(0, amount);
+      });
+    } else {
+      const split = Math.round((totalCost / incoming.length) * 100) / 100;
+      let remaining = totalCost;
+      allocations = incoming.map((_item, index) => {
+        if (index === incoming.length - 1) return Math.max(0, remaining);
+        remaining = Math.round((remaining - split) * 100) / 100;
+        return Math.max(0, split);
+      });
+    }
+  }
+  return { outgoingBasis, cashPaid, cashReceived, totalCost, incomingValue, allocations };
+}
+
+function updateTradeSummary() {
+  const preview = tradeAllocationPreview();
+  const incoming = tradeIncomingRows();
+  const allocationText = incoming.length
+    ? preview.allocations.map((amount, index) => `${incoming[index].card_title || incoming[index].cert_number || `Incoming ${index + 1}`}: ${money(amount)}`).join(" | ")
+    : "Add incoming cards to allocate cost.";
+  $("tradeSummary").textContent = `Outgoing cost ${money(preview.outgoingBasis)} + cash paid ${money(preview.cashPaid)} - cash received ${money(preview.cashReceived)} = incoming basis ${money(preview.totalCost)}. ${allocationText}`;
+}
+
+function renderTradeOutgoing() {
+  const host = $("tradeOutgoingList");
+  if (!state.tradeOutgoing.length) {
+    host.innerHTML = '<div class="hint">No outgoing cards selected.</div>';
+    updateTradeSummary();
+    return;
+  }
+  host.innerHTML = state.tradeOutgoing.map((record, index) => `
+    <article class="result slim">
+      <h2>${escapeHtml(record.card_title || record.cert_number || "Untitled card")}</h2>
+      <div class="meta">
+        <div><strong>Cert</strong>${escapeHtml(record.cert_number || "")}</div>
+        <div><strong>Cost</strong>${escapeHtml(record.purchase_price_display || money(record.purchase_price, "-"))}</div>
+      </div>
+      <button class="secondary removeTradeOutgoing" data-index="${index}" type="button">Remove</button>
+    </article>
+  `).join("");
+  document.querySelectorAll(".removeTradeOutgoing").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.tradeOutgoing.splice(Number(button.dataset.index), 1);
+      renderTradeOutgoing();
+    });
+  });
+  updateTradeSummary();
+}
+
+function renderTradeSearchResults(items) {
+  const host = $("tradeSearchResults");
+  if (!items.length) {
+    host.innerHTML = '<div class="hint">No active inventory matched.</div>';
+    return;
+  }
+  host.innerHTML = items.map((item, index) => `
+    <article class="result slim">
+      <h2>${escapeHtml(item.card_title || item.cert_number || "Untitled card")}</h2>
+      <div class="meta">
+        <div><strong>Cert</strong>${escapeHtml(item.cert_number || "")}</div>
+        <div><strong>Paid</strong>${escapeHtml(item.purchase_price_display || money(item.purchase_price, "-"))}</div>
+        <div><strong>Person</strong>${escapeHtml(item.assigned_person || "-")}</div>
+      </div>
+      <button class="secondary addTradeOutgoing" data-index="${index}" type="button">Add Outgoing</button>
+    </article>
+  `).join("");
+  document.querySelectorAll(".addTradeOutgoing").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = items[Number(button.dataset.index)];
+      if (!state.tradeOutgoing.some((record) => record.inventory_key === item.inventory_key)) {
+        state.tradeOutgoing.push(item);
+        renderTradeOutgoing();
+      }
+    });
+  });
+}
+
+async function searchTradeInventory() {
+  const payload = {
+    query: $("tradeSearchInput").value,
+    person: IS_PERSONAL_PROFILE ? "" : $("tradePerson").value,
+    sport: [],
+    include_sold: false,
+    limit: 25,
+  };
+  try {
+    const result = await api("/inventory/search", payload);
+    if (!result.ok) throw new Error(result.error || "Trade search failed.");
+    renderTradeSearchResults(result.items || []);
+    cacheSet(CACHE_KEYS.search, result);
+  } catch (error) {
+    const cached = cachedInventoryWrapper();
+    const items = cached && cached.payload ? (cached.payload.items || []).filter((item) => cachedInventoryMatches(item, payload)).slice(0, 25) : [];
+    renderTradeSearchResults(items);
+    $("tradeStatus").textContent = `Showing cached trade search. ${error.message || error}`;
+  }
+}
+
+function addTradeIncomingRow(values = {}) {
+  const id = ++state.tradeIncomingSeq;
+  const host = $("tradeIncomingRows");
+  const wrapper = document.createElement("section");
+  wrapper.className = "panel tradeIncomingRow";
+  wrapper.dataset.rowId = String(id);
+  wrapper.innerHTML = `
+    <div class="grid">
+      <label>Cert<input class="tradeCert" inputmode="numeric" placeholder="Cert number" value="${escapeHtml(values.cert_number || "")}"></label>
+      <label>Grader<select class="tradeGrader">
+        <option value="">No grader</option>
+        <option value="PSA">PSA</option>
+        <option value="BGS">BGS</option>
+        <option value="CGC">CGC</option>
+        <option value="SGC">SGC</option>
+      </select></label>
+      <label>Card<input class="tradeTitle" placeholder="Year set player grade" value="${escapeHtml(values.card_title || "")}"></label>
+      <label>Trade Value<input class="tradeValue" inputmode="decimal" placeholder="Optional split value" value="${escapeHtml(values.trade_value || "")}"></label>
+      <label>Notes<textarea class="tradeRowNotes" rows="2">${escapeHtml(values.notes || "")}</textarea></label>
+    </div>
+    <button class="secondary removeTradeIncoming" type="button">Remove Incoming Card</button>
+  `;
+  host.appendChild(wrapper);
+  wrapper.querySelector(".tradeGrader").value = values.grader || "";
+  wrapper.querySelectorAll("input, select, textarea").forEach((input) => {
+    input.addEventListener("input", () => updateTradeSummary());
+    input.addEventListener("change", () => updateTradeSummary());
+  });
+  wrapper.querySelector(".removeTradeIncoming").addEventListener("click", () => {
+    wrapper.remove();
+    updateTradeSummary();
+  });
+  updateTradeSummary();
+}
+
+function clearTradeForm() {
+  state.tradeOutgoing = [];
+  $("tradeSearchInput").value = "";
+  $("tradePartner").value = "";
+  $("tradeCashPaid").value = "";
+  $("tradeCashReceived").value = "";
+  $("tradeNotes").value = "";
+  $("tradeSearchResults").innerHTML = "";
+  $("tradeIncomingRows").innerHTML = "";
+  addTradeIncomingRow();
+  renderTradeOutgoing();
+}
+
+function tradePayload() {
+  return {
+    assigned_person: personalPersonValue($("tradePerson").value),
+    trade_date: $("tradeDate").value,
+    trade_partner: $("tradePartner").value || "Trade",
+    cash_paid: $("tradeCashPaid").value,
+    cash_received: $("tradeCashReceived").value,
+    notes: $("tradeNotes").value,
+    outgoing: state.tradeOutgoing.map((record) => ({
+      inventory_key: record.inventory_key,
+      cert_number: record.cert_number || "",
+      item_id: record.item_id || "",
+      card_title: record.card_title || "",
+    })),
+    incoming: tradeIncomingRows(),
+  };
+}
+
+async function saveTrade() {
+  $("tradeStatus").textContent = "Saving trade...";
+  const result = await mutationApi("inventory.trade", "/inventory/trade", tradePayload());
+  if (result.queued) {
+    $("tradeStatus").textContent = `Desktop not reachable. Queued trade ${result.action_id}.`;
+    clearTradeForm();
+    return;
+  }
+  if (!result.ok) {
+    if (/pin/i.test(result.error || "")) setUnlocked(false);
+    $("tradeStatus").textContent = result.error || "Trade failed.";
+    return;
+  }
+  $("tradeStatus").textContent = `Trade saved. Incoming basis ${result.trade?.total_cost_display || money(result.trade?.total_cost, "")}.`;
+  updatePeople(result.people || state.people);
+  clearTradeForm();
+  await refreshInventorySnapshot(true);
+  searchInventory();
+  loadProfit();
+  loadPayouts();
+}
+
 function expensePayload() {
   return {
     person: personalPersonValue($("expensePerson").value),
@@ -1011,6 +1241,7 @@ function bind() {
   $("pin").value = state.pin;
   $("expenseDate").value = localDateString();
   $("sellDate").value = localDateString();
+  $("tradeDate").value = localDateString();
   fillSelect($("sellMethod"), ["Cash", "Wire", "Venmo", "Zelle", "PayPal", "Check", "Trade", "Other"], { includeAll: false });
   fillSelect($("expenseType"), ["Travel", "Supplies", "Travel Meal", "Fees", "Shipping"], { includeAll: false });
   fillSelect($("expenseRelatedType"), ["General", "Card", "Sheet"], { includeAll: false });
@@ -1032,9 +1263,10 @@ function bind() {
     button.addEventListener("click", () => {
       document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
-      ["search", "add", "expense", "profit", "payout", "sync"].forEach((view) => {
+      ["search", "add", "trade", "expense", "profit", "payout", "sync"].forEach((view) => {
         $(`${view}View`).classList.toggle("hidden", button.dataset.view !== view);
       });
+      if (button.dataset.view === "trade" && !$("tradeIncomingRows").children.length) addTradeIncomingRow();
       if (button.dataset.view === "profit") loadProfit();
       if (button.dataset.view === "payout") loadPayouts();
       if (button.dataset.view === "sync") renderQueue();
@@ -1052,6 +1284,15 @@ function bind() {
   $("includeSold").addEventListener("change", () => searchInventory());
   $("cancelSell").addEventListener("click", () => cancelSell());
   $("confirmSell").addEventListener("click", () => confirmSell());
+  $("tradePerson").addEventListener("change", () => searchTradeInventory());
+  $("tradeSearchInput").addEventListener("input", () => searchTradeInventory());
+  $("tradeSearchButton").addEventListener("click", () => searchTradeInventory());
+  $("addTradeIncoming").addEventListener("click", () => addTradeIncomingRow());
+  ["tradeCashPaid", "tradeCashReceived", "tradeNotes", "tradePartner", "tradeDate"].forEach((id) => {
+    $(id).addEventListener("input", () => updateTradeSummary());
+    $(id).addEventListener("change", () => updateTradeSummary());
+  });
+  $("saveTrade").addEventListener("click", () => saveTrade());
   $("profitPerson").addEventListener("change", () => loadProfit());
   $("profitPeriod").addEventListener("change", () => loadProfit());
   $("profitGraph").addEventListener("change", () => loadProfit());
