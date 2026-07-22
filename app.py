@@ -5202,6 +5202,7 @@ class CardPipelineApp(tk.Tk):
         score: float,
         reason: str = "duplicate_inventory_post",
         keep_media_id: str = "",
+        keep_post: dict[str, object] | None = None,
     ) -> bool:
         media_id = str(post.get("id") or post.get("media_id") or "").strip()
         if not media_id:
@@ -5212,21 +5213,29 @@ class CardPipelineApp(tk.Tk):
             state["duplicate_posts"] = duplicates
         if any(isinstance(item, dict) and str(item.get("media_id") or "").strip() == media_id for item in duplicates):
             return False
-        duplicates.append(
-            {
-                "inventory_key": str(record.get("inventory_key") or ""),
-                "inventory_identity": self._instagram_inventory_identity(record),
-                "media_id": media_id,
-                "caption": str(post.get("caption") or record.get("card_title") or "").strip(),
-                "permalink": str(post.get("permalink") or ""),
-                "photo_url": str(post.get("media_url") or ""),
-                "detected_at": datetime.now().isoformat(timespec="seconds"),
-                "reason": reason,
-                "matched_by": method,
-                "match_score": round(float(score), 3),
-                "keep_media_id": keep_media_id,
-            }
-        )
+        duplicate = {
+            "inventory_key": str(record.get("inventory_key") or ""),
+            "inventory_identity": self._instagram_inventory_identity(record),
+            "media_id": media_id,
+            "caption": str(post.get("caption") or record.get("card_title") or "").strip(),
+            "permalink": str(post.get("permalink") or ""),
+            "photo_url": str(post.get("media_url") or ""),
+            "detected_at": datetime.now().isoformat(timespec="seconds"),
+            "reason": reason,
+            "matched_by": method,
+            "match_score": round(float(score), 3),
+            "keep_media_id": keep_media_id,
+        }
+        if isinstance(keep_post, dict):
+            duplicate.update(
+                {
+                    "keep_caption": str(keep_post.get("caption") or record.get("card_title") or "").strip(),
+                    "keep_permalink": str(keep_post.get("permalink") or ""),
+                    "keep_photo_url": str(keep_post.get("media_url") or ""),
+                    "keep_timestamp": str(keep_post.get("timestamp") or ""),
+                }
+            )
+        duplicates.append(duplicate)
         if len(duplicates) > 500:
             del duplicates[:-500]
         return True
@@ -5238,6 +5247,8 @@ class CardPipelineApp(tk.Tk):
         active_records: list[dict[str, object]],
     ) -> int:
         posts = state.get("posts") if isinstance(state.get("posts"), dict) else {}
+        if not isinstance(state.get("posts"), dict):
+            state["posts"] = posts
         known_posted_media_ids = {
             str(entry.get("media_id") or "").strip()
             for entry in posts.values()
@@ -5271,7 +5282,29 @@ class CardPipelineApp(tk.Tk):
                 continue
             known = [item for item in unique if str(item[0].get("id") or item[0].get("media_id") or "").strip() in known_posted_media_ids]
             keeper = known[0] if known else sorted(unique, key=lambda item: str(item[0].get("timestamp") or ""))[0]
-            keep_media_id = str(keeper[0].get("id") or keeper[0].get("media_id") or "").strip()
+            keep_post, keep_record, keep_method, keep_score = keeper
+            keep_media_id = str(keep_post.get("id") or keep_post.get("media_id") or "").strip()
+            existing = posts.get(key) if isinstance(posts.get(key), dict) else {}
+            existing_status = str(existing.get("status") or "").strip().lower() if isinstance(existing, dict) else ""
+            existing_media_id = str(existing.get("media_id") or "").strip() if isinstance(existing, dict) else ""
+            if keep_media_id and (existing_status != "posted" or existing_media_id != keep_media_id):
+                posts[key] = {
+                    "status": "posted",
+                    "media_id": keep_media_id,
+                    "caption": str(keep_post.get("caption") or keep_record.get("card_title") or "").strip(),
+                    "photo_url": str(keep_post.get("media_url") or ""),
+                    "permalink": str(keep_post.get("permalink") or ""),
+                    "posted_at": str(keep_post.get("timestamp") or datetime.now().isoformat(timespec="seconds")),
+                    "imported_at": datetime.now().isoformat(timespec="seconds"),
+                    "inventory_identity": self._instagram_inventory_identity(keep_record),
+                    "card_title": str(keep_record.get("card_title") or ""),
+                    "cert_number": scan_to_cert(keep_record.get("cert_number")),
+                    "item_id": str(keep_record.get("item_id") or ""),
+                    "matched_by": keep_method or "inventory_match",
+                    "match_score": round(float(keep_score), 3),
+                    "imported_from": "instagram_duplicate_keeper",
+                }
+                known_posted_media_ids.add(keep_media_id)
             for post, record, method, score in unique:
                 media_id = str(post.get("id") or post.get("media_id") or "").strip()
                 if not media_id or media_id == keep_media_id:
@@ -5284,6 +5317,7 @@ class CardPipelineApp(tk.Tk):
                     score,
                     reason="duplicate_live_inventory_post",
                     keep_media_id=keep_media_id,
+                    keep_post=keep_post,
                 ):
                     queued += 1
         return queued
@@ -5403,6 +5437,16 @@ class CardPipelineApp(tk.Tk):
             if isinstance(item, dict) and str(item.get("media_id") or "").strip()
         }
         known_media_ids.update(queued_duplicate_media_ids)
+        known_media_ids.update(
+            str(entry.get("media_id") or "").strip()
+            for entry in posts.values()
+            if isinstance(entry, dict) and str(entry.get("media_id") or "").strip()
+        )
+        used_keys.update(
+            str(key)
+            for key, entry in posts.items()
+            if isinstance(entry, dict) and str(entry.get("status") or "").strip().lower() == "posted"
+        )
         ocr_attempted = 0
         ocr_matched = 0
         unmatched: list[dict[str, object]] = []
@@ -5857,7 +5901,24 @@ class CardPipelineApp(tk.Tk):
             self._record_instagram_removed_post(state, item)
             if key:
                 tracked_media_id = str(tracked.get("media_id") or "").strip() if isinstance(tracked, dict) else ""
-                if not media_id or not tracked_media_id or media_id == tracked_media_id:
+                keep_media_id = str(raw_item.get("keep_media_id") or "").strip()
+                if keep_media_id and media_id and media_id != keep_media_id:
+                    if not tracked_media_id or tracked_media_id == media_id:
+                        posts[key] = {
+                            "status": "posted",
+                            "media_id": keep_media_id,
+                            "caption": str(raw_item.get("keep_caption") or raw_item.get("caption") or raw_item.get("title") or "").strip(),
+                            "photo_url": str(raw_item.get("keep_photo_url") or ""),
+                            "permalink": str(raw_item.get("keep_permalink") or ""),
+                            "posted_at": str(raw_item.get("keep_timestamp") or datetime.now().isoformat(timespec="seconds")),
+                            "imported_at": datetime.now().isoformat(timespec="seconds"),
+                            "inventory_identity": str(raw_item.get("inventory_identity") or ""),
+                            "card_title": str(raw_item.get("title") or raw_item.get("caption") or ""),
+                            "matched_by": str(raw_item.get("matched_by") or "duplicate_keeper"),
+                            "match_score": raw_item.get("match_score", ""),
+                            "imported_from": "manual_delete_duplicate_keeper",
+                        }
+                elif not media_id or not tracked_media_id or media_id == tracked_media_id:
                     posts.pop(key, None)
             if media_id:
                 duplicates = [
