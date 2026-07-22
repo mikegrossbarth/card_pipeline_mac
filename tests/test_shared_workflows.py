@@ -8889,6 +8889,19 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(ytd_values[ytd_days.index("2026-01-05")], 40)
         self.assertEqual(ytd_values[ytd_days.index("2026-06-17")], 30)
 
+        year_ratio_rows = [
+            {"assigned_person": "Lucas", "date_added": "2026-01-05", "profit": 50, "sale_price": 100},
+            {"assigned_person": "Lucas", "date_added": "2026-01-20", "profit": 25, "sale_price": 100},
+            {"assigned_person": "Lucas", "date_added": "2026-03-01", "profit": 30, "sale_price": 300},
+        ]
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Year")
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Profit to Sales Ratio")
+        year_ratio_labels, year_ratio_values = dummy._profit_chart_series(year_ratio_rows)
+        self.assertEqual(year_ratio_labels, [f"2026-{month:02d}" for month in range(1, 13)])
+        self.assertAlmostEqual(year_ratio_values[0], 0.375)
+        self.assertEqual(year_ratio_values[1], 0.0)
+        self.assertAlmostEqual(year_ratio_values[2], 0.1)
+
         sport_rows = [
             {"assigned_person": "Lucas", "date_added": "2026-01-05", "sport": "football", "card_title": "2024 Panini Prizm Jayden Daniels", "profit": 20, "sale_price": 100},
             {"assigned_person": "Lucas", "date_added": "2026-02-01", "sport": "football", "card_title": "2024 Panini Prizm Jayden Daniels Silver", "profit": 15, "sale_price": 75},

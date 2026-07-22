@@ -9719,6 +9719,27 @@ class CardPipelineApp(tk.Tk):
         daily: dict[str, float] = {}
         sales: dict[str, float] = {}
         ratio_mode = self._profit_graph_label() == "Profit to Sales Ratio"
+        monthly_ratio = ratio_mode and self._profit_period_label() in {"Year", "YTD", "Total"}
+        if monthly_ratio:
+            buckets = self._profit_chart_bucket_range(rows, True)
+            profit_by_bucket = {bucket: 0.0 for bucket in buckets}
+            sales_by_bucket = {bucket: 0.0 for bucket in buckets}
+            for record in rows:
+                profit = self._money_value(record.get("profit"))
+                sold_date = self._profit_record_date(record.get("date_added"))
+                if profit is None or sold_date is None:
+                    continue
+                bucket = self._profit_chart_bucket_label(sold_date)
+                profit_by_bucket[bucket] = profit_by_bucket.get(bucket, 0.0) + float(profit)
+                sale = self._money_value(record.get("sale_price"))
+                if sale is not None:
+                    sales_by_bucket[bucket] = sales_by_bucket.get(bucket, 0.0) + float(sale)
+            if not buckets:
+                buckets = sorted(profit_by_bucket)
+            return buckets, [
+                profit_by_bucket.get(bucket, 0.0) / sales_by_bucket[bucket] if sales_by_bucket.get(bucket) else 0.0
+                for bucket in buckets
+            ]
         for record in rows:
             profit = self._money_value(record.get("profit"))
             sold_date = self._profit_record_date(record.get("date_added"))
