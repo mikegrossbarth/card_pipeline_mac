@@ -9271,6 +9271,85 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(repaired["previous_inventory_key"], "raw-20260708-0035")
         self.assertEqual(repaired["repair_reason"], "active_inventory_mapping_restored")
 
+    def test_instagram_inventory_plan_repairs_old_fuzzy_title_mapping_to_exact_caption(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_plan = app.CardPipelineApp._instagram_inventory_plan
+            _repair_instagram_state_for_active_inventory = app.CardPipelineApp._repair_instagram_state_for_active_inventory
+            _inventory_photo_encoded_id = app.CardPipelineApp._inventory_photo_encoded_id
+            _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
+            _instagram_inventory_photo_id = app.CardPipelineApp._instagram_inventory_photo_id
+            _instagram_post_photo_id = app.CardPipelineApp._instagram_post_photo_id
+            _instagram_cover_photo_path = app.CardPipelineApp._instagram_cover_photo_path
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def __init__(self):
+                self.state = {
+                    "version": 1,
+                    "posts": {
+                        "0017246624|charlyscardvault_7_21_26.xlsx|mikey": {
+                            "status": "posted",
+                            "media_id": "17865194052639177",
+                            "caption": "2016 Panini National Treasures Dirk Nowitzki Clutch Factor Auto Patch 20/25",
+                            "card_title": "2016-17 Panini National Treasures International Treasures Bronze #8 Dirk Nowitzki BGS 9",
+                            "cert_number": "0017246624",
+                            "inventory_identity": "cert:0017246624",
+                            "matched_by": "title_tokens",
+                            "permalink": "https://www.instagram.com/p/DbDf5UJIBpx/",
+                        }
+                    },
+                }
+                self.activities = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token", "public_photo_base_url": "https://example.test/photos"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "0017246624|charlyscardvault_7_21_26.xlsx|mikey",
+                        "cert_number": "0017246624",
+                        "status": "Active",
+                        "card_title": "2016-17 Panini National Treasures International Treasures Bronze #8 Dirk Nowitzki BGS 9",
+                        "photo_paths": [],
+                    },
+                    {
+                        "inventory_key": "raw-mikey-20260708-0051",
+                        "item_id": "RAW-MIKEY-20260708-0051",
+                        "status": "Active",
+                        "card_title": "2016 Panini National Treasures Dirk Nowitzki Clutch Factor Auto Patch 20/25",
+                        "photo_paths": ["dirk.jpg"],
+                    },
+                ]
+
+            def _inventory_photo_paths_for_record(self, record):
+                return [Path("/tmp") / value for value in record.get("photo_paths") or []]
+
+            def _inventory_photo_relative_path(self, path):
+                return Path(path.name)
+
+        dummy = InstagramDummy()
+        plan = dummy._instagram_inventory_plan()
+
+        self.assertEqual(plan["to_post"], [])
+        self.assertNotIn("0017246624|charlyscardvault_7_21_26.xlsx|mikey", dummy.state["posts"])
+        repaired = dummy.state["posts"]["raw-mikey-20260708-0051"]
+        self.assertEqual(repaired["status"], "posted")
+        self.assertEqual(repaired["media_id"], "17865194052639177")
+        self.assertEqual(repaired["repair_reason"], "exact_caption_replaced_fuzzy_title_mapping")
+        self.assertEqual(repaired["previous_inventory_key"], "0017246624|charlyscardvault_7_21_26.xlsx|mikey")
+        self.assertEqual(repaired["previous_card_title"], "2016-17 Panini National Treasures International Treasures Bronze #8 Dirk Nowitzki BGS 9")
+
     def test_company_sheet_week_start_uses_configured_reset_day_and_time(self) -> None:
         before_reset = datetime(2026, 7, 8, 11, 30)
         after_reset = datetime(2026, 7, 8, 12, 30)

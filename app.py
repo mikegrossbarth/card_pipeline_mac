@@ -5005,6 +5005,41 @@ class CardPipelineApp(tk.Tk):
             if not isinstance(entry, dict):
                 continue
             status = str(entry.get("status") or "").strip().lower()
+            if status == "posted":
+                matched_by = str(entry.get("matched_by") or "").strip().lower()
+                caption_title = self._instagram_inventory_identity({"card_title": entry.get("caption")})
+                exact_title_match = active_by_title.get(caption_title)
+                old_record = active_by_key.get(str(old_key))
+                old_record_title = self._instagram_inventory_identity(
+                    {"card_title": old_record.get("card_title") if isinstance(old_record, dict) else ""}
+                )
+                if (
+                    matched_by == "title_tokens"
+                    and caption_title
+                    and exact_title_match is not None
+                    and str(exact_title_match.get("inventory_key") or "") != str(old_key)
+                    and old_record_title != caption_title
+                ):
+                    new_key = str(exact_title_match.get("inventory_key") or old_key)
+                    repaired_entry = dict(entry)
+                    repaired_entry.update(
+                        {
+                            "status": "posted",
+                            "inventory_identity": self._instagram_inventory_identity(exact_title_match),
+                            "card_title": str(exact_title_match.get("card_title") or repaired_entry.get("caption") or "").strip(),
+                            "cert_number": scan_to_cert(exact_title_match.get("cert_number")),
+                            "item_id": str(exact_title_match.get("item_id") or "").strip(),
+                            "repaired_at": now,
+                            "repair_reason": "exact_caption_replaced_fuzzy_title_mapping",
+                            "previous_status": status,
+                            "previous_inventory_key": str(old_key),
+                            "previous_card_title": str(entry.get("card_title") or ""),
+                        }
+                    )
+                    posts[new_key] = repaired_entry
+                    posts.pop(old_key, None)
+                    repaired += 1
+                continue
             if status not in {"delete_review_needed", "post_error"}:
                 continue
             media_id = str(entry.get("media_id") or "").strip()
