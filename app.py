@@ -6574,9 +6574,8 @@ class CardPipelineApp(tk.Tk):
 
     def _inventory_sale_dialog(self, record: dict[str, object]) -> dict[str, object] | None:
         normalized = self._normalize_inventory_record(record)
-        default_sale = self._money_value(normalized.get("estimated_payout")) or self._money_value(normalized.get("inventory_value")) or 0.0
         company_var = tk.StringVar(value="")
-        sale_var = tk.StringVar(value=f"{default_sale:.2f}" if default_sale else "")
+        sale_var = tk.StringVar()
         expense_type_var = tk.StringVar(value="Shipping")
         expense_amount_var = tk.StringVar()
         expense_notes_var = tk.StringVar()

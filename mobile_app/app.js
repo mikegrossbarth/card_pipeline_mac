@@ -700,7 +700,7 @@ function startSell(record) {
   state.sellRecord = record || null;
   if (!state.sellRecord) return;
   $("sellTitle").textContent = `Mark Sold: ${state.sellRecord.cert_number || state.sellRecord.card_title || "card"}`;
-  $("sellPrice").value = state.sellRecord.estimated_payout || state.sellRecord.inventory_value || state.sellRecord.purchase_price || "";
+  $("sellPrice").value = "";
   $("sellDate").value = localDateString();
   $("sellCompany").value = "";
   $("sellStatus").textContent = "";
