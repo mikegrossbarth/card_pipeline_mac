@@ -50,6 +50,7 @@ Future idea: let the user's OpenClaw agent talk to L.U.C.A.S through a narrow co
 
 ## Latest Completed Work
 
+- Lot Price Fill now adds any leftover/unallocated lot balance to the last comp row in the current list, so filled purchase prices tie exactly to the lot total even when source values run short or rounding leaves pennies.
 - Profit `Profit to Sales Ratio` now uses month buckets for `Year`, `YTD`, and `Total` periods, matching the yearly/monthly behavior of `Profit by Company` instead of plotting one point per day.
 - Inventory filter popup now includes `Missing Comps Only` and `Missing CL Value Only`. The old large `No Comps` toolbar button was removed to keep the Inventory action row cleaner; selected missing-value filters match rows missing either selected value, treat blank or zero CL values as missing, still hide sold rows, and are covered by focused tests.
 - Cert normalization now preserves old SGC-style dashed cert numbers such as `2007430-003` across spreadsheet intake, scan/manual receive, inventory matching, and Card Ladder bridge result matching. Bridge comparisons also use a compact fallback so `2007430-003` can match `2007430003` if a browser/OCR path drops the dash.

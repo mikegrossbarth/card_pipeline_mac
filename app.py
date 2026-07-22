@@ -8565,12 +8565,18 @@ class CardPipelineApp(tk.Tk):
                 continue
             allocations.append(planned)
             running = round(running + planned, 2)
+        unallocated_absorbed = 0.0
+        remaining = round(target - sum(allocations), 2)
+        if allocations and remaining > 0:
+            allocations[-1] = round(allocations[-1] + remaining, 2)
+            unallocated_absorbed = remaining
         info = {
             "allocated": round(sum(allocations), 2),
             "target": round(target, 2),
             "remaining": round(target - sum(allocations), 2),
             "capped": capped,
             "value_missing": value_missing,
+            "unallocated_absorbed": unallocated_absorbed,
         }
         return allocations, info
 
