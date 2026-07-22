@@ -10530,7 +10530,75 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         result = dummy._instagram_import_existing_posts()
 
         self.assertEqual(result["imported"], 1)
-        self.assertEqual(dummy.state["posts"]["title-key"]["matched_by"], "title_tokens")
+        self.assertEqual(dummy.state["posts"]["title-key"]["matched_by"], "title_exact")
+
+    def test_instagram_import_existing_posts_rejects_partial_title_collisions(self) -> None:
+        class InstagramDummy:
+            _instagram_import_existing_posts = app.CardPipelineApp._instagram_import_existing_posts
+            _instagram_find_inventory_match_for_post = app.CardPipelineApp._instagram_find_inventory_match_for_post
+            _instagram_match_text_tokens = app.CardPipelineApp._instagram_match_text_tokens
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_record_duplicate_post = app.CardPipelineApp._instagram_record_duplicate_post
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "ohtani-sgc10",
+                        "status": "Active",
+                        "card_title": "2019 Topps Chrome 84TC-25 Shohei Ohtani '84 Topps Design SGC 10",
+                        "cert_number": "4168888",
+                    },
+                    {
+                        "inventory_key": "ohtani-one-sgc95",
+                        "status": "Active",
+                        "card_title": "2019 Topps Chrome 1 Shohei Ohtani SGC 9.5",
+                        "cert_number": "6239429",
+                    },
+                    {
+                        "inventory_key": "herbert-shield",
+                        "status": "Active",
+                        "card_title": "2025 Panini National Treasures Justin Herbert NFL Shield 1/1",
+                        "item_id": "RAW-20260708-0083",
+                    },
+                ]
+
+            def _instagram_existing_media_posts(self, config, limit=500):
+                return [
+                    {
+                        "id": "179-ohtani-95",
+                        "caption": "2019 Topps Chrome 84TC-25 Shohei Ohtani '84 Topps Design SGC 9.5",
+                        "permalink": "https://instagram.test/p/ohtani95",
+                    },
+                    {
+                        "id": "179-herbert-framed",
+                        "caption": "2025 Panini National Treasures Justin Herbert NFL Shield Framed Fabric 1/1",
+                        "permalink": "https://instagram.test/p/herbert-framed",
+                    },
+                ]
+
+            def _append_activity(self, action, summary, details):
+                pass
+
+        dummy = InstagramDummy()
+        result = dummy._instagram_import_existing_posts(use_ocr=False)
+
+        self.assertEqual(result["imported"], 0)
+        self.assertEqual(len(result["unmatched"]), 2)
+        self.assertNotIn("ohtani-sgc10", dummy.state["posts"])
+        self.assertNotIn("ohtani-one-sgc95", dummy.state["posts"])
+        self.assertNotIn("herbert-shield", dummy.state["posts"])
 
     def test_instagram_import_existing_posts_can_match_ocr_cert_text(self) -> None:
         class InstagramDummy:

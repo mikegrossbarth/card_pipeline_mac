@@ -5331,7 +5331,7 @@ class CardPipelineApp(tk.Tk):
         text = " ".join(str(post.get(field) or "") for field in ("caption", "ocr_text", "permalink"))
         compact_text = re.sub(r"\D+", "", text)
         lowered_text = text.lower()
-        post_tokens = self._instagram_match_text_tokens(text)
+        normalized_post_text = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", text.lower())).strip()
         best_record: dict[str, object] | None = None
         best_method = ""
         best_score = 0.0
@@ -5348,21 +5348,13 @@ class CardPipelineApp(tk.Tk):
                 return record, "item_id", 1.0
 
             title = str(record.get("card_title") or "").strip()
-            title_tokens = self._instagram_match_text_tokens(title)
-            if not title_tokens or not post_tokens:
-                continue
-            overlap = title_tokens & post_tokens
-            ratio = len(overlap) / max(1, len(title_tokens))
-            if len(overlap) >= 6 and ratio >= 0.55:
-                score = 0.70 + min(0.25, ratio / 4)
-            elif len(overlap) >= 4 and ratio >= 0.75:
-                score = 0.65 + min(0.25, ratio / 4)
-            else:
-                continue
-            if score > best_score:
-                best_record = record
-                best_method = "title_tokens"
-                best_score = score
+            normalized_title = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", title.lower())).strip()
+            if normalized_title and normalized_title in normalized_post_text:
+                score = 0.97 + min(0.02, len(normalized_title) / 10000)
+                if score > best_score:
+                    best_record = record
+                    best_method = "title_exact"
+                    best_score = score
 
         return best_record, best_method, best_score
 
