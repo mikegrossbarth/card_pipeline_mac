@@ -50,6 +50,7 @@ Future idea: let the user's OpenClaw agent talk to L.U.C.A.S through a narrow co
 
 ## Latest Completed Work
 
+- Comp table now shows a highlighted bottom `TOTAL` row that sums the visible/current Purchase column, while remaining non-editable and separate from the inline `+ Add row` control.
 - Home `Review Sheet` previews now show a highlighted bottom totals row for numerical columns, including real numeric cells and currency-formatted strings, while leaving cert-number strings alone.
 - Lot Price Fill now adds any leftover/unallocated lot balance to the last comp row in the current list, so filled purchase prices tie exactly to the lot total even when source values run short or rounding leaves pennies.
 - Profit `Profit to Sales Ratio` now uses month buckets for `Year`, `YTD`, and `Total` periods, matching the yearly/monthly behavior of `Profit by Company` instead of plotting one point per day.

@@ -2843,6 +2843,20 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(info["remaining"], 0.0)
         self.assertEqual(info["unallocated_absorbed"], 3000.0)
 
+    def test_comp_purchase_total_row_sums_purchase_column(self) -> None:
+        class Dummy:
+            _comp_purchase_total_row_values = app.CardPipelineApp._comp_purchase_total_row_values
+
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="One", existing_value=10),
+            WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Two", existing_value=20.25),
+            WorkbookRow(excel_row=4, cert_number="3", grader="PSA", card_title="Three", existing_value=None),
+        ]
+
+        values = Dummy()._comp_purchase_total_row_values(("excel_row", "card_title", "purchase_price", "card_ladder_value"), rows)
+
+        self.assertEqual(values, ["TOTAL", "Total Purchase", "$30.25", ""])
+
     def test_mac_comp_hides_cy_run_options_but_keeps_cy_fields(self) -> None:
         self.assertFalse(app.COMP_CY_ENABLED)
         self.assertEqual(app.COMP_SOURCE_OPTIONS, (app.COMP_SOURCE_CARD_LADDER,))
