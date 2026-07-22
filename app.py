@@ -601,6 +601,7 @@ INVENTORY_TABLE_COLUMNS = (
 ADD_INTAKE_ROW_IID = "__add_intake_row__"
 ADD_REVIEW_ROW_IID = "__add_review_row__"
 ADD_COMP_ROW_IID = "__add_comp_row__"
+COMP_TOTAL_ROW_IID = "__comp_total_row__"
 
 EDITABLE_COLUMNS = {
     "source",
@@ -1815,6 +1816,7 @@ class CardPipelineApp(tk.Tk):
         tree.tag_configure("duplicate_cert", background="#4a3d12", foreground="#fff3b0")
         tree.tag_configure("no_sheet_found", background="#4a1717", foreground="#ffd1d1")
         tree.tag_configure("add_review_row", background="#242424", foreground="#1ed760")
+        tree.tag_configure("total_row", background="#242424", foreground="#ffffff", font=("Segoe UI Semibold", 10))
         if editable:
             tree.bind("<Double-1>", self._begin_cell_edit)
             tree.bind("<Button-1>", self._handle_table_click, add="+")
@@ -7560,7 +7562,7 @@ class CardPipelineApp(tk.Tk):
         if not hasattr(self, "comp_tree"):
             return "break"
         row_id = self.comp_tree.identify_row(event.y)
-        if not row_id or row_id == ADD_COMP_ROW_IID:
+        if not row_id or row_id in {ADD_COMP_ROW_IID, COMP_TOTAL_ROW_IID}:
             return "break"
         column_id = self.comp_tree.identify_column(event.x)
         if row_id not in self.comp_tree.selection():
@@ -17343,7 +17345,32 @@ class CardPipelineApp(tk.Tk):
                 tags=("add_review_row",),
                 values=tuple(add_values),
             )
+        if tree is self.comp_tree:
+            tree.insert(
+                "",
+                tk.END,
+                iid=COMP_TOTAL_ROW_IID,
+                tags=("total_row",),
+                values=tuple(self._comp_purchase_total_row_values(columns, rows)),
+            )
         self._restore_column_widths(tree)
+
+    def _comp_purchase_total_row_values(self, columns: tuple[str, ...], rows: list[WorkbookRow]) -> list[object]:
+        total = round(
+            sum(float(row.existing_value) for row in rows if isinstance(row.existing_value, (int, float))),
+            2,
+        )
+        values: list[object] = []
+        for column in columns:
+            if column == "excel_row":
+                values.append("TOTAL")
+            elif column == "card_title":
+                values.append("Total Purchase")
+            elif column == "purchase_price":
+                values.append(format_money(total))
+            else:
+                values.append("")
+        return values
 
     def _tree_columns(self, tree: ttk.Treeview) -> tuple[str, ...]:
         return tuple(getattr(tree, "_display_columns", DISPLAY_COLUMNS))
@@ -17424,7 +17451,7 @@ class CardPipelineApp(tk.Tk):
         selected_rows = {
             int(iid)
             for iid in tree.selection()
-            if str(iid).isdigit() and str(iid) not in {ADD_INTAKE_ROW_IID, ADD_REVIEW_ROW_IID, ADD_COMP_ROW_IID}
+            if str(iid).isdigit() and str(iid) not in {ADD_INTAKE_ROW_IID, ADD_REVIEW_ROW_IID, ADD_COMP_ROW_IID, COMP_TOTAL_ROW_IID}
         }
         if not selected_rows:
             return 0
@@ -17494,6 +17521,8 @@ class CardPipelineApp(tk.Tk):
         if tree is self.intake_tree and row_id == ADD_INTAKE_ROW_IID:
             self.add_manual_intake_row()
             return "break"
+        if row_id == COMP_TOTAL_ROW_IID:
+            return "break"
         if tree is self.comp_tree and row_id == ADD_COMP_ROW_IID:
             self.add_comp_row()
             return "break"
@@ -17526,6 +17555,8 @@ class CardPipelineApp(tk.Tk):
         column_id = tree.identify_column(event.x)
         if tree is self.intake_tree and row_id == ADD_INTAKE_ROW_IID:
             self.add_manual_intake_row()
+            return
+        if row_id == COMP_TOTAL_ROW_IID:
             return
         if tree is self.comp_tree and row_id == ADD_COMP_ROW_IID:
             self.add_comp_row()
