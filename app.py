@@ -8959,10 +8959,14 @@ class CardPipelineApp(tk.Tk):
                     continue
             if missing_title_only and not self._inventory_record_missing_card_description(record):
                 continue
-            if missing_comps_only and not self._inventory_record_missing_comps(record):
-                continue
-            if missing_cl_only and not self._inventory_record_missing_cl_value(record):
-                continue
+            if missing_comps_only or missing_cl_only:
+                missing_value_match = False
+                if missing_comps_only and self._inventory_record_missing_comps(record):
+                    missing_value_match = True
+                if missing_cl_only and self._inventory_record_missing_cl_value(record):
+                    missing_value_match = True
+                if not missing_value_match:
+                    continue
             if missing_photos_only and self._inventory_photo_paths_for_record(record):
                 continue
             filtered.append(record)
