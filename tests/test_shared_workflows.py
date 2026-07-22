@@ -5267,6 +5267,71 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["111", "222"])
 
+    def test_inventory_no_comps_button_enables_missing_comps_filter(self) -> None:
+        class FieldVar:
+            def __init__(self, value=False):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        class InventoryDummy:
+            show_inventory_missing_comps = app.CardPipelineApp.show_inventory_missing_comps
+
+            def __init__(self):
+                self.inventory_missing_comps_var = FieldVar(False)
+                self.refreshed = False
+
+            def refresh_inventory_tab(self):
+                self.refreshed = True
+
+        dummy = InventoryDummy()
+        dummy.show_inventory_missing_comps()
+
+        self.assertTrue(dummy.inventory_missing_comps_var.get())
+        self.assertTrue(dummy.refreshed)
+
+    def test_inventory_filter_finds_missing_comps(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
+            _inventory_record_missing_card_description = app.CardPipelineApp._inventory_record_missing_card_description
+            _inventory_record_missing_comps = app.CardPipelineApp._inventory_record_missing_comps
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+
+        dummy = InventoryDummy()
+        dummy.inventory_person_var = FieldVar("")
+        dummy.inventory_sport_var = FieldVar("")
+        dummy.inventory_grader_var = FieldVar("")
+        dummy.inventory_year_var = FieldVar("")
+        dummy.inventory_search_var = FieldVar("")
+        dummy.inventory_min_var = FieldVar("")
+        dummy.inventory_max_var = FieldVar("")
+        dummy.inventory_date_min_var = FieldVar("")
+        dummy.inventory_date_max_var = FieldVar("")
+        dummy.inventory_missing_title_var = FieldVar(False)
+        dummy.inventory_missing_comps_var = FieldVar(True)
+        dummy.inventory_missing_photos_var = FieldVar(False)
+        rows = [
+            {"status": "Active", "cert_number": "111", "card_title": "Needs Comps", "card_ladder_comps_average": None},
+            {"status": "Active", "cert_number": "222", "card_title": "Also Needs Comps", "card_ladder_comps_average": ""},
+            {"status": "Active", "cert_number": "333", "card_title": "Has Comps", "card_ladder_comps_average": 125.0},
+            {"status": "Sold", "cert_number": "444", "card_title": "Sold Missing Comps", "card_ladder_comps_average": None},
+        ]
+
+        self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["111", "222"])
+
     def test_inventory_sport_filter_accepts_multiple_checked_sports(self) -> None:
         class FieldVar:
             def __init__(self, value=""):
