@@ -33,7 +33,7 @@ import cardladder_ocr
 import google_sheets_import
 import lucas_diagnostics
 from comp_engine.workbook_io import WorkbookRow
-from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, parse_money as intake_parse_money, scan_to_cert, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
+from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, normalize_cert, parse_money as intake_parse_money, scan_to_cert, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
 
 
@@ -89,6 +89,23 @@ class SharedStateTests(unittest.TestCase):
     def test_scan_to_cert_preserves_long_psa_cert_numbers(self) -> None:
         self.assertEqual(scan_to_cert("1401017991290"), "1401017991290")
         self.assertEqual(scan_to_cert("PSA Cert 1401017991290"), "1401017991290")
+
+    def test_scan_to_cert_preserves_old_sgc_dashed_cert_numbers(self) -> None:
+        self.assertEqual(scan_to_cert("2007430-003"), "2007430-003")
+        self.assertEqual(scan_to_cert("SGC Cert 2007430 - 003"), "2007430-003")
+        self.assertEqual(normalize_cert("2007430-003"), "2007430-003")
+        self.assertEqual(bridge_server.normalize_result_cert("SGC 2007430-003"), "2007430-003")
+        self.assertEqual(bridge_server.cert_match_key("2007430-003"), bridge_server.cert_match_key("2007430003"))
+
+    def test_card_ladder_bridge_matches_dashed_sgc_cert_to_compact_result(self) -> None:
+        state = bridge_server.BridgeState()
+        row = WorkbookRow(excel_row=2, cert_number="2007430-003", grader="SGC", card_title="Old SGC Test")
+        state.set_rows([row])
+
+        state.post_cardladder_result({"certNumber": "2007430003", "value": "$123.45", "ocr": {"comps": []}})
+
+        self.assertEqual(row.card_ladder_value, 123.45)
+        self.assertIn(id(row), state.updated_row_ids)
 
     def test_card_ladder_profile_title_strips_trailing_close_ui_text(self) -> None:
         raw_titles = [

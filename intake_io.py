@@ -1099,7 +1099,10 @@ def default_output_path(root: Path) -> Path:
 
 
 def scan_to_cert(value: Any) -> str:
-    text = str(value or "")
+    text = re.sub(r"[\u2010-\u2015\u2212]", "-", str(value or ""))
+    dashed_candidates = re.findall(r"\b\d{4,12}\s*-\s*\d{2,6}(?:\s*-\s*\d{1,6})?\b", text)
+    if dashed_candidates:
+        return max((normalize_cert(candidate) for candidate in dashed_candidates), key=lambda candidate: len(candidate.replace("-", "")))
     candidates = re.findall(r"\d{6,16}", text)
     if candidates:
         return max(candidates, key=len)
@@ -1111,7 +1114,10 @@ def normalize_cert(value: Any) -> str:
         return str(value)
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
-    return re.sub(r"[^0-9A-Z]", "", str(value or ""), flags=re.I)
+    text = re.sub(r"[\u2010-\u2015\u2212]", "-", str(value or "").strip().upper())
+    text = re.sub(r"[^0-9A-Z-]", "", text, flags=re.I)
+    text = re.sub(r"-{2,}", "-", text).strip("-")
+    return text
 
 
 def infer_grader(card_title: str) -> str:

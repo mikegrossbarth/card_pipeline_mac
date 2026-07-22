@@ -91,8 +91,17 @@ def fill_missing_category_from_title(row: WorkbookRow) -> None:
 
 
 def normalize_result_cert(value: object) -> str:
-    cert = re.sub(r"\D", "", str(value or ""))
+    text = re.sub(r"[\u2010-\u2015\u2212]", "-", str(value or "").strip().upper())
+    dashed = re.search(r"\b\d{4,12}\s*-\s*\d{2,6}(?:\s*-\s*\d{1,6})?\b", text)
+    if dashed:
+        cert = re.sub(r"\s+", "", dashed.group(0))
+        return cert if len(cert.replace("-", "")) >= 6 else ""
+    cert = re.sub(r"\D", "", text)
     return cert if len(cert) >= 6 else ""
+
+
+def cert_match_key(value: object) -> str:
+    return re.sub(r"[^0-9A-Z]", "", normalize_result_cert(value), flags=re.I)
 
 
 class BridgeState:
@@ -423,10 +432,13 @@ class BridgeState:
                 self.last_result_extension_version = result_extension_version
                 self.extension_version = result_extension_version
             cert = str(result.get("certNumber") or "")
+            cert_key = cert_match_key(cert)
             excel_row = int(result.get("excelRow") or 0)
             target_row = next((row for row in self.rows if excel_row and row.excel_row == excel_row), None)
             if target_row is None and cert:
                 target_row = next((row for row in self.rows if row.cert_number == cert), None)
+            if target_row is None and cert_key:
+                target_row = next((row for row in self.rows if cert_match_key(row.cert_number) == cert_key), None)
             if target_row is not None:
                 self._apply_cardladder_result_to_row(target_row, result)
                 self.updated_row_ids.add(id(target_row))
