@@ -4984,11 +4984,80 @@ class CardPipelineApp(tk.Tk):
                 active_by_identity[identity] = record
         return active_by_identity
 
+    def _repair_instagram_state_for_active_inventory(self, state: dict[str, object], active_records: list[dict[str, object]]) -> int:
+        posts = state.get("posts") if isinstance(state.get("posts"), dict) else {}
+        if not isinstance(posts, dict):
+            return 0
+        active_by_key = {str(record.get("inventory_key") or ""): record for record in active_records if str(record.get("inventory_key") or "")}
+        active_by_identity = self._instagram_active_identity_map(active_records)
+        active_by_title: dict[str, dict[str, object] | None] = {}
+        for record in active_records:
+            title_identity = self._instagram_inventory_identity({"card_title": record.get("card_title")})
+            if not title_identity:
+                continue
+            if title_identity in active_by_title:
+                active_by_title[title_identity] = None
+            else:
+                active_by_title[title_identity] = record
+        repaired = 0
+        now = datetime.now().isoformat(timespec="seconds")
+        for old_key, entry in list(posts.items()):
+            if not isinstance(entry, dict):
+                continue
+            status = str(entry.get("status") or "").strip().lower()
+            if status not in {"delete_review_needed", "post_error"}:
+                continue
+            media_id = str(entry.get("media_id") or "").strip()
+            permalink = str(entry.get("permalink") or "").strip()
+            if not media_id or not permalink:
+                continue
+            identity = self._instagram_post_entry_identity(entry)
+            record = active_by_key.get(str(old_key)) or active_by_identity.get(identity)
+            if record is None:
+                title_identity = self._instagram_inventory_identity({"card_title": entry.get("card_title") or entry.get("caption")})
+                title_match = active_by_title.get(title_identity)
+                if title_match is not None:
+                    record = title_match
+            if record is None:
+                continue
+            new_key = str(record.get("inventory_key") or old_key)
+            repaired_entry = dict(entry)
+            repaired_entry.update(
+                {
+                    "status": "posted",
+                    "inventory_identity": self._instagram_inventory_identity(record),
+                    "card_title": str(record.get("card_title") or repaired_entry.get("card_title") or repaired_entry.get("caption") or "").strip(),
+                    "cert_number": scan_to_cert(record.get("cert_number")) if isinstance(record, dict) else str(repaired_entry.get("cert_number") or ""),
+                    "item_id": str(record.get("item_id") or "").strip() if isinstance(record, dict) else str(repaired_entry.get("item_id") or ""),
+                    "repaired_at": now,
+                    "repair_reason": "active_inventory_mapping_restored",
+                    "previous_status": status,
+                    "previous_inventory_key": str(old_key),
+                }
+            )
+            repaired_entry.pop("delete_queued_at", None)
+            posts[new_key] = repaired_entry
+            if new_key != old_key:
+                posts.pop(old_key, None)
+            repaired += 1
+        if repaired:
+            state["posts"] = posts
+            self._save_instagram_inventory_state(state)
+            self._append_activity(
+                "Instagram Inventory Repair",
+                f"Restored {repaired} active Instagram inventory post mapping(s).",
+                {"repaired": repaired},
+            )
+        return repaired
+
     def _instagram_inventory_plan(self) -> dict[str, object]:
         state = self._load_instagram_inventory_state()
         posts = state.get("posts") if isinstance(state.get("posts"), dict) else {}
         config = self._instagram_env_config()
         active_records = self._instagram_inventory_active_records()
+        repair_state = getattr(self, "_repair_instagram_state_for_active_inventory", None)
+        if callable(repair_state) and repair_state(state, active_records):
+            posts = state.get("posts") if isinstance(state.get("posts"), dict) else {}
         active_by_key = {str(record.get("inventory_key") or ""): record for record in active_records if str(record.get("inventory_key") or "")}
         active_by_identity = self._instagram_active_identity_map(active_records)
         to_post: list[dict[str, object]] = []
@@ -5462,10 +5531,10 @@ class CardPipelineApp(tk.Tk):
 
         def open_manual_delete_target() -> None:
             selected = selected_remove_items()
-            item = selected[0] if selected else next((candidate for candidate in plan.get("to_remove") or [] if isinstance(candidate, dict)), None)
-            if not item:
-                messagebox.showinfo("Instagram Sync", "Select a Remove row first.")
+            if not selected:
+                messagebox.showinfo("Instagram Sync", "Select a Remove row first. Ready rows are planned posts and do not have an existing Instagram target.")
                 return
+            item = selected[0]
             url = str(item.get("permalink") or "").strip() or self._instagram_profile_url()
             if not url:
                 messagebox.showinfo("Instagram Sync", "No Instagram URL is configured. Open the inventory profile manually.")
@@ -5474,10 +5543,10 @@ class CardPipelineApp(tk.Tk):
 
         def copy_manual_delete_title() -> None:
             selected = selected_remove_items()
-            item = selected[0] if selected else next((candidate for candidate in plan.get("to_remove") or [] if isinstance(candidate, dict)), None)
-            if not item:
+            if not selected:
                 messagebox.showinfo("Instagram Sync", "Select a Remove row first.")
                 return
+            item = selected[0]
             text = str(item.get("caption") or item.get("title") or item.get("card_title") or item.get("media_id") or "").strip()
             self.clipboard_clear()
             self.clipboard_append(text)
@@ -5530,7 +5599,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(actions, text="Live Sync", command=lambda: self._run_instagram_inventory_sync(plan, popup, reload_plan), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         delete_actions = ttk.Frame(frame, style="Panel.TFrame")
         delete_actions.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(delete_actions, text="Open Target", command=open_manual_delete_target, style="Soft.TButton").pack(side=tk.LEFT)
+        ttk.Button(delete_actions, text="Open Remove Target", command=open_manual_delete_target, style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(delete_actions, text="Copy Title", command=copy_manual_delete_title, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Mark Deleted", command=mark_manual_deleted, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
