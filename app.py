@@ -5193,6 +5193,101 @@ class CardPipelineApp(tk.Tk):
         }
         return {token for token in tokens if len(token) >= 3 and token not in stop_words}
 
+    def _instagram_record_duplicate_media(
+        self,
+        state: dict[str, object],
+        record: dict[str, object],
+        post: dict[str, object],
+        method: str,
+        score: float,
+        reason: str = "duplicate_inventory_post",
+        keep_media_id: str = "",
+    ) -> bool:
+        media_id = str(post.get("id") or post.get("media_id") or "").strip()
+        if not media_id:
+            return False
+        duplicates = state.setdefault("duplicate_posts", [])
+        if not isinstance(duplicates, list):
+            duplicates = []
+            state["duplicate_posts"] = duplicates
+        if any(isinstance(item, dict) and str(item.get("media_id") or "").strip() == media_id for item in duplicates):
+            return False
+        duplicates.append(
+            {
+                "inventory_key": str(record.get("inventory_key") or ""),
+                "inventory_identity": self._instagram_inventory_identity(record),
+                "media_id": media_id,
+                "caption": str(post.get("caption") or record.get("card_title") or "").strip(),
+                "permalink": str(post.get("permalink") or ""),
+                "photo_url": str(post.get("media_url") or ""),
+                "detected_at": datetime.now().isoformat(timespec="seconds"),
+                "reason": reason,
+                "matched_by": method,
+                "match_score": round(float(score), 3),
+                "keep_media_id": keep_media_id,
+            }
+        )
+        if len(duplicates) > 500:
+            del duplicates[:-500]
+        return True
+
+    def _instagram_queue_duplicate_inventory_media(
+        self,
+        state: dict[str, object],
+        media_items: list[dict[str, object]],
+        active_records: list[dict[str, object]],
+    ) -> int:
+        posts = state.get("posts") if isinstance(state.get("posts"), dict) else {}
+        known_posted_media_ids = {
+            str(entry.get("media_id") or "").strip()
+            for entry in posts.values()
+            if isinstance(entry, dict)
+            and str(entry.get("status") or "").strip().lower() == "posted"
+            and str(entry.get("media_id") or "").strip()
+        }
+        matches_by_key: dict[str, list[tuple[dict[str, object], dict[str, object], str, float]]] = {}
+        for post in media_items:
+            if not isinstance(post, dict):
+                continue
+            media_id = str(post.get("id") or post.get("media_id") or "").strip()
+            if not media_id:
+                continue
+            record, method, score = self._instagram_find_inventory_match_for_post(post, active_records, set())
+            if not record:
+                continue
+            key = str(record.get("inventory_key") or "").strip()
+            if key:
+                matches_by_key.setdefault(key, []).append((post, record, method, score))
+        queued = 0
+        for key, matches in matches_by_key.items():
+            unique: list[tuple[dict[str, object], dict[str, object], str, float]] = []
+            seen_ids: set[str] = set()
+            for post, record, method, score in matches:
+                media_id = str(post.get("id") or post.get("media_id") or "").strip()
+                if media_id and media_id not in seen_ids:
+                    unique.append((post, record, method, score))
+                    seen_ids.add(media_id)
+            if len(unique) < 2:
+                continue
+            known = [item for item in unique if str(item[0].get("id") or item[0].get("media_id") or "").strip() in known_posted_media_ids]
+            keeper = known[0] if known else sorted(unique, key=lambda item: str(item[0].get("timestamp") or ""))[0]
+            keep_media_id = str(keeper[0].get("id") or keeper[0].get("media_id") or "").strip()
+            for post, record, method, score in unique:
+                media_id = str(post.get("id") or post.get("media_id") or "").strip()
+                if not media_id or media_id == keep_media_id:
+                    continue
+                if self._instagram_record_duplicate_media(
+                    state,
+                    record,
+                    post,
+                    method or "inventory_match",
+                    score,
+                    reason="duplicate_live_inventory_post",
+                    keep_media_id=keep_media_id,
+                ):
+                    queued += 1
+        return queued
+
     def _instagram_find_inventory_match_for_post(
         self,
         post: dict[str, object],
@@ -5300,7 +5395,14 @@ class CardPipelineApp(tk.Tk):
         media_items = self._instagram_existing_media_posts(config, limit=limit)
         imported = 0
         already_known = 0
-        duplicates_found = 0
+        queue_duplicate_media = getattr(self, "_instagram_queue_duplicate_inventory_media", None)
+        duplicates_found = queue_duplicate_media(state, media_items, active_records) if callable(queue_duplicate_media) else 0
+        queued_duplicate_media_ids = {
+            str(item.get("media_id") or "").strip()
+            for item in state.get("duplicate_posts", [])
+            if isinstance(item, dict) and str(item.get("media_id") or "").strip()
+        }
+        known_media_ids.update(queued_duplicate_media_ids)
         ocr_attempted = 0
         ocr_matched = 0
         unmatched: list[dict[str, object]] = []

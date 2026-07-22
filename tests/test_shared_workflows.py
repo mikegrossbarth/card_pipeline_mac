@@ -10264,6 +10264,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_instagram_import_existing_posts_queues_duplicate_media_for_removal(self) -> None:
         class InstagramDummy:
             _instagram_import_existing_posts = app.CardPipelineApp._instagram_import_existing_posts
+            _instagram_queue_duplicate_inventory_media = app.CardPipelineApp._instagram_queue_duplicate_inventory_media
+            _instagram_record_duplicate_media = app.CardPipelineApp._instagram_record_duplicate_media
             _instagram_find_inventory_match_for_post = app.CardPipelineApp._instagram_find_inventory_match_for_post
             _instagram_match_text_tokens = app.CardPipelineApp._instagram_match_text_tokens
             _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
@@ -10319,6 +10321,75 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(result["duplicates_found"], 1)
         self.assertEqual(dummy.state["posts"]["cert-key"]["media_id"], "179-keep")
         self.assertEqual(dummy.state["duplicate_posts"][0]["media_id"], "179-duplicate")
+
+    def test_instagram_import_existing_posts_queues_live_duplicate_matching_same_inventory(self) -> None:
+        class InstagramDummy:
+            _instagram_import_existing_posts = app.CardPipelineApp._instagram_import_existing_posts
+            _instagram_queue_duplicate_inventory_media = app.CardPipelineApp._instagram_queue_duplicate_inventory_media
+            _instagram_record_duplicate_media = app.CardPipelineApp._instagram_record_duplicate_media
+            _instagram_find_inventory_match_for_post = app.CardPipelineApp._instagram_find_inventory_match_for_post
+            _instagram_match_text_tokens = app.CardPipelineApp._instagram_match_text_tokens
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_record_duplicate_post = app.CardPipelineApp._instagram_record_duplicate_post
+
+            def __init__(self):
+                self.state = {
+                    "version": 1,
+                    "posts": {
+                        "dirk-key": {
+                            "status": "posted",
+                            "media_id": "179-keep",
+                            "caption": "2016 Panini National Treasures Dirk Nowitzki Clutch Factor Auto Patch 20/25",
+                            "inventory_identity": "item:rawdirk",
+                        }
+                    },
+                }
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "dirk-key",
+                        "status": "Active",
+                        "card_title": "2016 Panini National Treasures Dirk Nowitzki Clutch Factor Auto Patch 20/25",
+                        "item_id": "RAW-DIRK",
+                    }
+                ]
+
+            def _instagram_existing_media_posts(self, config, limit=500):
+                return [
+                    {
+                        "id": "179-keep",
+                        "caption": "2016 Panini National Treasures Dirk Nowitzki Clutch Factor Auto Patch 20/25",
+                        "permalink": "https://instagram.test/p/keep",
+                        "timestamp": "2026-07-08T10:00:00+0000",
+                    },
+                    {
+                        "id": "179-extra",
+                        "caption": "2016 Panini National Treasures Dirk Nowitzki Clutch Factor Auto Patch 20/25 duplicate",
+                        "permalink": "https://instagram.test/p/extra",
+                        "timestamp": "2026-07-21T10:00:00+0000",
+                    },
+                ]
+
+            def _append_activity(self, action, summary, details):
+                pass
+
+        dummy = InstagramDummy()
+        result = dummy._instagram_import_existing_posts(use_ocr=False)
+
+        self.assertEqual(result["duplicates_found"], 1)
+        self.assertEqual(dummy.state["duplicate_posts"][0]["media_id"], "179-extra")
+        self.assertEqual(dummy.state["duplicate_posts"][0]["reason"], "duplicate_live_inventory_post")
+        self.assertEqual(dummy.state["duplicate_posts"][0]["keep_media_id"], "179-keep")
 
     def test_instagram_import_existing_posts_can_match_strong_title_overlap(self) -> None:
         class InstagramDummy:
