@@ -5339,11 +5339,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         rows = [
             {"status": "Active", "cert_number": "111", "card_title": "Needs CL", "card_ladder_value": None, "card_ladder_comps_average": 100},
             {"status": "Active", "cert_number": "222", "card_title": "Also Needs CL", "card_ladder_value": "", "card_ladder_comps_average": 125},
+            {"status": "Active", "cert_number": "88306838", "card_title": "2023 Panini Prizm 94 Aidan Hutchinson Red Shimmer PSA 10", "card_ladder_value": 0, "card_ladder_comps_average": 138},
             {"status": "Active", "cert_number": "333", "card_title": "Has CL", "card_ladder_value": 150.0, "card_ladder_comps_average": None},
             {"status": "Sold", "cert_number": "444", "card_title": "Sold Missing CL", "card_ladder_value": None},
         ]
 
-        self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["111", "222"])
+        self.assertEqual([row["cert_number"] for row in dummy._filtered_inventory_records(rows)], ["111", "222", "88306838"])
 
     def test_inventory_missing_value_filters_match_any_selected_value(self) -> None:
         class FieldVar:
@@ -5377,7 +5378,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.inventory_missing_cl_var = FieldVar(True)
         dummy.inventory_missing_photos_var = FieldVar(False)
         rows = [
-            {"status": "Active", "cert_number": "88306838", "card_title": "2023 Panini Prizm 94 Aidan Hutchinson Red Shimmer PSA 10", "card_ladder_value": None, "card_ladder_comps_average": 138},
+            {"status": "Active", "cert_number": "88306838", "card_title": "2023 Panini Prizm 94 Aidan Hutchinson Red Shimmer PSA 10", "card_ladder_value": 0, "card_ladder_comps_average": 138},
             {"status": "Active", "cert_number": "111", "card_title": "Needs Comps", "card_ladder_value": 100, "card_ladder_comps_average": None},
             {"status": "Active", "cert_number": "222", "card_title": "Has Both", "card_ladder_value": 100, "card_ladder_comps_average": 90},
         ]

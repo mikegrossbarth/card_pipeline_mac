@@ -8989,7 +8989,8 @@ class CardPipelineApp(tk.Tk):
         raw_value = record.get("card_ladder_value")
         if raw_value is None or str(raw_value).strip() == "":
             return True
-        return self._money_value(raw_value) is None
+        value = self._money_value(raw_value)
+        return value is None or value <= 0
 
     def _inventory_sport_filter_values(self) -> set[str]:
         if not hasattr(self, "inventory_sport_var"):
