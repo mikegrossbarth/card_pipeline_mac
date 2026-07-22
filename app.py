@@ -13164,22 +13164,53 @@ class CardPipelineApp(tk.Tk):
             columns = ["row", *[get_column_letter(index) for index in range(1, max_column + 1)]]
             headings = {"row": "#", **{column: column for column in columns[1:]}}
             rows: list[tuple[object, ...]] = []
+            numeric_totals = [0.0 for _column in columns]
+            numeric_counts = [0 for _column in columns]
             for row_index, row_values in enumerate(
                 sheet.iter_rows(min_row=1, max_row=min(int(sheet.max_row or 0), max_rows), max_col=max_column, values_only=True),
                 start=1,
             ):
                 rows.append((row_index, *row_values))
+                for column_index, value in enumerate(row_values, start=1):
+                    numeric_value = self._home_sheet_preview_numeric_value(value)
+                    if numeric_value is None:
+                        continue
+                    numeric_totals[column_index] += numeric_value
+                    numeric_counts[column_index] += 1
+            totals_row: tuple[object, ...] | None = None
+            if any(numeric_counts[1:]):
+                totals_values: list[object] = ["TOTAL"]
+                for column_index in range(1, len(columns)):
+                    totals_values.append(round(numeric_totals[column_index], 2) if numeric_counts[column_index] else "")
+                totals_row = tuple(totals_values)
             truncated = bool((sheet.max_row or 0) > max_rows)
             return {
                 "sheet_title": sheet.title,
                 "columns": columns,
                 "headings": headings,
                 "rows": rows,
+                "totals_row": totals_row,
                 "truncated": truncated,
                 "max_rows": max_rows,
             }
         finally:
             workbook.close()
+
+    def _home_sheet_preview_numeric_value(self, value: object) -> float | None:
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text or not any(marker in text for marker in ("$", ",", "%")):
+                return None
+            cleaned = text.replace("$", "").replace(",", "").replace("%", "").strip()
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return None
 
     def _home_sheet_preview_value(self, value: object) -> str:
         if value is None:
@@ -13226,6 +13257,10 @@ class CardPipelineApp(tk.Tk):
                 tree.column(column, width=150, minwidth=80, stretch=False, anchor=tk.W)
         for row_values in preview.get("rows") or []:
             tree.insert("", tk.END, values=[self._home_sheet_preview_value(value) for value in row_values])
+        totals_row = preview.get("totals_row")
+        if isinstance(totals_row, tuple):
+            tree.tag_configure("total_row", background="#242424", foreground="#ffffff", font=("Segoe UI Semibold", 10))
+            tree.insert("", tk.END, values=[self._home_sheet_preview_value(value) for value in totals_row], tags=("total_row",))
         self._bind_context_menu(tree, lambda event, preview_tree=tree: self._show_home_sheet_review_context_menu(event, preview_tree))
 
         actions = ttk.Frame(frame, style="Panel.TFrame")

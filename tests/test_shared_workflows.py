@@ -3745,22 +3745,25 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_home_sheet_preview_data_reads_workbook_contents(self) -> None:
         class PreviewDummy:
             _home_sheet_preview_data = app.CardPipelineApp._home_sheet_preview_data
+            _home_sheet_preview_numeric_value = app.CardPipelineApp._home_sheet_preview_numeric_value
 
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "Lot A.xlsx"
             workbook = Workbook()
             sheet = workbook.active
             sheet.title = "Cards"
-            sheet.append(["Certification Number", "Grader", "Card Description"])
-            sheet.append(["123", "PSA", "Test Card"])
+            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase", "Payout"])
+            sheet.append(["123", "PSA", "Test Card", 10, "$12.50"])
+            sheet.append(["456", "BGS", "Other Card", 20.25, "$30.00"])
             workbook.save(path)
 
             preview = PreviewDummy()._home_sheet_preview_data(path)
 
         self.assertEqual(preview["sheet_title"], "Cards")
-        self.assertEqual(preview["columns"], ["row", "A", "B", "C"])
-        self.assertEqual(preview["rows"][0], (1, "Certification Number", "Grader", "Card Description"))
-        self.assertEqual(preview["rows"][1], (2, "123", "PSA", "Test Card"))
+        self.assertEqual(preview["columns"], ["row", "A", "B", "C", "D", "E"])
+        self.assertEqual(preview["rows"][0], (1, "Certification Number", "Grader", "Card Description", "Purchase", "Payout"))
+        self.assertEqual(preview["rows"][1], (2, "123", "PSA", "Test Card", 10, "$12.50"))
+        self.assertEqual(preview["totals_row"], ("TOTAL", "", "", "", 30.25, 42.5))
         self.assertFalse(preview["truncated"])
 
     def test_create_seller_assignment_pays_only_after_receive(self) -> None:
