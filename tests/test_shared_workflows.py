@@ -10422,6 +10422,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             def _save_instagram_inventory_state(self, state):
                 self.state = state
 
+            def _instagram_inventory_active_records(self):
+                return [{"inventory_key": "dirk-key", "status": "Active", "card_title": "2016 Panini National Treasures Dirk Nowitzki Clutch Factor Auto Patch 20/25"}]
+
             def _append_activity(self, action, summary, details):
                 pass
 
@@ -10434,6 +10437,52 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.state["posts"]["dirk-key"]["permalink"], "https://instagram.test/p/keep")
         self.assertEqual(dummy.state["duplicate_posts"], [])
         self.assertEqual(dummy.state["removed_posts"][0]["media_id"], "179-extra")
+
+    def test_instagram_manual_delete_skips_active_post_without_keeper(self) -> None:
+        class InstagramDummy:
+            _mark_instagram_posts_manually_deleted = app.CardPipelineApp._mark_instagram_posts_manually_deleted
+            _record_instagram_removed_post = app.CardPipelineApp._record_instagram_removed_post
+
+            def __init__(self):
+                self.state = {
+                    "version": 1,
+                    "posts": {
+                        "dirk-key": {
+                            "status": "posted",
+                            "media_id": "179-only",
+                            "caption": "2016 Panini National Treasures Dirk Nowitzki Clutch Factor Auto Patch 20/25",
+                            "permalink": "https://instagram.test/p/only",
+                        }
+                    },
+                }
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_inventory_active_records(self):
+                return [{"inventory_key": "dirk-key", "status": "Active", "card_title": "2016 Panini National Treasures Dirk Nowitzki Clutch Factor Auto Patch 20/25"}]
+
+            def _append_activity(self, action, summary, details):
+                pass
+
+        dummy = InstagramDummy()
+        marked = dummy._mark_instagram_posts_manually_deleted(
+            [
+                {
+                    "inventory_key": "dirk-key",
+                    "media_id": "179-only",
+                    "caption": "2016 Panini National Treasures Dirk Nowitzki Clutch Factor Auto Patch 20/25",
+                    "reason": "duplicate_live_inventory_post",
+                }
+            ]
+        )
+
+        self.assertEqual(marked, 0)
+        self.assertEqual(dummy.state["posts"]["dirk-key"]["media_id"], "179-only")
+        self.assertEqual(dummy.state.get("removed_posts"), None)
 
     def test_instagram_import_existing_posts_can_match_strong_title_overlap(self) -> None:
         class InstagramDummy:

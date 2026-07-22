@@ -5707,7 +5707,14 @@ class CardPipelineApp(tk.Tk):
                 return
             marked = self._mark_instagram_posts_manually_deleted(selected)
             reload_plan()
-            messagebox.showinfo("Instagram Sync", f"Marked {marked} post(s) manually deleted.")
+            skipped = max(0, len(selected) - marked)
+            if skipped:
+                messagebox.showwarning(
+                    "Instagram Sync",
+                    f"Marked {marked} post(s) manually deleted.\n\nSkipped {skipped} active inventory post(s) because LUCAS could not find a separate keeper post.",
+                )
+            else:
+                messagebox.showinfo("Instagram Sync", f"Marked {marked} post(s) manually deleted.")
 
         def import_existing_posts() -> None:
             config = self._instagram_env_config()
@@ -5885,6 +5892,11 @@ class CardPipelineApp(tk.Tk):
         duplicates = state.get("duplicate_posts")
         if not isinstance(duplicates, list):
             duplicates = []
+        active_keys = {
+            str(record.get("inventory_key") or "").strip()
+            for record in self._instagram_inventory_active_records()
+            if str(record.get("inventory_key") or "").strip()
+        }
         marked = 0
         for raw_item in items:
             if not isinstance(raw_item, dict):
@@ -5897,11 +5909,18 @@ class CardPipelineApp(tk.Tk):
             item = {**raw_item}
             if isinstance(tracked, dict):
                 item = {**tracked, **item}
+            tracked_media_id = str(tracked.get("media_id") or "").strip() if isinstance(tracked, dict) else ""
+            keep_media_id = str(raw_item.get("keep_media_id") or "").strip()
+            source_reason = str(raw_item.get("reason") or "").strip().lower()
+            has_separate_keeper = bool(keep_media_id and media_id and media_id != keep_media_id)
+            has_tracked_keeper = bool(tracked_media_id and media_id and media_id != tracked_media_id)
+            is_cover_replacement = source_reason == "cover_photo_changed"
+            if key in active_keys and not has_separate_keeper and not has_tracked_keeper and not is_cover_replacement:
+                continue
+            item["original_reason"] = str(raw_item.get("reason") or item.get("reason") or "")
             item["reason"] = "manual_delete_confirmed"
             self._record_instagram_removed_post(state, item)
             if key:
-                tracked_media_id = str(tracked.get("media_id") or "").strip() if isinstance(tracked, dict) else ""
-                keep_media_id = str(raw_item.get("keep_media_id") or "").strip()
                 if keep_media_id and media_id and media_id != keep_media_id:
                     if not tracked_media_id or tracked_media_id == media_id:
                         posts[key] = {
