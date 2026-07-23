@@ -5903,6 +5903,67 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_comp_assignment_update_actions_refresh_all_or_selected_rows(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class FakeTree:
+            def __init__(self, selected):
+                self._selected = selected
+
+            def selection(self):
+                return self._selected
+
+        class FakeAssignment:
+            companies = [object()]
+
+            def recommend(self, row, person=""):
+                return types.SimpleNamespace(company=f"{row.card_title} Co", payout=float(row.excel_row) * 10)
+
+        class CompDummy:
+            _real_comp_rows = app.CardPipelineApp._real_comp_rows
+            _apply_assignment_to_comp_rows = app.CardPipelineApp._apply_assignment_to_comp_rows
+            update_all_comp_assignments = app.CardPipelineApp.update_all_comp_assignments
+            update_selected_comp_assignments = app.CardPipelineApp.update_selected_comp_assignments
+            _assignment_person_for_row = lambda self, row: ""
+            _refresh_comp_table = lambda self, schedule_recommendations=False: setattr(self, "refresh_arg", schedule_recommendations)
+
+        dummy = CompDummy()
+        dummy.state = types.SimpleNamespace(rows=[
+            WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="First"),
+            WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Second"),
+        ])
+        dummy.assignment_engine = FakeAssignment()
+        dummy.comp_output_saved = True
+        dummy.status_var = FieldVar()
+
+        dummy.update_all_comp_assignments()
+
+        self.assertEqual(dummy.state.rows[0].best_company, "First Co")
+        self.assertEqual(dummy.state.rows[0].estimated_payout, 20.0)
+        self.assertEqual(dummy.state.rows[1].best_company, "Second Co")
+        self.assertEqual(dummy.state.rows[1].estimated_payout, 30.0)
+        self.assertFalse(dummy.comp_output_saved)
+        self.assertFalse(dummy.refresh_arg)
+        self.assertIn("Save Back to Source Sheet", dummy.status_var.value)
+
+        dummy.state.rows[0].best_company = "Old"
+        dummy.state.rows[0].estimated_payout = 1
+        dummy.state.rows[1].best_company = "Old"
+        dummy.state.rows[1].estimated_payout = 1
+        dummy.comp_tree = FakeTree(["3"])
+
+        dummy.update_selected_comp_assignments()
+
+        self.assertEqual(dummy.state.rows[0].best_company, "Old")
+        self.assertEqual(dummy.state.rows[0].estimated_payout, 1)
+        self.assertEqual(dummy.state.rows[1].best_company, "Second Co")
+        self.assertEqual(dummy.state.rows[1].estimated_payout, 30.0)
+
     def test_inventory_record_assignment_enrichment_adds_company_and_payout(self) -> None:
         class FakeAssignment:
             def recommend(self, row, person=""):

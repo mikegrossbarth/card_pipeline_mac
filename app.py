@@ -1614,6 +1614,7 @@ class CardPipelineApp(tk.Tk):
         comp_options = ttk.Frame(comp_controls, style="Panel.TFrame")
         comp_options.pack(fill=tk.X, pady=(10, 0))
         ttk.Button(comp_actions, text="Save Back to Source Sheet", command=self.save_comp_to_source_sheet, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(comp_actions, text="Update Best Company/Payouts", command=self.update_all_comp_assignments, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
@@ -7541,6 +7542,7 @@ class CardPipelineApp(tk.Tk):
         menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_tree_row_values(self.comp_tree, row, "comp row"))
         menu.add_separator()
         menu.add_command(label="Explain Assignment", command=lambda target=self.comp_tree: self.explain_selected_workflow_assignment(target))
+        menu.add_command(label="Update Best Company/Payout", command=self.update_selected_comp_assignments)
         menu.add_command(label="Delete Selected", command=self.delete_selected_comp_rows)
         try:
             menu.tk_popup(event.x_root, event.y_root)
@@ -17072,6 +17074,36 @@ class CardPipelineApp(tk.Tk):
             return
         record_performance_event("assignment.recommendations", perf_start, f"job={job_id} rows={total} results={len(results)}")
         self.events.put(("assignment_recommendations_done", {"job_id": job_id, "total": total, "results": results}))
+
+    def _real_comp_rows(self) -> list[WorkbookRow]:
+        return [row for row in getattr(self.state, "rows", []) if getattr(row, "excel_row", None) is not None]
+
+    def update_all_comp_assignments(self) -> None:
+        rows = self._real_comp_rows()
+        if not rows:
+            messagebox.showinfo("No comp rows", "Load an incoming or working sheet in Comp before updating assignments.")
+            return
+        updated = self._apply_assignment_to_comp_rows({id(row) for row in rows})
+        self._refresh_comp_table(schedule_recommendations=False)
+        if updated:
+            self.status_var.set(f"Updated Best Company/Payouts for {updated} comp row(s). Click Save Back to Source Sheet to persist.")
+        else:
+            self.status_var.set("No comp rows were updated. Check that Company Rules are loaded.")
+
+    def update_selected_comp_assignments(self) -> None:
+        if not hasattr(self, "comp_tree"):
+            return
+        rows_by_excel = {str(getattr(row, "excel_row", "")): row for row in self._real_comp_rows()}
+        rows = [rows_by_excel[row_id] for row_id in self.comp_tree.selection() if row_id in rows_by_excel]
+        if not rows:
+            messagebox.showinfo("No comp rows", "Select one or more real Comp rows to update.")
+            return
+        updated = self._apply_assignment_to_comp_rows({id(row) for row in rows})
+        self._refresh_comp_table(schedule_recommendations=False)
+        if updated:
+            self.status_var.set(f"Updated Best Company/Payout for {updated} selected comp row(s). Click Save Back to Source Sheet to persist.")
+        else:
+            self.status_var.set("Selected comp row assignment did not update. Check that Company Rules are loaded.")
 
     def _assignment_person_for_row(self, row: WorkbookRow) -> str:
         if getattr(self, "_is_personal_lucas", lambda: False)():
