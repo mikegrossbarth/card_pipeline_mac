@@ -6539,6 +6539,33 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(personal_id, f"RAW-MIKEY-{today}-0001")
         self.assertNotEqual(team_id, personal_id)
 
+    def test_raw_item_ids_skip_sold_and_activity_history(self) -> None:
+        class RawIdDummy:
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _raw_item_id_existing_records = app.CardPipelineApp._raw_item_id_existing_records
+            _raw_item_id_namespace = lambda self: "MIKEY"
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _live_sheet_raw_item_records(self):
+                return []
+
+            def _load_profit_ledger(self):
+                today = datetime.now().strftime("%Y%m%d")
+                return [{"item_id": f"RAW-MIKEY-{today}-0001"}]
+
+            def _load_activity_log(self):
+                today = datetime.now().strftime("%Y%m%d")
+                return [
+                    {"details": {"item_id": f"RAW-MIKEY-{today}-0002"}},
+                    {"details": {"inventory_key": f"raw-mikey-{today}-0003"}},
+                ]
+
+        today = datetime.now().strftime("%Y%m%d")
+
+        self.assertEqual(RawIdDummy()._next_raw_item_id(), f"RAW-MIKEY-{today}-0004")
+
     def test_create_raw_ids_skip_live_incoming_sheet_ids(self) -> None:
         class RawIdDummy:
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id

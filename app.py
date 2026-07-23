@@ -2778,7 +2778,16 @@ class CardPipelineApp(tk.Tk):
     def _next_raw_item_id(self, existing_records: list[dict[str, object]] | None = None) -> str:
         today = datetime.now().strftime("%Y%m%d")
         prefix = f"RAW-{self._raw_item_id_namespace()}-{today}-"
-        records = existing_records if existing_records is not None else self._load_inventory_ledger()
+        if existing_records is None:
+            records = self._raw_item_id_existing_records()
+        else:
+            records = list(existing_records)
+            history_loader = getattr(self, "_raw_item_id_existing_records", None)
+            if callable(history_loader):
+                try:
+                    records.extend(history_loader())
+                except Exception:
+                    pass
         max_sequence = 0
         for record in records:
             item_id = str(record.get("item_id") or "").strip().upper()
@@ -2788,6 +2797,30 @@ class CardPipelineApp(tk.Tk):
             if suffix.isdigit():
                 max_sequence = max(max_sequence, int(suffix))
         return f"{prefix}{max_sequence + 1:04d}"
+
+    def _raw_item_id_existing_records(self) -> list[dict[str, object]]:
+        records = list(self._load_inventory_ledger())
+        records.extend(self._live_sheet_raw_item_records())
+        try:
+            records.extend(self._load_profit_ledger())
+        except Exception:
+            pass
+        try:
+            activity = self._load_activity_log()
+        except Exception:
+            activity = []
+        for entry in activity:
+            details = entry.get("details") if isinstance(entry, dict) else None
+            if not isinstance(details, dict):
+                continue
+            item_id = str(details.get("item_id") or "").strip()
+            if not item_id:
+                inventory_key = str(details.get("inventory_key") or "").strip()
+                if inventory_key.upper().startswith("RAW-"):
+                    item_id = inventory_key
+            if item_id.upper().startswith("RAW-"):
+                records.append({"item_id": item_id})
+        return records
 
     def _live_sheet_raw_item_records(self) -> list[dict[str, object]]:
         records: list[dict[str, object]] = []
@@ -4543,7 +4576,7 @@ class CardPipelineApp(tk.Tk):
             with shared_lock(CARD_PIPELINE_DIR, "inventory-raw-add", self.lucas_identity):
                 existing = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
                 cert = scan_to_cert(values.get("cert_number"))
-                item_id = "" if cert else self._next_raw_item_id(existing)
+                item_id = "" if cert else self._next_raw_item_id()
                 record = self._normalize_inventory_record(
                     {
                         **values,
