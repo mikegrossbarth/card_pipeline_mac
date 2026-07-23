@@ -809,7 +809,7 @@ function updateTradeSummary() {
     ? preview.allocations.map((amount, index) => `${incoming[index].card_title || incoming[index].cert_number || `Incoming ${index + 1}`}: ${money(amount)}`).join(" | ")
     : "No incoming cards.";
   const balanceText = preview.balanced ? "Balanced." : `Not balanced by ${money(Math.abs(preview.difference))}.`;
-  const valueText = missingValues ? ` ${missingValues} incoming card(s) need a trade value.` : "";
+  const valueText = missingValues ? ` ${missingValues} incoming card(s) need a cost.` : "";
   $("tradeSummary").textContent = `${balanceText} Outgoing side ${money(preview.outgoingSide)}. Incoming side ${money(preview.incomingSide)}. Incoming basis ${money(preview.totalCost)}. ${allocationText}${valueText}`;
 }
 
@@ -915,7 +915,7 @@ function addTradeIncomingRow(values = {}) {
         <option value="SGC">SGC</option>
       </select></label>
       <label>Card<input class="tradeTitle" placeholder="Year set player grade" value="${escapeHtml(values.card_title || "")}"></label>
-      <label>Trade Value<input class="tradeValue" inputmode="decimal" placeholder="Optional split value" value="${escapeHtml(values.trade_value || "")}"></label>
+      <label>Cost<input class="tradeValue" inputmode="decimal" placeholder="Optional split cost" value="${escapeHtml(values.trade_value || "")}"></label>
       <label>Notes<textarea class="tradeRowNotes" rows="2">${escapeHtml(values.notes || "")}</textarea></label>
     </div>
     <button class="secondary removeTradeIncoming" type="button">Remove Incoming Card</button>
@@ -967,7 +967,7 @@ async function saveTrade() {
   const incoming = tradeIncomingRows();
   const missingValues = incoming.filter((item) => parseMoneyInput(item.trade_value) <= 0).length;
   if (missingValues) {
-    $("tradeStatus").textContent = "Every incoming card needs a trade value so the trade can balance.";
+    $("tradeStatus").textContent = "Every incoming card needs a cost so the trade can balance.";
     updateTradeSummary();
     return;
   }

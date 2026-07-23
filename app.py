@@ -3432,7 +3432,7 @@ class CardPipelineApp(tk.Tk):
         for item in incoming_payloads:
             value = self._money_value(item.get("trade_value") or item.get("inventory_value") or item.get("value"))
             if value is None or value <= 0:
-                return {"ok": False, "error": "Every incoming trade card needs a trade value."}
+                return {"ok": False, "error": "Every incoming trade card needs a cost."}
         if not getattr(self, "_is_personal_lucas", lambda: False)():
             raw_person = str(payload.get("assigned_person") or payload.get("person") or "").strip()
             if self._canonical_person_choice(raw_person) is None:
