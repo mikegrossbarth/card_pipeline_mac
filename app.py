@@ -5003,8 +5003,63 @@ class CardPipelineApp(tk.Tk):
                 active_by_title[title_identity] = None
             else:
                 active_by_title[title_identity] = record
+        active_title_counts: dict[str, int] = {}
+        for record in active_records:
+            normalized_title = re.sub(
+                r"\s+",
+                " ",
+                re.sub(r"[^a-z0-9]+", " ", str(record.get("card_title") or "").lower()),
+            ).strip()
+            if normalized_title:
+                active_title_counts[normalized_title] = active_title_counts.get(normalized_title, 0) + 1
         repaired = 0
         now = datetime.now().isoformat(timespec="seconds")
+        duplicates = state.get("duplicate_posts")
+        if isinstance(duplicates, list):
+            remaining_duplicates: list[object] = []
+            for duplicate in duplicates:
+                if not isinstance(duplicate, dict):
+                    remaining_duplicates.append(duplicate)
+                    continue
+                reason = str(duplicate.get("reason") or "").strip().lower()
+                key = str(duplicate.get("inventory_key") or "").strip()
+                record = active_by_key.get(key)
+                normalized_caption = re.sub(
+                    r"\s+",
+                    " ",
+                    re.sub(r"[^a-z0-9]+", " ", str(duplicate.get("caption") or "").lower()),
+                ).strip()
+                media_id = str(duplicate.get("media_id") or "").strip()
+                if (
+                    reason == "duplicate_live_inventory_post"
+                    and record is not None
+                    and normalized_caption
+                    and active_title_counts.get(normalized_caption, 0) > 1
+                    and media_id
+                ):
+                    posts[key] = {
+                        "status": "posted",
+                        "media_id": media_id,
+                        "caption": str(duplicate.get("caption") or record.get("card_title") or "").strip(),
+                        "photo_url": str(duplicate.get("photo_url") or ""),
+                        "permalink": str(duplicate.get("permalink") or ""),
+                        "posted_at": str(duplicate.get("posted_at") or duplicate.get("detected_at") or now),
+                        "imported_at": now,
+                        "inventory_identity": self._instagram_inventory_identity(record),
+                        "card_title": str(record.get("card_title") or duplicate.get("caption") or "").strip(),
+                        "cert_number": scan_to_cert(record.get("cert_number")),
+                        "item_id": str(record.get("item_id") or "").strip(),
+                        "matched_by": "ambiguous_title_duplicate_repair",
+                        "match_score": duplicate.get("match_score", ""),
+                        "imported_from": "instagram_duplicate_queue_repair",
+                        "repaired_at": now,
+                        "repair_reason": "ambiguous_same_title_duplicate_restored",
+                    }
+                    repaired += 1
+                    continue
+                remaining_duplicates.append(duplicate)
+            if len(remaining_duplicates) != len(duplicates):
+                state["duplicate_posts"] = remaining_duplicates
         for old_key, entry in list(posts.items()):
             if not isinstance(entry, dict):
                 continue
@@ -5374,6 +5429,15 @@ class CardPipelineApp(tk.Tk):
         best_record: dict[str, object] | None = None
         best_method = ""
         best_score = 0.0
+        title_counts: dict[str, int] = {}
+        for record in active_records:
+            key = str(record.get("inventory_key") or "")
+            if not key or key in used_keys:
+                continue
+            title = str(record.get("card_title") or "").strip()
+            normalized_title = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", title.lower())).strip()
+            if normalized_title:
+                title_counts[normalized_title] = title_counts.get(normalized_title, 0) + 1
 
         for record in active_records:
             key = str(record.get("inventory_key") or "")
@@ -5388,7 +5452,7 @@ class CardPipelineApp(tk.Tk):
 
             title = str(record.get("card_title") or "").strip()
             normalized_title = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", title.lower())).strip()
-            if normalized_title and normalized_title in normalized_post_text:
+            if normalized_title and title_counts.get(normalized_title, 0) == 1 and normalized_title in normalized_post_text:
                 score = 0.97 + min(0.02, len(normalized_title) / 10000)
                 if score > best_score:
                     best_record = record

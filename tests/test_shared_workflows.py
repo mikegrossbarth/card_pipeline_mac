@@ -10538,6 +10538,161 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.state["duplicate_posts"][0]["keep_media_id"], "179-keep")
         self.assertEqual(dummy.state["duplicate_posts"][0]["keep_permalink"], "https://instagram.test/p/keep")
 
+    def test_instagram_import_existing_posts_does_not_queue_duplicate_for_same_title_different_certs(self) -> None:
+        class InstagramDummy:
+            _instagram_import_existing_posts = app.CardPipelineApp._instagram_import_existing_posts
+            _instagram_queue_duplicate_inventory_media = app.CardPipelineApp._instagram_queue_duplicate_inventory_media
+            _instagram_record_duplicate_media = app.CardPipelineApp._instagram_record_duplicate_media
+            _instagram_find_inventory_match_for_post = app.CardPipelineApp._instagram_find_inventory_match_for_post
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_record_duplicate_post = app.CardPipelineApp._instagram_record_duplicate_post
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "dart-152980062",
+                        "status": "Active",
+                        "card_title": "2025 Panini Donruss Downtown 14 Jaxson Dart PSA 10",
+                        "cert_number": "152980062",
+                    },
+                    {
+                        "inventory_key": "dart-141398405",
+                        "status": "Active",
+                        "card_title": "2025 Panini Donruss Downtown! 14 Jaxson Dart PSA 10",
+                        "cert_number": "141398405",
+                    },
+                ]
+
+            def _instagram_existing_media_posts(self, config, limit=500):
+                return [
+                    {
+                        "id": "18066691592709964",
+                        "caption": "2025 Panini Donruss Downtown 14 Jaxson Dart PSA 10",
+                        "permalink": "https://instagram.test/p/dart-one",
+                    },
+                    {
+                        "id": "18062326508739763",
+                        "caption": "2025 Panini Donruss Downtown! 14 Jaxson Dart PSA 10",
+                        "permalink": "https://instagram.test/p/dart-two",
+                    },
+                ]
+
+            def _append_activity(self, action, summary, details):
+                pass
+
+        dummy = InstagramDummy()
+        result = dummy._instagram_import_existing_posts(use_ocr=False)
+
+        self.assertEqual(result["imported"], 0)
+        self.assertEqual(result["duplicates_found"], 0)
+        self.assertEqual(dummy.state.get("duplicate_posts"), None)
+        self.assertEqual(len(result["unmatched"]), 2)
+
+    def test_instagram_inventory_plan_repairs_ambiguous_same_title_duplicate_queue(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_plan = app.CardPipelineApp._instagram_inventory_plan
+            _repair_instagram_state_for_active_inventory = app.CardPipelineApp._repair_instagram_state_for_active_inventory
+            _inventory_photo_encoded_id = app.CardPipelineApp._inventory_photo_encoded_id
+            _instagram_inventory_photo_url = app.CardPipelineApp._instagram_inventory_photo_url
+            _instagram_inventory_photo_id = app.CardPipelineApp._instagram_inventory_photo_id
+            _instagram_post_photo_id = app.CardPipelineApp._instagram_post_photo_id
+            _instagram_cover_photo_path = app.CardPipelineApp._instagram_cover_photo_path
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def __init__(self):
+                self.state = {
+                    "version": 1,
+                    "posts": {
+                        "dart-141398405": {
+                            "status": "posted",
+                            "media_id": "18062326508739763",
+                            "caption": "2025 Panini Donruss Downtown! 14 Jaxson Dart PSA 10",
+                            "card_title": "2025 Panini Donruss Downtown! 14 Jaxson Dart PSA 10",
+                            "inventory_identity": "cert:141398405",
+                        },
+                        "dart-152980062": {
+                            "status": "posted",
+                            "media_id": "18062326508739763",
+                            "caption": "2025 Panini Donruss Downtown! 14 Jaxson Dart PSA 10",
+                            "card_title": "2025 Panini Donruss Downtown 14 Jaxson Dart PSA 10",
+                            "inventory_identity": "cert:152980062",
+                            "imported_from": "instagram_duplicate_keeper",
+                        },
+                    },
+                    "duplicate_posts": [
+                        {
+                            "inventory_key": "dart-152980062",
+                            "inventory_identity": "cert:152980062",
+                            "media_id": "18066691592709964",
+                            "caption": "2025 Panini Donruss Downtown 14 Jaxson Dart PSA 10",
+                            "permalink": "https://instagram.test/p/dart-one",
+                            "reason": "duplicate_live_inventory_post",
+                            "keep_media_id": "18062326508739763",
+                        }
+                    ],
+                }
+                self.activities = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+            def _instagram_env_config(self):
+                return {"user_id": "178", "access_token": "token", "public_photo_base_url": "https://example.test/photos"}
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "dart-152980062",
+                        "status": "Active",
+                        "card_title": "2025 Panini Donruss Downtown 14 Jaxson Dart PSA 10",
+                        "cert_number": "152980062",
+                        "photo_paths": ["dart-one.jpg"],
+                    },
+                    {
+                        "inventory_key": "dart-141398405",
+                        "status": "Active",
+                        "card_title": "2025 Panini Donruss Downtown! 14 Jaxson Dart PSA 10",
+                        "cert_number": "141398405",
+                        "photo_paths": ["dart-two.jpg"],
+                    },
+                ]
+
+            def _inventory_photo_paths_for_record(self, record):
+                return [Path("/tmp") / value for value in record.get("photo_paths") or []]
+
+            def _inventory_photo_relative_path(self, path):
+                return Path(path.name)
+
+        dummy = InstagramDummy()
+        plan = dummy._instagram_inventory_plan()
+
+        self.assertEqual(plan["to_remove"], [])
+        self.assertEqual(dummy.state["duplicate_posts"], [])
+        repaired = dummy.state["posts"]["dart-152980062"]
+        self.assertEqual(repaired["media_id"], "18066691592709964")
+        self.assertEqual(repaired["repair_reason"], "ambiguous_same_title_duplicate_restored")
+        self.assertEqual(repaired["inventory_identity"], "cert:152980062")
+
     def test_instagram_manual_delete_preserves_duplicate_keeper_mapping(self) -> None:
         class InstagramDummy:
             _mark_instagram_posts_manually_deleted = app.CardPipelineApp._mark_instagram_posts_manually_deleted
