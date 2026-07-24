@@ -5752,6 +5752,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class FakeTree:
             def __init__(self):
                 self.rows = []
+                self.columns = app.INVENTORY_TABLE_COLUMNS
 
             def get_children(self):
                 return []
@@ -5762,6 +5763,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             def insert(self, *_args, **kwargs):
                 self.rows.append(kwargs["values"])
                 return "row-1"
+
+            def __getitem__(self, key):
+                if key == "columns":
+                    return self.columns
+                raise KeyError(key)
 
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
