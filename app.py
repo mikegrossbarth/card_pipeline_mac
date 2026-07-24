@@ -7814,10 +7814,6 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("Export failed", "No existing photo files could be exported.")
             return
         self.status_var.set(f"Exported {len(exported)} inventory photo copy/copies to Desktop.")
-        if len(exported) == 1:
-            messagebox.showinfo("Export complete", f"Copied photo to Desktop:\n\n{exported[0].name}")
-        else:
-            messagebox.showinfo("Export complete", f"Copied {len(exported)} photos to Desktop.")
 
     def _choose_inventory_photo_to_open(self, paths: list[Path]) -> Path | None:
         popup = tk.Toplevel(self)
