@@ -17416,18 +17416,33 @@ class CardPipelineApp(tk.Tk):
         self._restore_column_widths(tree)
 
     def _comp_purchase_total_row_values(self, columns: tuple[str, ...], rows: list[WorkbookRow]) -> list[object]:
-        total = round(
-            sum(float(row.existing_value) for row in rows if isinstance(row.existing_value, (int, float))),
-            2,
-        )
+        total_fields = {
+            "purchase_price": "existing_value",
+            "card_ladder_value": "card_ladder_value",
+            "card_ladder_comps_average": "card_ladder_comps_average",
+            "cy_value": "cy_value",
+            "estimated_payout": "estimated_payout",
+        }
+        totals = {
+            column: round(
+                sum(
+                    float(value)
+                    for row in rows
+                    for value in [getattr(row, attr, None)]
+                    if isinstance(value, (int, float))
+                ),
+                2,
+            )
+            for column, attr in total_fields.items()
+        }
         values: list[object] = []
         for column in columns:
             if column == "excel_row":
                 values.append("TOTAL")
             elif column == "card_title":
-                values.append("Total Purchase")
-            elif column == "purchase_price":
-                values.append(format_money(total))
+                values.append("Totals")
+            elif column in totals:
+                values.append(format_money(totals[column]))
             else:
                 values.append("")
         return values

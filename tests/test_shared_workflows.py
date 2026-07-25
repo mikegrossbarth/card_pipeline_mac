@@ -2843,19 +2843,22 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(info["remaining"], 0.0)
         self.assertEqual(info["unallocated_absorbed"], 3000.0)
 
-    def test_comp_purchase_total_row_sums_purchase_column(self) -> None:
+    def test_comp_total_row_sums_value_columns(self) -> None:
         class Dummy:
             _comp_purchase_total_row_values = app.CardPipelineApp._comp_purchase_total_row_values
 
         rows = [
-            WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="One", existing_value=10),
-            WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Two", existing_value=20.25),
+            WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="One", existing_value=10, card_ladder_value=15, card_ladder_comps_average=12, cy_value=11, estimated_payout=9),
+            WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Two", existing_value=20.25, card_ladder_value=25.5, card_ladder_comps_average=18, cy_value=19, estimated_payout=16.75),
             WorkbookRow(excel_row=4, cert_number="3", grader="PSA", card_title="Three", existing_value=None),
         ]
 
-        values = Dummy()._comp_purchase_total_row_values(("excel_row", "card_title", "purchase_price", "card_ladder_value"), rows)
+        values = Dummy()._comp_purchase_total_row_values(
+            ("excel_row", "card_title", "purchase_price", "card_ladder_value", "card_ladder_comps_average", "cy_value", "estimated_payout"),
+            rows,
+        )
 
-        self.assertEqual(values, ["TOTAL", "Total Purchase", "$30.25", ""])
+        self.assertEqual(values, ["TOTAL", "Totals", "$30.25", "$40.50", "$30.00", "$30.00", "$25.75"])
 
     def test_mac_comp_hides_cy_run_options_but_keeps_cy_fields(self) -> None:
         self.assertFalse(app.COMP_CY_ENABLED)
