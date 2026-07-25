@@ -642,9 +642,10 @@ class AssignmentRulesDialog(tk.Toplevel):
         manual_rule_payouts = self.rule_source_mode.get() == "manual" and self.payout_source_mode.get() == "manual"
         payout_linked = self.payout_source_mode.get() == "file"
         self.rule_path_entry.configure(state=tk.NORMAL if rule_linked else tk.DISABLED)
-        self.link_payouts_check.configure(state=tk.NORMAL if rule_linked else tk.DISABLED)
+        self.link_payouts_check.configure(state=tk.NORMAL)
         if not rule_linked and self.link_payouts_to_rule_source.get():
             self.link_payouts_to_rule_source.set(False)
+            self.preview_status.set("Choose Google Sheets file / URL or Google Keep note / local text before linking payouts to the same file.")
             payout_same_file = False
         payout_source_state = tk.DISABLED if payout_same_file else (tk.NORMAL if payout_linked else tk.DISABLED)
         self.payout_path_entry.configure(state=payout_source_state)
