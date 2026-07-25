@@ -6465,24 +6465,56 @@ class CardPipelineApp(tk.Tk):
         return len(archived_paths)
 
     def _restore_inventory_photo_files_for_records(self, records: list[dict[str, object]]) -> int:
-        if not records or not DELETED_INVENTORY_PHOTOS_DIR.exists():
+        if not records:
             return 0
         metadata_for_records: list[dict[str, object]] = []
         metadata_by_original: dict[str, dict[str, object]] = {}
-        for metadata_path in DELETED_INVENTORY_PHOTOS_DIR.rglob("*.archive.json"):
-            try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            original = str(metadata.get("original_path") or "").strip()
-            archive = str(metadata.get("archive_path") or "").strip()
-            if original and archive:
-                metadata_for_records.append(metadata)
-                metadata_by_original[original] = metadata
+        if DELETED_INVENTORY_PHOTOS_DIR.exists():
+            for metadata_path in DELETED_INVENTORY_PHOTOS_DIR.rglob("*.archive.json"):
                 try:
-                    metadata_by_original[str(Path(original).expanduser().resolve())] = metadata
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
                 except Exception:
-                    pass
+                    continue
+                original = str(metadata.get("original_path") or "").strip()
+                archive = str(metadata.get("archive_path") or "").strip()
+                if original and archive:
+                    metadata_for_records.append(metadata)
+                    metadata_by_original[original] = metadata
+                    try:
+                        metadata_by_original[str(Path(original).expanduser().resolve())] = metadata
+                    except Exception:
+                        pass
+        load_photo_state = getattr(self, "_load_inventory_photo_state", None)
+        photo_state = load_photo_state() if callable(load_photo_state) else {"photos": {}}
+        state_photos = photo_state.get("photos") if isinstance(photo_state.get("photos"), dict) else {}
+
+        def state_photo_matches(record: dict[str, object], image: dict[str, object]) -> bool:
+            cert = scan_to_cert(record.get("cert_number"))
+            if cert:
+                cert_values = {scan_to_cert(value) for value in image.get("certs") or []}
+                for card in image.get("cards") or []:
+                    if isinstance(card, dict):
+                        cert_values.add(scan_to_cert(card.get("cert_number")))
+                if cert in {value for value in cert_values if value}:
+                    return True
+            inventory_key = str(record.get("inventory_key") or "").strip().lower()
+            linked_keys = {str(value or "").strip().lower() for value in image.get("linked_keys") or []}
+            if inventory_key and inventory_key in linked_keys:
+                return True
+            return False
+
+        def state_photo_values_for_record(record: dict[str, object]) -> list[str]:
+            values: list[str] = []
+            for image in state_photos.values():
+                if not isinstance(image, dict) or not state_photo_matches(record, image):
+                    continue
+                for key in ("relative_path", "path", "filename"):
+                    value = str(image.get(key) or "").strip()
+                    if value and value not in values:
+                        values.append(value)
+                        break
+            return values
+
         restored = 0
         restored_paths: list[str] = []
         for record in records:
@@ -6506,6 +6538,12 @@ class CardPipelineApp(tk.Tk):
                         original = str(metadata.get("original_path") or "").strip()
                         if original and original not in recovered:
                             recovered.append(original)
+                if recovered:
+                    record["photo_paths"] = recovered[:MAX_INVENTORY_PHOTOS_PER_CARD]
+                    record["photo_count"] = len(record["photo_paths"])
+                    photo_values = list(record["photo_paths"])
+            if not photo_values:
+                recovered = state_photo_values_for_record(record)
                 if recovered:
                     record["photo_paths"] = recovered[:MAX_INVENTORY_PHOTOS_PER_CARD]
                     record["photo_count"] = len(record["photo_paths"])

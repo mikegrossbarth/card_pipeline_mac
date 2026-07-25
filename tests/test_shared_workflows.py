@@ -8655,6 +8655,75 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.DELETED_ARCHIVE_DIR = old_deleted_archive
                 app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
 
+    def test_refund_restore_recovers_photo_paths_from_scan_state(self) -> None:
+        class PhotoRestoreDummy:
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _restore_inventory_photo_files_for_records = app.CardPipelineApp._restore_inventory_photo_files_for_records
+            _append_activity = lambda self, action, summary, details=None: None
+
+        with TemporaryDirectory() as tmp:
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            old_deleted_archive = app.DELETED_ARCHIVE_DIR
+            old_deleted_photos = app.DELETED_INVENTORY_PHOTOS_DIR
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            app.DELETED_ARCHIVE_DIR = Path(tmp) / "DELETED ARCHIVE"
+            app.DELETED_INVENTORY_PHOTOS_DIR = app.DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
+            archive_dir = app.DELETED_INVENTORY_PHOTOS_DIR / "2026-07-10"
+            archive_dir.mkdir(parents=True)
+            relative = "[20260710-1315]-Card[4]-[1]-[].jpg"
+            original = app.INVENTORY_PHOTOS_DIR / relative
+            archived = archive_dir / relative
+            archived.write_bytes(b"fake image")
+            archived.with_name(f"{relative}.archive.json").write_text(
+                json.dumps(
+                    {
+                        "original_path": str(original),
+                        "archive_path": str(archived),
+                        "reason": "inventory_photo_removed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            app.INVENTORY_PHOTO_STATE_PATH.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "photos": {
+                            "photo-sha": {
+                                "relative_path": relative,
+                                "filename": relative,
+                                "certs": ["0018849545"],
+                                "status": "sold_inventory",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                dummy = PhotoRestoreDummy()
+                dummy.app_settings = {}
+                record = {"cert_number": "0018849545", "card_title": "Cam Spencer", "source_sheet": "smalltown.sportscards_7_7_26.xlsx", "photo_paths": []}
+                restored = dummy._restore_inventory_photo_files_for_records([record])
+
+                self.assertEqual(restored, 1)
+                self.assertEqual(record["photo_paths"], [relative])
+                self.assertEqual(record["photo_count"], 1)
+                self.assertTrue(original.exists())
+                self.assertFalse(archived.exists())
+            finally:
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+                app.DELETED_ARCHIVE_DIR = old_deleted_archive
+                app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
+
     def test_manual_inventory_add_accepts_cert_without_grader(self) -> None:
         class ManualAddDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -8810,6 +8879,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_refund_profit_record_returns_card_to_inventory_and_removes_company_row(self) -> None:
         class RefundDummy:
             _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
