@@ -5844,8 +5844,6 @@ class CardPipelineApp(tk.Tk):
                     "Instagram Sync",
                     f"Marked {marked} post(s) manually deleted.\n\nSkipped {skipped} active inventory post(s) because LUCAS could not find a separate keeper post.",
                 )
-            else:
-                messagebox.showinfo("Instagram Sync", f"Marked {marked} post(s) manually deleted.")
 
         def import_existing_posts() -> None:
             config = self._instagram_env_config()
