@@ -6660,11 +6660,17 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class RawIdDummy:
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
             _raw_item_id_namespace = lambda self: "MIKEY"
+            _raw_item_title_signature = staticmethod(app.CardPipelineApp._raw_item_title_signature)
+            _raw_item_id_existing_records = app.CardPipelineApp._raw_item_id_existing_records
+            _raw_item_id_reserved_title_map = app.CardPipelineApp._raw_item_id_reserved_title_map
             _workbook_header_lookup = app.CardPipelineApp._workbook_header_lookup
             _ensure_workbook_item_id_column = app.CardPipelineApp._ensure_workbook_item_id_column
             _ensure_raw_item_ids_in_sheet_paths = app.CardPipelineApp._ensure_raw_item_ids_in_sheet_paths
 
             def _load_inventory_ledger(self):
+                return []
+
+            def _load_profit_ledger(self):
                 return []
 
             def _live_sheet_raw_item_records(self):
@@ -6696,11 +6702,17 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class RawIdDummy:
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
             _raw_item_id_namespace = lambda self: "MIKEY"
+            _raw_item_title_signature = staticmethod(app.CardPipelineApp._raw_item_title_signature)
+            _raw_item_id_existing_records = app.CardPipelineApp._raw_item_id_existing_records
+            _raw_item_id_reserved_title_map = app.CardPipelineApp._raw_item_id_reserved_title_map
             _workbook_header_lookup = app.CardPipelineApp._workbook_header_lookup
             _ensure_workbook_item_id_column = app.CardPipelineApp._ensure_workbook_item_id_column
             _ensure_raw_item_ids_in_sheet_paths = app.CardPipelineApp._ensure_raw_item_ids_in_sheet_paths
 
             def _load_inventory_ledger(self):
+                return []
+
+            def _load_profit_ledger(self):
                 return []
 
             def _live_sheet_raw_item_records(self):
@@ -6733,6 +6745,53 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 first.close()
                 second.close()
+
+    def test_stage_sheet_raw_id_backfill_rewrites_ids_reserved_by_sold_cards(self) -> None:
+        class RawIdDummy:
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _raw_item_id_namespace = lambda self: "MIKEY"
+            _raw_item_title_signature = staticmethod(app.CardPipelineApp._raw_item_title_signature)
+            _raw_item_id_existing_records = app.CardPipelineApp._raw_item_id_existing_records
+            _raw_item_id_reserved_title_map = app.CardPipelineApp._raw_item_id_reserved_title_map
+            _workbook_header_lookup = app.CardPipelineApp._workbook_header_lookup
+            _ensure_workbook_item_id_column = app.CardPipelineApp._ensure_workbook_item_id_column
+            _ensure_raw_item_ids_in_sheet_paths = app.CardPipelineApp._ensure_raw_item_ids_in_sheet_paths
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _load_profit_ledger(self):
+                today = datetime.now().strftime("%Y%m%d")
+                return [
+                    {
+                        "item_id": f"RAW-MIKEY-{today}-0001",
+                        "card_title": "2023 Leaf The Superlative Babe Ruth Patch",
+                        "status": "Sold from inventory",
+                    }
+                ]
+
+            def _live_sheet_raw_item_records(self):
+                return []
+
+        today = datetime.now().strftime("%Y%m%d")
+        sold_id = f"RAW-MIKEY-{today}-0001"
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "raw-reused-sold-id.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Item ID", "Certification Number", "Company", "Sport", "Card Description", "Purchase Price"])
+            sheet.append([sold_id, "", "RAW", "baseball", "2026 Topps Home Field Advantage Shohei Ohtani", 675])
+            workbook.save(path)
+
+            result = RawIdDummy()._ensure_raw_item_ids_in_sheet_paths([path])
+
+            self.assertEqual(result["ids_added"], 1)
+            saved = load_workbook(path, read_only=True, data_only=True)
+            try:
+                self.assertEqual(saved["Cards"].cell(2, 1).value, f"RAW-MIKEY-{today}-0002")
+            finally:
+                saved.close()
 
     def test_working_sheet_writer_persists_raw_item_id_column(self) -> None:
         with TemporaryDirectory() as tmp:

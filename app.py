@@ -2899,9 +2899,33 @@ class CardPipelineApp(tk.Tk):
         headers = self._workbook_header_lookup(sheet)
         return headers, 1
 
+    @staticmethod
+    def _raw_item_title_signature(value: object) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", str(value or "").strip().lower()).strip()
+
+    def _raw_item_id_reserved_title_map(self) -> dict[str, set[str]]:
+        records = list(self._load_inventory_ledger())
+        try:
+            records.extend(self._load_profit_ledger())
+        except Exception:
+            pass
+        reserved: dict[str, set[str]] = {}
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            if str(record.get("record_type") or "").strip().lower() == "expense":
+                continue
+            item_id = str(record.get("item_id") or "").strip().upper()
+            if not item_id.startswith("RAW-"):
+                continue
+            signature = self._raw_item_title_signature(record.get("card_title"))
+            if signature:
+                reserved.setdefault(item_id, set()).add(signature)
+        return reserved
+
     def _ensure_raw_item_ids_in_sheet_paths(self, paths: list[Path]) -> dict[str, object]:
-        existing_records = list(self._load_inventory_ledger())
-        existing_records.extend(self._live_sheet_raw_item_records())
+        existing_records = self._raw_item_id_existing_records()
+        reserved_title_map = self._raw_item_id_reserved_title_map()
         result: dict[str, object] = {"files_updated": 0, "ids_added": 0, "errors": []}
         changed_paths: set[Path] = set()
         seen_raw_ids: set[str] = set()
@@ -2933,16 +2957,29 @@ class CardPipelineApp(tk.Tk):
                                 sheet.cell(row_index, item_id_col).value = None
                                 changed = True
                                 continue
+                            reserved_titles = reserved_title_map.get(item_key, set())
+                            row_signature = self._raw_item_title_signature(card)
+                            if item_key.startswith(f"RAW-{self._raw_item_id_namespace()}-") and reserved_titles and row_signature and row_signature not in reserved_titles:
+                                new_item_id = self._next_raw_item_id(existing_records)
+                                sheet.cell(row_index, item_id_col).value = new_item_id
+                                existing_records.append({"item_id": new_item_id, "card_title": card})
+                                reserved_title_map.setdefault(new_item_id.upper(), set()).add(row_signature)
+                                seen_raw_ids.add(new_item_id.upper())
+                                result["ids_added"] = int(result["ids_added"]) + 1
+                                changed = True
+                                continue
                             if item_key.startswith(f"RAW-{self._raw_item_id_namespace()}-") and item_key in seen_raw_ids:
                                 new_item_id = self._next_raw_item_id(existing_records)
                                 sheet.cell(row_index, item_id_col).value = new_item_id
-                                existing_records.append({"item_id": new_item_id})
+                                existing_records.append({"item_id": new_item_id, "card_title": card})
+                                if row_signature:
+                                    reserved_title_map.setdefault(new_item_id.upper(), set()).add(row_signature)
                                 seen_raw_ids.add(new_item_id.upper())
                                 result["ids_added"] = int(result["ids_added"]) + 1
                                 changed = True
                                 continue
                             seen_raw_ids.add(item_key)
-                            existing_records.append({"item_id": item_id})
+                            existing_records.append({"item_id": item_id, "card_title": card})
                             continue
                         if cert:
                             continue
