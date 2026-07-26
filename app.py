@@ -5140,17 +5140,17 @@ class CardPipelineApp(tk.Tk):
             if status == "posted":
                 matched_by = str(entry.get("matched_by") or "").strip().lower()
                 caption_title = self._instagram_inventory_identity({"card_title": entry.get("caption")})
+                entry_title = self._instagram_inventory_identity({"card_title": entry.get("card_title")})
                 exact_title_match = active_by_title.get(caption_title)
                 old_record = active_by_key.get(str(old_key))
                 old_record_title = self._instagram_inventory_identity(
                     {"card_title": old_record.get("card_title") if isinstance(old_record, dict) else ""}
                 )
                 if (
-                    matched_by == "title_tokens"
-                    and caption_title
+                    caption_title
                     and exact_title_match is not None
                     and str(exact_title_match.get("inventory_key") or "") != str(old_key)
-                    and old_record_title != caption_title
+                    and (matched_by == "title_tokens" or old_record_title != caption_title or entry_title == caption_title)
                 ):
                     new_key = str(exact_title_match.get("inventory_key") or old_key)
                     repaired_entry = dict(entry)
