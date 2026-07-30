@@ -316,7 +316,7 @@ async function syncQueuedActions() {
     const result = await api("/sync/queue", {
       client_id: state.clientId,
       actions: state.queue,
-    });
+    }, { timeoutMs: 60000 });
     const completed = new Set(
       (result.results || [])
         .filter((item) => item && item.ok && ["applied", "already_applied"].includes(item.status))
