@@ -3951,6 +3951,16 @@ class CardPipelineApp(tk.Tk):
                     "client_id": str(payload.get("client_id") or raw_action.get("client_id") or ""),
                 }
                 results.append({"ok": True, "id": action_id, "type": action_type, "status": "applied", "result": result})
+            elif action_type.strip().lower() in {"inventory.add", "inventory_add", "add_inventory"} and result.get("duplicate"):
+                skipped_count += 1
+                changed = True
+                applied[action_id] = {
+                    "type": action_type,
+                    "applied_at": datetime.now(timezone.utc).isoformat(),
+                    "client_id": str(payload.get("client_id") or raw_action.get("client_id") or ""),
+                    "note": "Queued mobile add matched an active duplicate and was treated as already applied.",
+                }
+                results.append({"ok": True, "id": action_id, "type": action_type, "status": "already_applied", "result": result})
             else:
                 failed_count += 1
                 results.append({"ok": False, "id": action_id, "type": action_type, "status": "failed", "error": result.get("error") or "Action failed.", "result": result})

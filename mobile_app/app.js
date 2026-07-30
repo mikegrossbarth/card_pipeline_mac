@@ -12,6 +12,7 @@ const state = {
   tradeSearchRequestSeq: 0,
   tradeOutgoing: [],
   tradeIncomingSeq: 0,
+  lastFailedQueueIds: new Set(),
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
 const IS_PERSONAL_PROFILE = Boolean(profileMatch && profileMatch[1] === "personal");
@@ -328,6 +329,11 @@ async function syncQueuedActions() {
     const completed = new Set(
       (result.results || [])
         .filter((item) => item && item.ok && ["applied", "already_applied"].includes(item.status))
+        .map((item) => item.id)
+    );
+    state.lastFailedQueueIds = new Set(
+      (result.results || [])
+        .filter((item) => item && !item.ok && item.id)
         .map((item) => item.id)
     );
     state.queue = state.queue.filter((action) => !completed.has(action.id));
@@ -1340,6 +1346,13 @@ function bind() {
   $("syncQueue").addEventListener("click", () => syncQueuedActions());
   $("exportQueue").addEventListener("click", () => exportQueue());
   $("clearAppliedQueue").addEventListener("click", () => {
+    if (state.lastFailedQueueIds.size) {
+      state.queue = state.queue.filter((action) => !state.lastFailedQueueIds.has(action.id));
+      state.lastFailedQueueIds = new Set();
+      saveQueue();
+      $("syncStatus").textContent = "Cleared failed queue items.";
+      return;
+    }
     if (state.queue.length) {
       $("syncStatus").textContent = "Queue still has pending actions. Sync or export it first.";
       return;

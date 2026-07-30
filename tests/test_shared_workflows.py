@@ -12047,6 +12047,38 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertEqual(len(dummy._load_inventory_ledger()), 2)
                 self.assertEqual(len(dummy._load_profit_ledger()), 2)
 
+                duplicate_payload = {
+                    "client_id": "phone-1",
+                    "actions": [
+                        {
+                            "id": "phone-1-duplicate-add",
+                            "type": "inventory.add",
+                            "payload": {
+                                "cert_number": "999000",
+                                "grader": "PSA",
+                                "purchase_price": "44",
+                                "assigned_person": "Kevin Hambone",
+                            },
+                        }
+                    ],
+                }
+                self.assertTrue(
+                    dummy.mobile_inventory_add(
+                        {
+                            "cert_number": "999000",
+                            "grader": "PSA",
+                            "purchase_price": "44",
+                            "assigned_person": "Kevin Hambone",
+                        }
+                    )["ok"]
+                )
+                duplicate_sync = dummy.mobile_queue_sync(duplicate_payload)
+                self.assertTrue(duplicate_sync["ok"])
+                self.assertEqual(duplicate_sync["applied"], 0)
+                self.assertEqual(duplicate_sync["skipped"], 1)
+                self.assertEqual(duplicate_sync["failed"], 0)
+                self.assertEqual(duplicate_sync["results"][0]["status"], "already_applied")
+
                 title_result = dummy.mobile_inventory_add(
                     {
                         "cert_number": "123321",
