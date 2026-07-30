@@ -141,7 +141,7 @@ function queueAction(type, payload) {
 
 async function mutationApi(type, path, body) {
   try {
-    return await api(path, body);
+    return await api(path, body, { timeoutMs: 60000 });
   } catch (error) {
     const message = String(error && error.message ? error.message : error || "");
     if (/pin/i.test(message)) {
