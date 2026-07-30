@@ -11959,6 +11959,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             mobile_expense_add = app.CardPipelineApp.mobile_expense_add
             _load_mobile_action_log = app.CardPipelineApp._load_mobile_action_log
             _save_mobile_action_log = app.CardPipelineApp._save_mobile_action_log
+            _record_mobile_direct_action = app.CardPipelineApp._record_mobile_direct_action
             _apply_mobile_queue_action = app.CardPipelineApp._apply_mobile_queue_action
             mobile_queue_sync = app.CardPipelineApp.mobile_queue_sync
             _append_activity = lambda self, action, summary, details=None: None
@@ -12071,6 +12072,45 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertTrue(str(raw_result["record"]["item_id"]).startswith("RAW-TEAM-"))
                 self.assertEqual(raw_result["record"]["cert_number"], "")
                 self.assertIn("Mobile entered cert/item: 4710408", raw_result["record"]["notes"])
+
+                direct_action_id = "phone-1-direct-add"
+                direct_result = dummy.mobile_inventory_add(
+                    {
+                        "action_id": direct_action_id,
+                        "client_id": "phone-1",
+                        "card_title": "Direct Timed Out Raw Card",
+                        "purchase_price": "7",
+                        "assigned_person": "Kevin Hambone",
+                    }
+                )
+                self.assertTrue(direct_result["ok"])
+                direct_sync = dummy.mobile_queue_sync(
+                    {
+                        "client_id": "phone-1",
+                        "actions": [
+                            {
+                                "id": direct_action_id,
+                                "type": "inventory.add",
+                                "payload": {
+                                    "action_id": direct_action_id,
+                                    "client_id": "phone-1",
+                                    "card_title": "Direct Timed Out Raw Card",
+                                    "purchase_price": "7",
+                                    "assigned_person": "Kevin Hambone",
+                                },
+                            }
+                        ],
+                    }
+                )
+                self.assertTrue(direct_sync["ok"])
+                self.assertEqual(direct_sync["applied"], 0)
+                self.assertEqual(direct_sync["skipped"], 1)
+                matching_raw = [
+                    record
+                    for record in dummy._load_inventory_ledger()
+                    if record.get("card_title") == "Direct Timed Out Raw Card"
+                ]
+                self.assertEqual(len(matching_raw), 1)
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory

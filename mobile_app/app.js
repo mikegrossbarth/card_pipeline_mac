@@ -124,30 +124,38 @@ function saveQueue() {
   renderQueue();
 }
 
-function queueAction(type, payload) {
-  const id = `${state.clientId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function newActionId() {
+  return `${state.clientId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function queueAction(type, payload, options = {}) {
+  const id = options.id || newActionId();
   const action = {
     id,
     type,
     client_id: state.clientId,
-    created_at: new Date().toISOString(),
+    created_at: options.createdAt || new Date().toISOString(),
     payload: { ...payload },
   };
   delete action.payload.pin;
+  state.queue = state.queue.filter((item) => item.id !== id);
   state.queue.push(action);
   saveQueue();
   return action;
 }
 
 async function mutationApi(type, path, body) {
+  const actionId = newActionId();
+  const createdAt = new Date().toISOString();
+  const payload = { ...body, action_id: actionId, client_id: state.clientId };
   try {
-    return await api(path, body, { timeoutMs: 60000 });
+    return await api(path, payload, { timeoutMs: 60000 });
   } catch (error) {
     const message = String(error && error.message ? error.message : error || "");
     if (/pin/i.test(message)) {
       return { ok: false, error: message || "Invalid mobile PIN." };
     }
-    const action = queueAction(type, body);
+    const action = queueAction(type, payload, { id: actionId, createdAt });
     return {
       ok: true,
       queued: true,

@@ -3377,6 +3377,7 @@ class CardPipelineApp(tk.Tk):
                 action = "added"
         self.events.put(("inventory_refresh", f"Mobile inventory {action}: {saved.get('cert_number') or saved.get('card_title') or 'card'}"))
         self._append_activity("Mobile Inventory", f"Mobile inventory {action}: {saved.get('cert_number') or saved.get('card_title') or 'card'}.", {"action": action, "inventory_key": saved.get("inventory_key")})
+        self._record_mobile_direct_action(payload, "inventory.add")
         return {"ok": True, "action": action, "record": self._mobile_inventory_json_record(saved)}
 
     def mobile_inventory_mark_sold(self, payload: dict) -> dict:
@@ -3404,6 +3405,7 @@ class CardPipelineApp(tk.Tk):
             if record is None:
                 already_applied = self._mobile_sold_profit_match(payload, float(sale_price), sale_date)
                 if already_applied is not None:
+                    self._record_mobile_direct_action(payload, "inventory.sold")
                     return self._mobile_sold_already_applied_result(already_applied, sale_date, sale_method, company, float(sale_price))
                 return {"ok": False, "error": "That inventory card was not found."}
             if str(record.get("status") or "").lower() != "active":
@@ -3413,6 +3415,7 @@ class CardPipelineApp(tk.Tk):
                 already_payload.setdefault("card_title", record.get("card_title"))
                 already_applied = self._mobile_sold_profit_match(already_payload, float(sale_price), sale_date)
                 if already_applied is not None:
+                    self._record_mobile_direct_action(payload, "inventory.sold")
                     return self._mobile_sold_already_applied_result(already_applied, sale_date, sale_method, company, float(sale_price))
                 return {"ok": False, "error": "Only active inventory cards can be marked sold."}
             sold_inventory_key = str(record.get("inventory_key") or inventory_key)
@@ -3425,6 +3428,7 @@ class CardPipelineApp(tk.Tk):
         self.events.put(("inventory_refresh", f"Mobile marked sold: {title} for {format_money(sale_price)}."))
         self.events.put(("profit_refresh", f"Mobile marked sold: {title} for {format_money(sale_price)}."))
         self._append_activity("Mobile Sold", f"Mobile marked sold: {title} for {format_money(sale_price)}.", {"inventory_key": sold_inventory_key, "company": company or "General Sold", "sale_price": sale_price})
+        self._record_mobile_direct_action(payload, "inventory.sold")
         return {
             "ok": True,
             "record": self._mobile_inventory_json_record(record),
@@ -3586,6 +3590,7 @@ class CardPipelineApp(tk.Tk):
             f"Mobile trade saved: {len(outgoing_records)} outgoing, {len(added_records)} incoming, basis {format_money(allocation['total_cost'])}.",
             {"outgoing": len(outgoing_records), "incoming": len(added_records), "trade_partner": trade_partner, "total_cost": allocation["total_cost"]},
         )
+        self._record_mobile_direct_action(payload, "inventory.trade")
         return {
             "ok": True,
             "trade": {
@@ -3849,6 +3854,7 @@ class CardPipelineApp(tk.Tk):
         if not added:
             return {"ok": False, "error": "That expense already exists in the profit ledger."}
         self.events.put(("profit_refresh", f"Added {expense_type} expense for {person}: {format_money(amount)}."))
+        self._record_mobile_direct_action(payload, "expense.add")
         return {"ok": True, "record": self._normalize_profit_record(record), "people": self._known_people()}
 
     def _load_mobile_action_log(self) -> dict[str, dict[str, object]]:
@@ -3879,6 +3885,20 @@ class CardPipelineApp(tk.Tk):
                 "applied": dict(items),
             },
         )
+
+    def _record_mobile_direct_action(self, payload: dict, action_type: str) -> None:
+        action_id = str(payload.get("action_id") or payload.get("id") or "").strip()
+        if not action_id:
+            return
+        applied = self._load_mobile_action_log()
+        if action_id in applied:
+            return
+        applied[action_id] = {
+            "type": action_type,
+            "applied_at": datetime.now(timezone.utc).isoformat(),
+            "client_id": str(payload.get("client_id") or ""),
+        }
+        self._save_mobile_action_log(applied)
 
     def _apply_mobile_queue_action(self, action: dict[str, object]) -> dict:
         action_type = str(action.get("type") or action.get("action") or "").strip().lower()
