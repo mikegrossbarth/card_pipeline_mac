@@ -799,7 +799,11 @@ class AssignmentRulesDialog(tk.Toplevel):
             self.payout_source_mode.set("file")
             self.link_payouts_to_rule_source.set(True)
         else:
-            self.payout_source_mode.set(str(payout_kind or ("file" if company.get("payout") and not is_generated_payout_path(company.get("payout")) else "manual")))
+            payout_source = company.get("payout")
+            if is_generated_payout_path(payout_source):
+                self.payout_source_mode.set("manual")
+            else:
+                self.payout_source_mode.set(str(payout_kind or ("file" if payout_source else "manual")))
         self.payout_source_path.set(display_source_path(company.get("payout")))
         self.payout_materialized_source = company.get("payout") if isinstance(company.get("payout"), dict) else None
         rules_payload = self._load_json_source(company.get("rules") or company.get("rules_source") or company.get("rulesSource"))

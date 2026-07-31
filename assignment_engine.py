@@ -677,10 +677,14 @@ def load_company(entry: dict[str, Any], base_dir: Path) -> AssignmentCompany | N
     name = str(entry.get("name") or "").strip()
     if not name or entry.get("active") is False:
         return None
-    rules_text = read_source_text(entry.get("rules") or entry.get("rules_source") or entry.get("rulesSource"), base_dir)
-    payout_text = read_source_text(entry.get("payout") or entry.get("payout_source") or entry.get("payoutSource"), base_dir)
+    rules_source = entry.get("rules") or entry.get("rules_source") or entry.get("rulesSource")
+    payout_source = entry.get("payout") or entry.get("payout_source") or entry.get("payoutSource")
+    rules_text = read_source_text(rules_source, base_dir)
+    payout_text = read_source_text(payout_source, base_dir)
     rules = parse_rules(rules_text, accept_all=bool(entry.get("accept_all")))
-    payout_tiers = parse_payouts(payout_text)
+    payout_tiers = parse_generated_manual_rule_payouts(rules_text) if is_generated_payout_source(payout_source) else []
+    if not payout_tiers:
+        payout_tiers = parse_payouts(payout_text)
     if not payout_tiers and entry.get("rate") is not None:
         rate = parse_rate(entry.get("rate"))
         if rate is not None:
@@ -693,6 +697,47 @@ def load_company(entry: dict[str, Any], base_dir: Path) -> AssignmentCompany | N
         reset_weekday=str(entry.get("reset_weekday") or entry.get("resetWeekday") or "Monday").strip() or "Monday",
         reset_time=str(entry.get("reset_time") or entry.get("resetTime") or "20:00").strip() or "20:00",
     )
+
+
+def is_generated_payout_source(source: Any) -> bool:
+    if isinstance(source, dict):
+        source = source.get("path") or source.get("file") or source.get("url")
+    return str(source or "").strip().lower().endswith("-payout.json")
+
+
+def parse_generated_manual_rule_payouts(text: str) -> list[PayoutTier]:
+    try:
+        payload = json.loads(str(text or "").strip())
+    except Exception:
+        return []
+    if not isinstance(payload, dict) or not isinstance(payload.get("rules"), list):
+        return []
+    tiers: list[PayoutTier] = []
+    for rule in payload.get("rules") or []:
+        if not isinstance(rule, dict):
+            continue
+        ranges = rule.get("priceRanges") or rule.get("ranges") or [{}]
+        if not isinstance(ranges, list) or not ranges:
+            ranges = [{}]
+        for price_range in ranges:
+            if not isinstance(price_range, dict):
+                continue
+            rate = parse_rate(
+                price_range.get("rate")
+                or price_range.get("payout")
+                or rule.get("rate")
+                or rule.get("payout")
+            )
+            if rate is None:
+                continue
+            tiers.append(
+                PayoutTier(
+                    min_price=to_number(price_range.get("min") or price_range.get("minPrice")) or 0,
+                    max_price=to_number(price_range.get("max") or price_range.get("maxPrice")),
+                    rate=rate,
+                )
+            )
+    return sorted(tiers, key=lambda tier: tier.min_price, reverse=True)
 
 
 def assignment_value(row: Any) -> float | None:

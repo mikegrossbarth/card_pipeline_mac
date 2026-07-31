@@ -1621,6 +1621,67 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertEqual(assignment_engine.infer_sport("1 Piece $15-50 PSA 10"), "one piece")
         self.assertEqual(assignment_engine.infer_sport("Poke $10-100 CGC 10"), "pokemon")
 
+    def test_generated_manual_payout_source_uses_rule_payout_ranges(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rules_path = root / "fanatics-rules.json"
+            payout_path = root / "fanatics-payout.json"
+            config_path = root / "assignment_companies.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "rules": [
+                            {
+                                "sports": ["basketball"],
+                                "priceRanges": [{"min": "1001", "max": "40000"}],
+                                "payout": "93",
+                                "grades": {"bgs": {"allowed": True, "min": "", "max": ""}},
+                            }
+                        ],
+                        "blocks": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payout_path.write_text(
+                json.dumps({"tiers": [{"min": "1001", "max": "15000", "rate": "93"}]}),
+                encoding="utf-8",
+            )
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "companies": [
+                            {
+                                "name": "FANATICS",
+                                "active": True,
+                                "value_source": "card_ladder",
+                                "rules": str(rules_path),
+                                "payout": str(payout_path),
+                                "rules_source_kind": "manual",
+                                "payout_source_kind": "file",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            row = types.SimpleNamespace(
+                grader="BGS",
+                sport="basketball",
+                card_title="2018-19 Immaculate Collection Premium Patch Autographs #6 Stephen Curry/15 BGS 8",
+                cert_number="0018322639",
+                card_ladder_value=28820.0,
+                card_ladder_comps_average=14460.0,
+                cy_value=None,
+            )
+
+            recommendation = assignment_engine.AssignmentEngine.load(config_path).recommend(row, person="Mikey")
+
+        self.assertEqual(recommendation.company, "FANATICS")
+        self.assertEqual(recommendation.source_value, 28820.0)
+        self.assertAlmostEqual(recommendation.payout or 0, 26802.6)
+
     def test_keep_rule_parser_handles_cy_shorthand_ranges_and_no_blocks(self) -> None:
         rules = assignment_engine.parse_rules(
             "\n".join(
