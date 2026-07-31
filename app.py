@@ -3193,13 +3193,14 @@ class CardPipelineApp(tk.Tk):
         card_title = self._inventory_title_with_grader(card_title, grader)
         return self._normalize_inventory_record(
             {
-                "date_added": datetime.now().strftime("%Y-%m-%d"),
+                "date_added": str(payload.get("date_added") or datetime.now().strftime("%Y-%m-%d"))[:10],
                 "assigned_person": person,
                 "sport": sport,
                 "cert_number": cert,
                 "grader": grader,
                 "card_title": card_title,
                 "item_type": item_type,
+                "item_id": str(payload.get("item_id") or "").strip() if item_type == "Raw" else "",
                 "purchase_price": payload.get("purchase_price") or payload.get("purchase") or payload.get("price_paid"),
                 "inventory_value": payload.get("inventory_value") or payload.get("value"),
                 "source_sheet": str(payload.get("source_sheet") or "Mobile Inventory").strip() or "Mobile Inventory",
@@ -4285,12 +4286,18 @@ class CardPipelineApp(tk.Tk):
             cert = scan_to_cert(record.get("cert_number"))
             if source_sheet and cert:
                 keys.add((source_sheet, cert))
+            item_id = str(record.get("item_id") or "").strip().lower()
+            if source_sheet and item_id:
+                keys.add((source_sheet, f"item:{item_id}"))
         for record in [self._normalize_profit_record(row) for row in self._load_profit_ledger()]:
             cert = scan_to_cert(record.get("cert_number"))
             for source_value in (record.get("source_sheet"), record.get("original_source_sheet")):
                 source_sheet = Path(str(source_value or "")).name.strip().lower()
                 if source_sheet and cert:
                     keys.add((source_sheet, cert))
+                item_id = str(record.get("item_id") or "").strip().lower()
+                if source_sheet and item_id:
+                    keys.add((source_sheet, f"item:{item_id}"))
         keys.update(self._inventory_deleted_source_cert_keys())
         return keys
 
@@ -4306,8 +4313,6 @@ class CardPipelineApp(tk.Tk):
         if not assigned_person or not path.exists():
             return []
         received_certs = None if stage == "Received" else self._received_certs_in_workbook(path)
-        if received_certs == set():
-            return []
         try:
             rows = read_simple_spreadsheet(path)
         except Exception:
@@ -4318,22 +4323,28 @@ class CardPipelineApp(tk.Tk):
         candidates: list[dict[str, object]] = []
         for row in rows:
             cert = scan_to_cert(row.get("cert_number"))
-            if not cert:
+            item_id = str(row.get("item_id") or "").strip()
+            if not cert and not item_id:
                 continue
-            if received_certs is not None and cert not in received_certs:
+            if received_certs is not None:
+                if cert and cert not in received_certs:
+                    continue
+                if not cert and not bool(row.get("received")):
+                    continue
+            row_identity = cert if cert else f"item:{item_id.lower()}"
+            if cert and (path.name.lower(), cert) in company_keys:
                 continue
-            if (path.name.lower(), cert) in company_keys:
-                continue
-            if (path.name.lower(), cert) in accounted_keys:
+            if (path.name.lower(), row_identity) in accounted_keys:
                 continue
             card_title = str(row.get("card_title") or "")
             sport = CardPipelineApp._inventory_sport_from_value(self, row.get("sport") or row.get("category"), card_title)
+            item_type = "Graded" if cert else "Raw"
             candidates.append(
                 self._normalize_inventory_record(
                     {
                         "date_added": datetime.now().strftime("%Y-%m-%d"),
-                        "item_type": "Graded",
-                        "item_id": "",
+                        "item_type": item_type,
+                        "item_id": "" if cert else item_id,
                         "assigned_person": assigned_person,
                         "sport": sport,
                         "cert_number": cert,
