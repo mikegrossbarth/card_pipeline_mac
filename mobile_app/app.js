@@ -12,6 +12,7 @@ const state = {
   tradeSearchRequestSeq: 0,
   tradeOutgoing: [],
   tradeIncomingSeq: 0,
+  profitItems: [],
   lastFailedQueueIds: new Set(),
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
@@ -307,6 +308,9 @@ function queueTitle(action) {
   }
   if (action.type === "expense.add") {
     return `${payload.person || payload.assigned_person || "Expense"} ${money(payload.amount || payload.expense_amount, "")}`.trim();
+  }
+  if (action.type === "profit.refund") {
+    return payload.card_title || payload.cert_number || payload.item_id || "Profit refund";
   }
   return action.type || "Queued action";
 }
@@ -1110,6 +1114,7 @@ async function loadProfit() {
       person: IS_PERSONAL_PROFILE ? "" : $("profitPerson").value,
       period: $("profitPeriod").value,
       graph: $("profitGraph").value,
+      query: $("profitSearch").value,
     });
   } catch (error) {
     const cached = cacheGet(CACHE_KEYS.profit);
@@ -1143,17 +1148,48 @@ function renderProfit(result) {
   ]);
   drawChart(result.chart || {});
   const recent = result.recent || [];
-  $("profitRecent").innerHTML = recent.length ? recent.map((item) => `
+  state.profitItems = recent;
+  $("profitRecent").innerHTML = recent.length ? recent.map((item, index) => `
     <article class="result">
       <h2>${escapeHtml(item.title || item.company || item.type)}</h2>
       <div class="meta">
         <div><strong>Date</strong>${escapeHtml(item.date || "")}</div>
         <div><strong>Person</strong>${escapeHtml(item.person || "")}</div>
         <div><strong>Type</strong>${escapeHtml(item.type || "")}</div>
+        <div><strong>Sale Price</strong>${escapeHtml(item.sale_price_display || money(item.sale_price, "-"))}</div>
         <div><strong>Profit</strong>${escapeHtml(item.profit_display || money(item.profit, "-"))}</div>
       </div>
+      ${item.type === "Sale" ? `<div class="resultActions"><button class="secondary refundProfitButton" data-index="${index}" type="button">Refund to Inventory</button></div>` : ""}
     </article>
   `).join("") : '<div class="hint">No profit rows matched.</div>';
+  document.querySelectorAll(".refundProfitButton").forEach((button) => {
+    button.addEventListener("click", () => refundProfitItem(state.profitItems[Number(button.dataset.index)]));
+  });
+}
+
+async function refundProfitItem(item) {
+  if (!item) return;
+  const confirmed = confirm(`Refund ${item.title || item.cert_number || "this sold card"} back to inventory?`);
+  if (!confirmed) return;
+  const result = await mutationApi("profit.refund", "/profit/refund", {
+    ledger_key: item.ledger_key,
+    cert_number: item.cert_number,
+    item_id: item.item_id,
+    card_title: item.title,
+    date: item.date,
+    sale_price: item.sale_price,
+  });
+  if (!result.ok) {
+    alert(result.error || "Refund failed.");
+    return;
+  }
+  if (result.queued) {
+    alert("Desktop LUCAS was not reachable, so the refund was queued for sync.");
+    renderQueue();
+    return;
+  }
+  await refreshInventorySnapshot(true);
+  loadProfit();
 }
 
 async function loadPayouts() {
@@ -1360,6 +1396,7 @@ function bind() {
   $("profitPerson").addEventListener("change", () => loadProfit());
   $("profitPeriod").addEventListener("change", () => loadProfit());
   $("profitGraph").addEventListener("change", () => loadProfit());
+  $("profitSearch").addEventListener("input", () => loadProfit());
   $("payoutPerson").addEventListener("change", () => loadPayouts());
   $("syncQueue").addEventListener("click", () => syncQueuedActions());
   $("exportQueue").addEventListener("click", () => exportQueue());

@@ -130,6 +130,7 @@ class BridgeState:
         self.mobile_inventory_trade: Callable[[dict], dict] | None = None
         self.mobile_card_identify: Callable[[dict], dict] | None = None
         self.mobile_profit_summary: Callable[[dict], dict] | None = None
+        self.mobile_profit_refund: Callable[[dict], dict] | None = None
         self.mobile_expense_add: Callable[[dict], dict] | None = None
         self.mobile_payouts: Callable[[dict], dict] | None = None
         self.mobile_queue_sync: Callable[[dict], dict] | None = None
@@ -253,6 +254,13 @@ class BridgeState:
         if not self.mobile_profit_summary:
             return {"ok": False, "error": "Profit view is not available."}
         return self.mobile_profit_summary(payload)
+
+    def refund_mobile_profit(self, payload: dict) -> dict:
+        if not self.mobile_auth_ok(payload):
+            return {"ok": False, "error": "Invalid mobile PIN."}
+        if not self.mobile_profit_refund:
+            return {"ok": False, "error": "Profit refund is not available."}
+        return self.mobile_profit_refund(payload)
 
     def add_mobile_expense(self, payload: dict) -> dict:
         if not self.mobile_auth_ok(payload):
@@ -1424,6 +1432,9 @@ class BridgeServer:
                     return
                 if mobile_api_path.startswith("/mobile/api/profit/summary"):
                     self._send_json(state.get_mobile_profit_summary(payload))
+                    return
+                if mobile_api_path.startswith("/mobile/api/profit/refund"):
+                    self._send_json(state.refund_mobile_profit(payload))
                     return
                 if mobile_api_path.startswith("/mobile/api/expenses/add"):
                     self._send_json(state.add_mobile_expense(payload))

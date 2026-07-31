@@ -860,6 +860,7 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_inventory_trade = self.mobile_inventory_trade
         self.state.mobile_card_identify = self.mobile_card_identify
         self.state.mobile_profit_summary = self.mobile_profit_summary
+        self.state.mobile_profit_refund = self.mobile_profit_refund
         self.state.mobile_expense_add = self.mobile_expense_add
         self.state.mobile_payouts = self.mobile_payouts
         self.state.mobile_queue_sync = self.mobile_queue_sync
@@ -3764,6 +3765,8 @@ class CardPipelineApp(tk.Tk):
         if graph not in PROFIT_GRAPH_OPTIONS:
             graph = "Daily Trend"
         rows = self._mobile_profit_rows(str(payload.get("person") or ""), period)
+        query = str(payload.get("query") or payload.get("q") or "").strip().lower()
+        cert_query = scan_to_cert(query)
         total_purchase = 0.0
         total_sale = 0.0
         gross_profit = 0.0
@@ -3787,14 +3790,33 @@ class CardPipelineApp(tk.Tk):
                 else:
                     gross_profit += profit
                 complete_count += 1
-            if len(recent) < 25:
+            if is_expense:
+                matches_query = not query
+            else:
+                record_cert = str(record.get("cert_number") or "").strip().lower()
+                record_item_id = str(record.get("item_id") or "").strip().lower()
+                record_title = str(record.get("card_title") or "").strip().lower()
+                record_company = str(record.get("company") or "").strip().lower()
+                matches_query = not query or bool(
+                    query in record_title
+                    or query in record_cert
+                    or query in record_item_id
+                    or query in record_company
+                    or (cert_query and cert_query in scan_to_cert(record_cert))
+                )
+            if matches_query and len(recent) < 25:
                 recent.append(
                     {
+                        "ledger_key": record.get("ledger_key") or self._profit_record_key(record),
                         "date": record.get("date_added") or "",
                         "person": record.get("assigned_person") or "Unassigned",
                         "type": "Expense" if is_expense else "Sale",
                         "title": record.get("card_title") or record.get("company") or "",
                         "company": record.get("company") or "",
+                        "cert_number": record.get("cert_number") or "",
+                        "item_id": record.get("item_id") or "",
+                        "sale_price": round(sale or 0.0, 2) if sale is not None else None,
+                        "sale_price_display": format_money(sale),
                         "profit": round(profit or 0.0, 2) if profit is not None else None,
                         "profit_display": format_money(profit),
                     }
@@ -3816,6 +3838,103 @@ class CardPipelineApp(tk.Tk):
             },
             "chart": {"labels": labels, "values": values},
             "recent": recent,
+            "query": query,
+        }
+
+    def _mobile_profit_record_matches_payload(self, record: dict[str, object], payload: dict) -> bool:
+        normalized = self._normalize_profit_record(record)
+        ledger_key = str(payload.get("ledger_key") or payload.get("key") or "").strip()
+        if ledger_key and str(normalized.get("ledger_key") or "") == ledger_key:
+            return True
+        cert = scan_to_cert(payload.get("cert_number") or payload.get("cert"))
+        item_id = str(payload.get("item_id") or "").strip().lower()
+        title = str(payload.get("card_title") or payload.get("title") or "").strip().lower()
+        sale_date = str(payload.get("date") or payload.get("date_added") or payload.get("sale_date") or "").strip()[:10]
+        sale_price = self._money_value(payload.get("sale_price") or payload.get("amount") or payload.get("price"))
+        if cert and cert != scan_to_cert(normalized.get("cert_number")):
+            return False
+        if item_id and item_id != str(normalized.get("item_id") or "").strip().lower():
+            return False
+        if title and title != str(normalized.get("card_title") or "").strip().lower():
+            return False
+        if sale_date and sale_date != str(normalized.get("date_added") or "")[:10]:
+            return False
+        if sale_price is not None:
+            record_sale = self._money_value(normalized.get("sale_price"))
+            if record_sale is None or abs(float(record_sale) - float(sale_price)) > 0.009:
+                return False
+        return bool(cert or item_id or title)
+
+    def _refund_profit_records_to_inventory(self, records: list[dict[str, object]]) -> tuple[int, list[dict[str, object]]]:
+        if any(str(record.get("record_type") or "").strip().lower() == "expense" for record in records):
+            raise ValueError("Expense rows cannot be returned to inventory.")
+        refunded = 0
+        inventory_records: list[dict[str, object]] = []
+        ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        refund_keys = {str(self._normalize_profit_record(record).get("ledger_key") or "") for record in records}
+        kept = [record for record in ledger if str(record.get("ledger_key") or "") not in refund_keys]
+        refunded = len(ledger) - len(kept)
+        if refunded:
+            self._save_profit_ledger(kept)
+        for record in records:
+            normalized = self._normalize_profit_record(record)
+            source_sheet = str(normalized.get("source_sheet") or "")
+            cert = str(normalized.get("cert_number") or "")
+            if source_sheet and cert:
+                remove_company_sheet_rows_for_source(COMPANY_SHEETS_DIR, source_sheet, {cert})
+            inventory_records.append(
+                self._normalize_inventory_record(
+                    {
+                        "date_added": datetime.now().strftime("%Y-%m-%d"),
+                        "item_type": normalized.get("item_type") or ("Raw" if str(normalized.get("item_id") or "").upper().startswith("RAW-") else "Graded"),
+                        "item_id": normalized.get("item_id") or "",
+                        "assigned_person": normalized.get("assigned_person") or self._person_for_profit_record(normalized) or "Unassigned",
+                        "sport": CardPipelineApp._inventory_sport_from_value(self, normalized.get("sport") or normalized.get("category"), normalized.get("card_title")),
+                        "cert_number": normalized.get("cert_number") or "",
+                        "grader": normalized.get("grader") or "",
+                        "card_title": normalized.get("card_title") or "",
+                        "purchase_price": normalized.get("purchase_price"),
+                        "card_ladder_value": normalized.get("card_ladder_value"),
+                        "card_ladder_comps_average": normalized.get("card_ladder_comps_average") or normalized.get("comps"),
+                        "cy_value": normalized.get("cy_value") or normalized.get("cy_estimate"),
+                        "inventory_value": normalized.get("sale_price") or normalized.get("card_ladder_value") or normalized.get("comps") or normalized.get("cy_estimate"),
+                        "source_sheet": normalized.get("source_sheet") or "",
+                        "source": normalized.get("source") or "",
+                        "photo_paths": list(normalized.get("photo_paths") or []),
+                        "status": "Active",
+                        "notes": "Refunded from sold cards",
+                    }
+                )
+            )
+        restore_photos = getattr(self, "_restore_inventory_photo_files_for_records", None)
+        if callable(restore_photos):
+            restore_photos(inventory_records)
+        self.add_inventory_records(inventory_records, refresh=False)
+        return refunded, inventory_records
+
+    def mobile_profit_refund(self, payload: dict) -> dict:
+        ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        record = next((item for item in ledger if self._mobile_profit_record_matches_payload(item, payload)), None)
+        if record is None:
+            return {"ok": False, "error": "That sold card was not found in profit."}
+        if str(record.get("record_type") or "").strip().lower() == "expense":
+            return {"ok": False, "error": "Expenses cannot be returned to inventory."}
+        with shared_lock(CARD_PIPELINE_DIR, "mobile-profit-refund", self.lucas_identity):
+            ledger = [self._normalize_profit_record(item) for item in self._load_profit_ledger()]
+            record = next((item for item in ledger if self._mobile_profit_record_matches_payload(item, payload)), None)
+            if record is None:
+                return {"ok": False, "error": "That sold card was already refunded or removed."}
+            refunded, inventory_records = self._refund_profit_records_to_inventory([record])
+        title = record.get("cert_number") or record.get("card_title") or "card"
+        self.events.put(("inventory_refresh", f"Mobile refunded sold card: {title}."))
+        self.events.put(("profit_refresh", f"Mobile refunded sold card: {title}."))
+        self._append_activity("Mobile Refund", f"Mobile refunded sold card: {title}.", {"refunded": refunded or len(inventory_records), "ledger_key": record.get("ledger_key")})
+        self._record_mobile_direct_action(payload, "profit.refund")
+        return {
+            "ok": True,
+            "refunded": refunded or len(inventory_records),
+            "record": self._mobile_inventory_json_record(inventory_records[0]) if inventory_records else {},
+            "people": self._known_people(),
         }
 
     def mobile_expense_add(self, payload: dict) -> dict:
@@ -3920,6 +4039,8 @@ class CardPipelineApp(tk.Tk):
             return self.mobile_inventory_trade(dict(payload))
         if action_type in {"expense.add", "expense_add", "add_expense"}:
             return self.mobile_expense_add(dict(payload))
+        if action_type in {"profit.refund", "profit_refund", "refund_profit"}:
+            return self.mobile_profit_refund(dict(payload))
         return {"ok": False, "error": f"Unsupported mobile queue action type: {action_type or 'blank'}."}
 
     def mobile_queue_sync(self, payload: dict) -> dict:
@@ -10522,49 +10643,8 @@ class CardPipelineApp(tk.Tk):
         )
         if not confirmed:
             return
-        refunded = 0
-        inventory_records: list[dict[str, object]] = []
         with shared_lock(CARD_PIPELINE_DIR, "refund-inventory", self.lucas_identity):
-            ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
-            refund_keys = {str(self._normalize_profit_record(record).get("ledger_key") or "") for record in records}
-            kept = [record for record in ledger if str(record.get("ledger_key") or "") not in refund_keys]
-            refunded = len(ledger) - len(kept)
-            if refunded:
-                self._save_profit_ledger(kept)
-            for record in records:
-                normalized = self._normalize_profit_record(record)
-                source_sheet = str(normalized.get("source_sheet") or "")
-                cert = str(normalized.get("cert_number") or "")
-                if source_sheet and cert:
-                    remove_company_sheet_rows_for_source(COMPANY_SHEETS_DIR, source_sheet, {cert})
-                inventory_records.append(
-                    self._normalize_inventory_record(
-                        {
-                            "date_added": datetime.now().strftime("%Y-%m-%d"),
-                            "item_type": normalized.get("item_type") or ("Raw" if str(normalized.get("item_id") or "").upper().startswith("RAW-") else "Graded"),
-                            "item_id": normalized.get("item_id") or "",
-                            "assigned_person": normalized.get("assigned_person") or self._person_for_profit_record(normalized) or "Unassigned",
-                            "sport": CardPipelineApp._inventory_sport_from_value(self, normalized.get("sport") or normalized.get("category"), normalized.get("card_title")),
-                            "cert_number": normalized.get("cert_number") or "",
-                            "grader": normalized.get("grader") or "",
-                            "card_title": normalized.get("card_title") or "",
-                            "purchase_price": normalized.get("purchase_price"),
-                            "card_ladder_value": normalized.get("card_ladder_value"),
-                            "card_ladder_comps_average": normalized.get("card_ladder_comps_average") or normalized.get("comps"),
-                            "cy_value": normalized.get("cy_value") or normalized.get("cy_estimate"),
-                            "inventory_value": normalized.get("sale_price") or normalized.get("card_ladder_value") or normalized.get("comps") or normalized.get("cy_estimate"),
-                            "source_sheet": normalized.get("source_sheet") or "",
-                            "source": normalized.get("source") or "",
-                            "photo_paths": list(normalized.get("photo_paths") or []),
-                            "status": "Active",
-                            "notes": "Refunded from sold cards",
-                        }
-                    )
-                )
-            restore_photos = getattr(self, "_restore_inventory_photo_files_for_records", None)
-            if callable(restore_photos):
-                restore_photos(inventory_records)
-            self.add_inventory_records(inventory_records)
+            refunded, inventory_records = self._refund_profit_records_to_inventory(records)
         self.refresh_profit_tab()
         self.refresh_inventory_tab()
         self.status_var.set(f"Refunded {refunded or len(records)} card(s) back to active inventory.")

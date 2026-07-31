@@ -11810,11 +11810,25 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _profit_added_sort_value = app.CardPipelineApp._profit_added_sort_value
             _profit_period_bounds = app.CardPipelineApp._profit_period_bounds
             _canonical_profit_period = app.CardPipelineApp._canonical_profit_period
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            _mobile_profit_record_matches_payload = app.CardPipelineApp._mobile_profit_record_matches_payload
+            _refund_profit_records_to_inventory = app.CardPipelineApp._refund_profit_records_to_inventory
             _mobile_profit_rows = app.CardPipelineApp._mobile_profit_rows
             _mobile_profit_chart_series = app.CardPipelineApp._mobile_profit_chart_series
             mobile_profit_summary = app.CardPipelineApp.mobile_profit_summary
+            mobile_profit_refund = app.CardPipelineApp.mobile_profit_refund
             mobile_expense_add = app.CardPipelineApp.mobile_expense_add
             mobile_payouts = app.CardPipelineApp.mobile_payouts
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _append_activity = lambda self, action, summary, details=None: None
+            _record_mobile_direct_action = lambda self, payload, action_type: None
+            _restore_inventory_photo_files_for_records = lambda self, records: 0
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
 
             def __init__(self):
                 self.events = queue.Queue()
@@ -11853,8 +11867,10 @@ class PhotoOcrSpeedTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR
             old_ledger = app.PROFIT_LEDGER_PATH
+            old_inventory = app.INVENTORY_LEDGER_PATH
             app.CARD_PIPELINE_DIR = Path(tmp)
             app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
             try:
                 dummy = MobileFinanceDummy()
                 dummy._save_profit_ledger(
@@ -11889,6 +11905,12 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertEqual(summary["totals"]["expenses"], 15.0)
                 self.assertEqual(summary["totals"]["net_profit"], 45.0)
                 self.assertEqual(summary["chart"]["values"][-1], 45.0)
+                sale_recent = [row for row in summary["recent"] if row["type"] == "Sale"][0]
+                self.assertEqual(sale_recent["sale_price"], 100.0)
+                self.assertEqual(sale_recent["sale_price_display"], "$100.00")
+
+                sold_search = dummy.mobile_profit_summary({"person": "Kevin", "period": "YTD", "query": "123"})
+                self.assertEqual([row["title"] for row in sold_search["recent"]], ["Arena"])
 
                 payouts = dummy.mobile_payouts({"person": "Mike"})
                 self.assertTrue(payouts["ok"])
@@ -11902,6 +11924,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                             "assigned_person": "Kevin Hambone",
                             "company": "Z Older",
                             "card_title": "Older Timestamp",
+                            "cert_number": "444111",
                             "purchase_price": 10,
                             "sale_price": 15,
                             "date_added": "2026-06-18",
@@ -11911,6 +11934,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                             "assigned_person": "Kevin Hambone",
                             "company": "A Newer",
                             "card_title": "Newer Timestamp",
+                            "cert_number": "555222",
                             "purchase_price": 10,
                             "sale_price": 20,
                             "date_added": "2026-06-18",
@@ -11930,9 +11954,18 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 )
                 recent = dummy.mobile_profit_summary({"person": "Kevin", "period": "YTD"})["recent"]
                 self.assertEqual([row["title"] for row in recent[:3]], ["Newer Timestamp", "Middle Expense", "Older Timestamp"])
+
+                refund = dummy.mobile_profit_refund({"ledger_key": recent[0]["ledger_key"]})
+                self.assertTrue(refund["ok"])
+                inventory = dummy._load_inventory_ledger()
+                self.assertEqual(len(inventory), 1)
+                self.assertEqual(inventory[0]["card_title"], "Newer Timestamp")
+                remaining_titles = [row["card_title"] for row in dummy._load_profit_ledger()]
+                self.assertNotIn("Newer Timestamp", remaining_titles)
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
+                app.INVENTORY_LEDGER_PATH = old_inventory
 
     def test_mobile_inventory_mark_sold_removes_inventory_and_records_method(self) -> None:
         class MobileSaleDummy:
