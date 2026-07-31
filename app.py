@@ -3252,6 +3252,14 @@ class CardPipelineApp(tk.Tk):
             "photos": photos,
         }
 
+    def _mobile_inventory_added_sort_key(self, record: dict[str, object], index: int = 0) -> tuple[str, str, str, int]:
+        return (
+            str(record.get("date_added") or "")[:10],
+            str(record.get("ledger_added_at") or record.get("created_at") or record.get("timestamp") or ""),
+            str(record.get("item_id") or record.get("inventory_key") or record.get("cert_number") or ""),
+            index,
+        )
+
     def _mobile_inventory_photo_items(self, record: dict[str, object]) -> list[dict[str, object]]:
         bridge_state = getattr(self, "state", None)
         mobile_path = getattr(bridge_state, "mobile_inventory_photo_path", None)
@@ -3283,8 +3291,8 @@ class CardPipelineApp(tk.Tk):
             limit = 75
         limit = max(1, min(limit, 1000))
         rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-        results: list[dict[str, object]] = []
-        for record in rows:
+        matched: list[tuple[dict[str, object], int]] = []
+        for index, record in enumerate(rows):
             status = str(record.get("status") or "").lower()
             if status != "active" and not include_sold:
                 continue
@@ -3306,9 +3314,9 @@ class CardPipelineApp(tk.Tk):
                 title_matches = query in record_title
                 if not (cert_matches or title_matches):
                     continue
-            results.append(self._mobile_inventory_json_record(record))
-            if len(results) >= limit:
-                break
+            matched.append((record, index))
+        matched.sort(key=lambda item: self._mobile_inventory_added_sort_key(item[0], item[1]), reverse=True)
+        results = [self._mobile_inventory_json_record(record) for record, _index in matched[:limit]]
         return {"ok": True, "count": len(results), "items": results, "people": self._known_people()}
 
     def _mobile_inventory_sport_filters(self, payload: dict) -> set[str]:

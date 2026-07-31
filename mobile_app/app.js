@@ -204,11 +204,27 @@ function cachedInventoryWrapper() {
   return cacheGet(CACHE_KEYS.inventory) || cacheGet(CACHE_KEYS.search);
 }
 
+function inventoryAddedSortValue(item, index = 0) {
+  return [
+    String(item?.date_added || "").slice(0, 10),
+    String(item?.ledger_added_at || item?.created_at || item?.timestamp || ""),
+    String(item?.item_id || item?.inventory_key || item?.cert_number || ""),
+    String(index).padStart(8, "0"),
+  ].join("|");
+}
+
+function sortInventoryNewestFirst(items) {
+  return (Array.isArray(items) ? items.slice() : [])
+    .map((item, index) => ({ item, sort: inventoryAddedSortValue(item, index) }))
+    .sort((a, b) => b.sort.localeCompare(a.sort))
+    .map((entry) => entry.item);
+}
+
 function renderCachedInventory(wrapper, note) {
   if (!wrapper || !wrapper.payload) return false;
   const result = filterCachedInventory(wrapper.payload);
   updatePeople(result.people || state.people);
-  renderResults(result.items || []);
+  renderResults(sortInventoryNewestFirst(result.items || []));
   if (note) $("scanSearchStatus").textContent = note;
   return true;
 }
@@ -221,6 +237,8 @@ function normalizePendingInventoryRecord(action) {
     inventory_key: `pending:${action.id}`,
     item_type: payload.cert_number ? "Slab" : "Raw",
     item_id: "",
+    date_added: String(payload.date_added || action.created_at || localDateString()).slice(0, 10),
+    created_at: action.created_at || new Date().toISOString(),
     cert_number: payload.cert_number || "",
     grader: payload.grader || "",
     card_title: payload.card_title || payload.cert_number || "Queued inventory add",
@@ -263,7 +281,7 @@ function upsertCachedInventoryRecord(record) {
     ...payload,
     ok: true,
     count: items.length,
-    items,
+    items: sortInventoryNewestFirst(items),
     people: Array.from(people).sort((a, b) => a.localeCompare(b)),
   });
 }
@@ -596,7 +614,7 @@ async function refreshInventorySnapshot(force = false) {
       include_sold: true,
       limit: INVENTORY_SNAPSHOT_LIMIT,
     });
-    if (result && result.ok) cacheSet(CACHE_KEYS.inventory, result);
+    if (result && result.ok) cacheSet(CACHE_KEYS.inventory, { ...result, items: sortInventoryNewestFirst(result.items || []) });
   } catch (_error) {
     // The visible search path already handles offline messaging.
   } finally {
@@ -642,9 +660,9 @@ async function searchInventory() {
     return;
   }
   updatePeople(result.people || []);
-  cacheSet(CACHE_KEYS.search, result);
+  cacheSet(CACHE_KEYS.search, { ...result, items: sortInventoryNewestFirst(result.items || []) });
   $("scanSearchStatus").textContent = "";
-  renderResults(result.items || []);
+  renderResults(sortInventoryNewestFirst(result.items || []));
   refreshInventorySnapshot();
 }
 

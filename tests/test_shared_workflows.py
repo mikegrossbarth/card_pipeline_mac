@@ -11674,6 +11674,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _enrich_inventory_record_assignment = app.CardPipelineApp._enrich_inventory_record_assignment
             _mobile_inventory_payload_record = app.CardPipelineApp._mobile_inventory_payload_record
             _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            _mobile_inventory_added_sort_key = app.CardPipelineApp._mobile_inventory_added_sort_key
             _inventory_title_with_grader = app.CardPipelineApp._inventory_title_with_grader
             _mobile_inventory_sport_filters = app.CardPipelineApp._mobile_inventory_sport_filters
             _canonical_person_choice = app.CardPipelineApp._canonical_person_choice
@@ -11682,6 +11683,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             mobile_inventory_search = app.CardPipelineApp.mobile_inventory_search
             mobile_inventory_add = app.CardPipelineApp.mobile_inventory_add
             _append_activity = lambda self, action, summary, details=None: None
+            _record_mobile_direct_action = lambda self, payload, action_type: None
 
             def __init__(self, root: Path) -> None:
                 self.events = queue.Queue()
@@ -11711,6 +11713,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 dummy._save_inventory_ledger([
                     dummy._normalize_inventory_record(
                         {
+                            "date_added": "2026-07-29",
                             "assigned_person": "Kevin Hambone",
                             "cert_number": "123456",
                             "grader": "PSA",
@@ -11724,6 +11727,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                     ),
                     dummy._normalize_inventory_record(
                         {
+                            "date_added": "2026-07-30",
                             "assigned_person": "Kevin Hambone",
                             "cert_number": "654321",
                             "grader": "BGS",
@@ -11754,6 +11758,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertEqual(dummy.mobile_inventory_search({"query": "Existing"})["count"], 0)
                 limited = dummy.mobile_inventory_search({"limit": 1})
                 self.assertEqual(limited["count"], 1)
+                self.assertEqual(limited["items"][0]["cert_number"], "654321")
 
                 duplicate = dummy.mobile_inventory_add({"assigned_person": "Kevin Hambone", "cert_number": "123456", "grader": "PSA", "purchase_price": "50"})
                 self.assertFalse(duplicate["ok"])
