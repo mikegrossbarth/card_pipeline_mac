@@ -5697,6 +5697,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+            _inventory_cl_comp_delta = app.CardPipelineApp._inventory_cl_comp_delta
             refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
 
         with TemporaryDirectory() as tmp:
@@ -5839,6 +5840,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+            _inventory_cl_comp_delta = app.CardPipelineApp._inventory_cl_comp_delta
             refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
 
             def __init__(self):
@@ -5889,6 +5891,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn("comps", app.INVENTORY_TABLE_COLUMNS)
         self.assertIn("cy_estimate", app.INVENTORY_TABLE_COLUMNS)
         self.assertIn("cy_confidence", app.INVENTORY_TABLE_COLUMNS)
+        self.assertEqual(app.INVENTORY_TABLE_COLUMNS[-1], "delta")
 
         dummy = InventoryDummy()
         dummy.refresh_inventory_tab()
@@ -5901,6 +5904,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(row[columns.index("cy_estimate")], "")
         self.assertEqual(row[columns.index("company")], "FANATICS")
         self.assertEqual(row[columns.index("payout")], "$38.95")
+        self.assertEqual(row[columns.index("delta")], "$2.13")
         self.assertIn("Source Value: $41.00", dummy.inventory_metric_var.value)
 
     def test_filtered_inventory_refresh_only_enriches_visible_rows(self) -> None:

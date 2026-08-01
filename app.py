@@ -596,6 +596,7 @@ INVENTORY_TABLE_COLUMNS = (
     "status",
     "photos",
     "notes",
+    "delta",
 )
 
 ADD_INTAKE_ROW_IID = "__add_intake_row__"
@@ -682,6 +683,7 @@ INVENTORY_HEADINGS = {
     "status": "Status",
     "photos": "Photos",
     "notes": "Notes",
+    "delta": "Delta",
 }
 
 INVENTORY_COLUMN_WIDTHS = {
@@ -705,6 +707,7 @@ INVENTORY_COLUMN_WIDTHS = {
     "status": 110,
     "photos": 80,
     "notes": 240,
+    "delta": 100,
 }
 
 INVENTORY_EDIT_COLUMN_FIELDS = {
@@ -2031,7 +2034,7 @@ class CardPipelineApp(tk.Tk):
         return f"{date_text}T00:00:00" if self._profit_record_date(date_text) is not None else ""
 
     def _record_sort_value(self, record: dict[str, object], column: str, table: str, mode: str = "") -> tuple[bool, object]:
-        money_columns = {"purchase", "sale", "profit", "amount", "payout", "card_ladder", "comps", "cy_estimate", "volume"}
+        money_columns = {"purchase", "sale", "profit", "amount", "payout", "card_ladder", "comps", "cy_estimate", "volume", "delta"}
         int_columns = {"cards", "received"}
         if table == "home_incoming_volume":
             raw = record.get(column)
@@ -2057,7 +2060,10 @@ class CardPipelineApp(tk.Tk):
                 "photos": "photo_count",
                 "notes": "notes",
             }
-            raw = inventory_display_notes(record) if column == "notes" else record.get(field_map.get(column, column))
+            if column == "delta":
+                raw = self._inventory_cl_comp_delta(record)
+            else:
+                raw = inventory_display_notes(record) if column == "notes" else record.get(field_map.get(column, column))
         elif table == "profit_sheet":
             raw = record.get(column)
         else:
@@ -7391,6 +7397,7 @@ class CardPipelineApp(tk.Tk):
         return {field: raw}
 
     def _refresh_inventory_tree_row(self, iid: str, record: dict[str, object]) -> None:
+        delta = self._inventory_cl_comp_delta(record)
         values = {
             "date": record.get("date_added") or "",
             "type": record.get("item_type") or "",
@@ -7411,6 +7418,7 @@ class CardPipelineApp(tk.Tk):
             "status": record.get("status") or "",
             "photos": str(len(record.get("photo_paths") or [])),
             "notes": inventory_display_notes(record),
+            "delta": format_money(delta),
         }
         for column, value in values.items():
             if column in self.inventory_tree["columns"]:
@@ -8795,6 +8803,7 @@ class CardPipelineApp(tk.Tk):
             card_ladder = self._money_value(record.get("card_ladder_value"))
             comps = self._money_value(record.get("card_ladder_comps_average"))
             cy_value = self._money_value(record.get("cy_value"))
+            delta = self._inventory_cl_comp_delta(record)
             if purchase is not None:
                 total_purchase += purchase
             if value is not None:
@@ -8820,6 +8829,7 @@ class CardPipelineApp(tk.Tk):
                 "status": record.get("status") or "",
                 "photos": str(len(record.get("photo_paths") or [])),
                 "notes": inventory_display_notes(record),
+                "delta": format_money(delta),
             }
             iid = self.inventory_tree.insert(
                 "",
@@ -9337,6 +9347,13 @@ class CardPipelineApp(tk.Tk):
         value = self._money_value(raw_value)
         return value is None or value <= 0
 
+    def _inventory_cl_comp_delta(self, record: dict[str, object]) -> float | None:
+        card_ladder = self._money_value(record.get("card_ladder_value"))
+        comps = self._money_value(record.get("card_ladder_comps_average"))
+        if card_ladder is None or comps is None:
+            return None
+        return round(card_ladder - comps, 2)
+
     def _inventory_sport_filter_values(self) -> set[str]:
         if not hasattr(self, "inventory_sport_var"):
             return set()
@@ -9374,9 +9391,10 @@ class CardPipelineApp(tk.Tk):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Inventory"
-        headers = ["Date Added", "Type", "Item ID", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Paid With", "Card Ladder", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Source Sheet", "Source", "Status", "Photos", "Photo Paths", "Notes"]
+        headers = ["Date Added", "Type", "Item ID", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Paid With", "Card Ladder", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Source Sheet", "Source", "Status", "Photos", "Photo Paths", "Notes", "Delta"]
         sheet.append(headers)
         for record in rows:
+            delta = self._inventory_cl_comp_delta(record)
             sheet.append([
                 record.get("date_added") or "",
                 record.get("item_type") or "",
@@ -9400,10 +9418,11 @@ class CardPipelineApp(tk.Tk):
                 len(record.get("photo_paths") or []),
                 "; ".join(str(path) for path in (record.get("photo_paths") or [])),
                 inventory_display_notes(record),
+                delta,
             ])
         sheet.auto_filter.ref = sheet.dimensions
         sheet.freeze_panes = "A2"
-        for index, width in enumerate([14, 12, 22, 18, 14, 22, 12, 60, 16, 18, 16, 16, 16, 14, 20, 16, 28, 24, 14, 10, 45, 36], start=1):
+        for index, width in enumerate([14, 12, 22, 18, 14, 22, 12, 60, 16, 18, 16, 16, 16, 14, 20, 16, 28, 24, 14, 10, 45, 36, 16], start=1):
             sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
         workbook.save(path)
         self.status_var.set(f"Exported inventory: {path}")
