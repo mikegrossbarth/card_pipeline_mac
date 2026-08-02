@@ -220,6 +220,44 @@ body.personalProfile .teamControl {
   background: #13202a;
 }
 
+.tradeBalanceBanner {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid #2b8f78;
+  border-radius: 8px;
+  background: #102b27;
+  color: #dff8ef;
+  font-weight: 800;
+}
+
+.tradeBalanceBanner.needsValue {
+  border-color: #9f6b28;
+  background: #302516;
+  color: #ffe0ad;
+}
+
+.tradeIncomingSummary {
+  display: none;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid #2b3e4d;
+  border-radius: 8px;
+  background: #17232d;
+  color: #f4f7f8;
+  text-align: left;
+  font-weight: 800;
+}
+
+.tradeIncomingRow.collapsed .tradeIncomingSummary {
+  display: block;
+}
+
+.tradeIncomingRow.collapsed .tradeIncomingFields,
+.tradeIncomingRow.collapsed .collapseTradeIncoming {
+  display: none;
+}
+
 .controlGrid,
 .metricGrid {
   display: grid;

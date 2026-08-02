@@ -3178,6 +3178,12 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(actions, text="Close", command=popup.destroy, style="Primary.TButton").pack(side=tk.RIGHT)
 
     def _mobile_inventory_payload_record(self, payload: dict) -> dict[str, object]:
+        def first_present(*keys: str) -> object:
+            for key in keys:
+                if key in payload and payload.get(key) is not None:
+                    return payload.get(key)
+            return ""
+
         cert = scan_to_cert(payload.get("cert_number") or payload.get("cert") or payload.get("barcode") or "")
         card_title = str(payload.get("card_title") or payload.get("card") or "").strip()
         grader = normalize_grader(payload.get("grader") or "") or infer_grader(card_title)
@@ -3208,8 +3214,8 @@ class CardPipelineApp(tk.Tk):
                 "card_title": card_title,
                 "item_type": item_type,
                 "item_id": str(payload.get("item_id") or "").strip() if item_type == "Raw" else "",
-                "purchase_price": payload.get("purchase_price") or payload.get("purchase") or payload.get("price_paid"),
-                "inventory_value": payload.get("inventory_value") or payload.get("value"),
+                "purchase_price": first_present("purchase_price", "purchase", "price_paid"),
+                "inventory_value": first_present("inventory_value", "value"),
                 "source_sheet": str(payload.get("source_sheet") or "Mobile Inventory").strip() or "Mobile Inventory",
                 "source": source,
                 "status": "Active",
@@ -3522,10 +3528,6 @@ class CardPipelineApp(tk.Tk):
             return {"ok": False, "error": "Choose outgoing inventory or enter incoming trade cards."}
         if incoming_payloads and not any(str(item.get("cert_number") or item.get("cert") or item.get("card_title") or item.get("card") or "").strip() for item in incoming_payloads):
             return {"ok": False, "error": "Enter at least one incoming card."}
-        for item in incoming_payloads:
-            value = self._money_value(item.get("trade_value") or item.get("inventory_value") or item.get("value"))
-            if value is None or value <= 0:
-                return {"ok": False, "error": "Every incoming trade card needs a cost."}
         if not getattr(self, "_is_personal_lucas", lambda: False)():
             raw_person = str(payload.get("assigned_person") or payload.get("person") or "").strip()
             if self._canonical_person_choice(raw_person) is None:
@@ -3550,10 +3552,10 @@ class CardPipelineApp(tk.Tk):
                 if str(record.get("inventory_key") or "") not in {str(existing.get("inventory_key") or "") for existing in outgoing_records}:
                     outgoing_records.append(record)
             allocation = self._mobile_trade_allocations(outgoing_records, incoming_payloads, payload.get("cash_paid"), payload.get("cash_received"))
-            if abs(float(allocation.get("difference") or 0.0)) > 0.01:
+            if float(allocation.get("difference") or 0.0) > 0.01:
                 return {
                     "ok": False,
-                    "error": f"Trade is not balanced. Difference: {format_money(abs(float(allocation.get('difference') or 0.0)))}.",
+                    "error": f"Trade needs {format_money(float(allocation.get('difference') or 0.0))} more incoming cost or cash received.",
                     "trade": allocation,
                 }
             sale_records = [

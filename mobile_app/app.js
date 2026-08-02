@@ -814,6 +814,8 @@ function tradeAllocationPreview() {
   const outgoingSide = outgoingBasis + cashPaid;
   const incomingSide = incomingValue + cashReceived;
   const difference = Math.round((outgoingSide - incomingSide) * 100) / 100;
+  const remainingToCover = Math.max(0, difference);
+  const extraValue = Math.max(0, Math.round((incomingSide - outgoingSide) * 100) / 100);
   let allocations = [];
   if (incoming.length) {
     if (incomingValue > 0) {
@@ -834,19 +836,60 @@ function tradeAllocationPreview() {
       });
     }
   }
-  return { outgoingBasis, cashPaid, cashReceived, totalCost, incomingValue, outgoingSide, incomingSide, difference, balanced: Math.abs(difference) <= 0.01, allocations };
+  return {
+    outgoingBasis,
+    cashPaid,
+    cashReceived,
+    totalCost,
+    incomingValue,
+    outgoingSide,
+    incomingSide,
+    difference,
+    remainingToCover,
+    extraValue,
+    covered: remainingToCover <= 0.01,
+    balanced: remainingToCover <= 0.01,
+    allocations,
+  };
 }
 
 function updateTradeSummary() {
   const preview = tradeAllocationPreview();
   const incoming = tradeIncomingRows();
-  const missingValues = incoming.filter((item) => parseMoneyInput(item.trade_value) <= 0).length;
   const allocationText = incoming.length
     ? preview.allocations.map((amount, index) => `${incoming[index].card_title || incoming[index].cert_number || `Incoming ${index + 1}`}: ${money(amount)}`).join(" | ")
     : "No incoming cards.";
-  const balanceText = preview.balanced ? "Balanced." : `Not balanced by ${money(Math.abs(preview.difference))}.`;
-  const valueText = missingValues ? ` ${missingValues} incoming card(s) need a cost.` : "";
-  $("tradeSummary").textContent = `${balanceText} Outgoing side ${money(preview.outgoingSide)}. Incoming side ${money(preview.incomingSide)}. Incoming basis ${money(preview.totalCost)}. ${allocationText}${valueText}`;
+  const balanceText = preview.covered
+    ? (preview.extraValue > 0.01 ? `Covered, ${money(preview.extraValue)} in your favor.` : "Covered.")
+    : `${money(preview.remainingToCover)} left to fill to reach cost.`;
+  const banner = $("tradeBalanceBanner");
+  if (banner) {
+    banner.textContent = balanceText;
+    banner.classList.toggle("needsValue", !preview.covered);
+  }
+  $("tradeSummary").textContent = `Outgoing cost ${money(preview.outgoingSide)}. Incoming cost ${money(preview.incomingSide)}. Incoming basis ${money(preview.totalCost)}. ${allocationText}`;
+}
+
+function tradeIncomingRowSummary(wrapper) {
+  const title = wrapper.querySelector(".tradeTitle")?.value || "";
+  const cert = wrapper.querySelector(".tradeCert")?.value || "";
+  const cost = wrapper.querySelector(".tradeValue")?.value || "";
+  const label = title || cert || "Incoming card";
+  return `${label} - Cost ${money(parseMoneyInput(cost))}`;
+}
+
+function syncTradeIncomingRowSummary(wrapper) {
+  const summary = wrapper.querySelector(".tradeIncomingSummary");
+  if (summary) summary.textContent = tradeIncomingRowSummary(wrapper);
+}
+
+function maybeCollapseTradeIncomingRow(wrapper) {
+  const hasCard = Boolean((wrapper.querySelector(".tradeTitle")?.value || wrapper.querySelector(".tradeCert")?.value || "").trim());
+  const hasCostEntry = String(wrapper.querySelector(".tradeValue")?.value || "").trim() !== "";
+  if (hasCard && hasCostEntry) {
+    syncTradeIncomingRowSummary(wrapper);
+    wrapper.classList.add("collapsed");
+  }
 }
 
 function renderTradeOutgoing() {
@@ -941,7 +984,8 @@ function addTradeIncomingRow(values = {}) {
   wrapper.className = "panel tradeIncomingRow";
   wrapper.dataset.rowId = String(id);
   wrapper.innerHTML = `
-    <div class="grid">
+    <button class="tradeIncomingSummary" type="button"></button>
+    <div class="grid tradeIncomingFields">
       <label>Cert<input class="tradeCert" inputmode="numeric" placeholder="Cert number" value="${escapeHtml(values.cert_number || "")}"></label>
       <label>Grader<select class="tradeGrader">
         <option value="">No grader</option>
@@ -954,18 +998,36 @@ function addTradeIncomingRow(values = {}) {
       <label>Cost<input class="tradeValue" inputmode="decimal" placeholder="Optional split cost" value="${escapeHtml(values.trade_value || "")}"></label>
       <label>Notes<textarea class="tradeRowNotes" rows="2">${escapeHtml(values.notes || "")}</textarea></label>
     </div>
+    <button class="secondary collapseTradeIncoming" type="button">Done</button>
     <button class="secondary removeTradeIncoming" type="button">Remove Incoming Card</button>
   `;
   host.appendChild(wrapper);
   wrapper.querySelector(".tradeGrader").value = values.grader || "";
   wrapper.querySelectorAll("input, select, textarea").forEach((input) => {
-    input.addEventListener("input", () => updateTradeSummary());
-    input.addEventListener("change", () => updateTradeSummary());
+    input.addEventListener("input", () => {
+      syncTradeIncomingRowSummary(wrapper);
+      updateTradeSummary();
+    });
+    input.addEventListener("change", () => {
+      syncTradeIncomingRowSummary(wrapper);
+      updateTradeSummary();
+      maybeCollapseTradeIncomingRow(wrapper);
+    });
+  });
+  wrapper.querySelector(".tradeIncomingSummary").addEventListener("click", () => {
+    wrapper.classList.remove("collapsed");
+    wrapper.querySelector(".tradeTitle, .tradeCert, .tradeValue")?.focus();
+  });
+  wrapper.querySelector(".collapseTradeIncoming").addEventListener("click", () => {
+    syncTradeIncomingRowSummary(wrapper);
+    wrapper.classList.add("collapsed");
   });
   wrapper.querySelector(".removeTradeIncoming").addEventListener("click", () => {
     wrapper.remove();
     updateTradeSummary();
   });
+  syncTradeIncomingRowSummary(wrapper);
+  maybeCollapseTradeIncomingRow(wrapper);
   updateTradeSummary();
 }
 
@@ -1000,15 +1062,8 @@ function tradePayload() {
 
 async function saveTrade() {
   const preview = tradeAllocationPreview();
-  const incoming = tradeIncomingRows();
-  const missingValues = incoming.filter((item) => parseMoneyInput(item.trade_value) <= 0).length;
-  if (missingValues) {
-    $("tradeStatus").textContent = "Every incoming card needs a cost so the trade can balance.";
-    updateTradeSummary();
-    return;
-  }
-  if (!preview.balanced) {
-    $("tradeStatus").textContent = `Trade is not balanced. Fix the ${money(Math.abs(preview.difference))} difference before saving.`;
+  if (!preview.covered) {
+    $("tradeStatus").textContent = `Add ${money(preview.remainingToCover)} more incoming cost or cash received before saving.`;
     updateTradeSummary();
     return;
   }

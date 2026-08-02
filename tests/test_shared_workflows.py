@@ -12090,6 +12090,119 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.PROFIT_LEDGER_PATH = old_profit
 
+    def test_mobile_trade_allows_favorable_and_zero_cost_incoming(self) -> None:
+        class MobileTradeDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _mobile_inventory_payload_record = app.CardPipelineApp._mobile_inventory_payload_record
+            _mobile_inventory_json_record = app.CardPipelineApp._mobile_inventory_json_record
+            _inventory_title_with_grader = app.CardPipelineApp._inventory_title_with_grader
+            _mobile_inventory_sale_match = app.CardPipelineApp._mobile_inventory_sale_match
+            _mobile_inventory_title_key = app.CardPipelineApp._mobile_inventory_title_key
+            _mobile_trade_basis = app.CardPipelineApp._mobile_trade_basis
+            _mobile_trade_allocations = app.CardPipelineApp._mobile_trade_allocations
+            mobile_inventory_trade = app.CardPipelineApp.mobile_inventory_trade
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
+            _append_profit_records = app.CardPipelineApp._append_profit_records
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _mobile_local_calendar_date = app.CardPipelineApp._mobile_local_calendar_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _raw_item_id_namespace = lambda self: "TEAM"
+            _load_mobile_action_log = app.CardPipelineApp._load_mobile_action_log
+            _save_mobile_action_log = app.CardPipelineApp._save_mobile_action_log
+            _record_mobile_direct_action = app.CardPipelineApp._record_mobile_direct_action
+            _append_activity = lambda self, action, summary, details=None: None
+
+            def __init__(self):
+                self.events = queue.Queue()
+                self.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+                self.home_sheet_markers = {}
+
+            def _known_people(self):
+                return ["Kevin Hambone"]
+
+            def _canonical_person_choice(self, value):
+                text = str(value or "").strip()
+                return text if text == "Kevin Hambone" else None
+
+            def _enrich_inventory_record_assignment(self, record, force=False):
+                return self._normalize_inventory_record(record)
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_mobile_log = app.MOBILE_ACTION_LOG_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            app.MOBILE_ACTION_LOG_PATH = Path(tmp) / "mobile_action_log.json"
+            try:
+                dummy = MobileTradeDummy()
+                outgoing = dummy._normalize_inventory_record(
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "cert_number": "111222",
+                        "grader": "PSA",
+                        "card_title": "Outgoing Trade Card",
+                        "purchase_price": 100,
+                        "source_sheet": "Lot A.xlsx",
+                    }
+                )
+                dummy._save_inventory_ledger([outgoing])
+                result = dummy.mobile_inventory_trade(
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "trade_date": "2026-06-22",
+                        "outgoing": [{"inventory_key": outgoing["inventory_key"]}],
+                        "incoming": [
+                            {"card_title": "Better Incoming Card", "trade_value": "120"},
+                            {"card_title": "Free Throw-In Card", "trade_value": "0"},
+                        ],
+                    }
+                )
+                self.assertTrue(result["ok"])
+                inventory = dummy._load_inventory_ledger()
+                self.assertEqual([record["purchase_price"] for record in inventory], [100.0, 0.0])
+                self.assertEqual(len(dummy._load_profit_ledger()), 1)
+
+                short_outgoing = dummy._normalize_inventory_record(
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "cert_number": "333444",
+                        "grader": "PSA",
+                        "card_title": "Short Trade Card",
+                        "purchase_price": 100,
+                        "source_sheet": "Lot B.xlsx",
+                    }
+                )
+                dummy._save_inventory_ledger([short_outgoing])
+                short_result = dummy.mobile_inventory_trade(
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "trade_date": "2026-06-22",
+                        "outgoing": [{"inventory_key": short_outgoing["inventory_key"]}],
+                        "incoming": [{"card_title": "Under Cost Incoming Card", "trade_value": "80"}],
+                    }
+                )
+                self.assertFalse(short_result["ok"])
+                self.assertIn("more incoming cost", short_result["error"])
+                self.assertEqual(len(dummy._load_inventory_ledger()), 1)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.MOBILE_ACTION_LOG_PATH = old_mobile_log
+
     def test_mobile_queue_sync_applies_actions_once(self) -> None:
         class MobileQueueDummy:
             _money_value = app.CardPipelineApp._money_value
