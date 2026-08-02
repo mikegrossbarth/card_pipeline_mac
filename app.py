@@ -2255,12 +2255,33 @@ class CardPipelineApp(tk.Tk):
         self.refresh_inventory_tab()
 
     def open_inventory_filters_popup(self) -> None:
+        existing = getattr(self, "inventory_filters_popup", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.deiconify()
+                    existing.lift()
+                    existing.focus_force()
+                    existing.attributes("-topmost", True)
+                    existing.after(150, lambda popup=existing: popup.attributes("-topmost", False) if popup.winfo_exists() else None)
+                    return
+            except tk.TclError:
+                pass
+            self.inventory_filters_popup = None
+
         popup = tk.Toplevel(self)
+        self.inventory_filters_popup = popup
         popup.title("Inventory Filters")
         popup.configure(bg=self.colors["bg"])
         popup.transient(self)
         popup.geometry("760x650")
         popup.minsize(720, 620)
+
+        def close_popup() -> None:
+            self.inventory_filters_popup = None
+            popup.destroy()
+
+        popup.protocol("WM_DELETE_WINDOW", close_popup)
         frame = ttk.Frame(popup, style="App.TFrame", padding=18)
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text="Inventory Filters", style="AppTitle.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 12))
@@ -2353,7 +2374,7 @@ class CardPipelineApp(tk.Tk):
         actions.grid(row=10, column=0, columnspan=4, sticky="ew", pady=(16, 0))
         actions.columnconfigure(1, weight=1)
         ttk.Button(actions, text="Clear Filters", command=self.clear_inventory_filters, style="Soft.TButton").grid(row=0, column=0, sticky="w")
-        ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton").grid(row=0, column=2, sticky="e", padx=(0, 8))
+        ttk.Button(actions, text="Close", command=close_popup, style="Soft.TButton").grid(row=0, column=2, sticky="e", padx=(0, 8))
         ttk.Button(actions, text="Apply Filters", command=self.refresh_inventory_tab, style="Primary.TButton").grid(row=0, column=3, sticky="e")
         frame.columnconfigure(3, weight=1)
 
