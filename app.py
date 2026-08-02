@@ -683,7 +683,7 @@ INVENTORY_HEADINGS = {
     "status": "Status",
     "photos": "Photos",
     "notes": "Notes",
-    "delta": "Delta",
+    "delta": "Delta %",
 }
 
 INVENTORY_COLUMN_WIDTHS = {
@@ -7420,7 +7420,7 @@ class CardPipelineApp(tk.Tk):
         return {field: raw}
 
     def _refresh_inventory_tree_row(self, iid: str, record: dict[str, object]) -> None:
-        delta = self._inventory_cl_comp_delta(record)
+        delta = self._format_inventory_cl_comp_delta(record)
         values = {
             "date": record.get("date_added") or "",
             "type": record.get("item_type") or "",
@@ -7441,7 +7441,7 @@ class CardPipelineApp(tk.Tk):
             "status": record.get("status") or "",
             "photos": str(len(record.get("photo_paths") or [])),
             "notes": inventory_display_notes(record),
-            "delta": format_money(delta),
+            "delta": delta,
         }
         for column, value in values.items():
             if column in self.inventory_tree["columns"]:
@@ -8826,7 +8826,7 @@ class CardPipelineApp(tk.Tk):
             card_ladder = self._money_value(record.get("card_ladder_value"))
             comps = self._money_value(record.get("card_ladder_comps_average"))
             cy_value = self._money_value(record.get("cy_value"))
-            delta = self._inventory_cl_comp_delta(record)
+            delta = self._format_inventory_cl_comp_delta(record)
             if purchase is not None:
                 total_purchase += purchase
             if value is not None:
@@ -8852,7 +8852,7 @@ class CardPipelineApp(tk.Tk):
                 "status": record.get("status") or "",
                 "photos": str(len(record.get("photo_paths") or [])),
                 "notes": inventory_display_notes(record),
-                "delta": format_money(delta),
+                "delta": delta,
             }
             iid = self.inventory_tree.insert(
                 "",
@@ -9373,9 +9373,13 @@ class CardPipelineApp(tk.Tk):
     def _inventory_cl_comp_delta(self, record: dict[str, object]) -> float | None:
         card_ladder = self._money_value(record.get("card_ladder_value"))
         comps = self._money_value(record.get("card_ladder_comps_average"))
-        if card_ladder is None or comps is None:
+        if card_ladder is None or comps is None or comps <= 0:
             return None
-        return round(card_ladder - comps, 2)
+        return round(((card_ladder - comps) / comps) * 100, 2)
+
+    def _format_inventory_cl_comp_delta(self, record: dict[str, object]) -> str:
+        delta = self._inventory_cl_comp_delta(record)
+        return "" if delta is None else f"{delta:.2f}%"
 
     def _inventory_sport_filter_values(self) -> set[str]:
         if not hasattr(self, "inventory_sport_var"):
@@ -9414,7 +9418,7 @@ class CardPipelineApp(tk.Tk):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Inventory"
-        headers = ["Date Added", "Type", "Item ID", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Paid With", "Card Ladder", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Source Sheet", "Source", "Status", "Photos", "Photo Paths", "Notes", "Delta"]
+        headers = ["Date Added", "Type", "Item ID", "Person", "Sport", "Certification Number", "Grader", "Card Description", "Purchase Price", "Paid With", "Card Ladder", "Comps", "CY Estimate", "CY Confidence", "Best Company", "Estimated Payout", "Source Sheet", "Source", "Status", "Photos", "Photo Paths", "Notes", "Delta %"]
         sheet.append(headers)
         for record in rows:
             delta = self._inventory_cl_comp_delta(record)
@@ -9441,8 +9445,12 @@ class CardPipelineApp(tk.Tk):
                 len(record.get("photo_paths") or []),
                 "; ".join(str(path) for path in (record.get("photo_paths") or [])),
                 inventory_display_notes(record),
-                delta,
+                None if delta is None else delta / 100,
             ])
+        delta_column = sheet.max_column
+        for column_cells in sheet.iter_cols(min_col=delta_column, max_col=delta_column, min_row=2, max_row=sheet.max_row):
+            for value_cell in column_cells:
+                value_cell.number_format = "0.00%"
         sheet.auto_filter.ref = sheet.dimensions
         sheet.freeze_panes = "A2"
         for index, width in enumerate([14, 12, 22, 18, 14, 22, 12, 60, 16, 18, 16, 16, 16, 14, 20, 16, 28, 24, 14, 10, 45, 36, 16], start=1):
