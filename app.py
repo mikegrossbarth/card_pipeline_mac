@@ -5949,7 +5949,7 @@ class CardPipelineApp(tk.Tk):
         table_frame = ttk.Frame(frame, style="Panel.TFrame")
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
-        tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=14)
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=14, selectmode="extended")
         headings = {
             "action": "Action",
             "card": "Card",
@@ -6042,6 +6042,20 @@ class CardPipelineApp(tk.Tk):
         def selected_remove_items() -> list[dict[str, object]]:
             return [remove_items[iid] for iid in tree.selection() if iid in remove_items]
 
+        def select_all_remove_items() -> None:
+            remove_iids = list(remove_items)
+            if not remove_iids:
+                messagebox.showinfo("Instagram Sync", "No Remove rows are available.")
+                return
+            tree.selection_set(remove_iids)
+            tree.focus(remove_iids[0])
+            tree.see(remove_iids[0])
+            self.status_var.set(f"Selected {len(remove_iids)} Instagram remove row(s).")
+
+        def clear_instagram_sync_selection() -> None:
+            tree.selection_remove(tree.selection())
+            self.status_var.set("Instagram sync selection cleared.")
+
         def open_manual_delete_target() -> None:
             selected = selected_remove_items()
             if not selected:
@@ -6119,6 +6133,8 @@ class CardPipelineApp(tk.Tk):
         delete_actions.pack(fill=tk.X, pady=(8, 0))
         ttk.Button(delete_actions, text="Open Remove Target", command=open_manual_delete_target, style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(delete_actions, text="Copy Title", command=copy_manual_delete_title, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(delete_actions, text="Select Remove", command=select_all_remove_items, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(delete_actions, text="Clear Selection", command=clear_instagram_sync_selection, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Mark Deleted", command=mark_manual_deleted, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
         table_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
