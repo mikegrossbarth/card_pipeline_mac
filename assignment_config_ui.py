@@ -61,8 +61,10 @@ VALUE_SOURCE_LABELS = {
 COMPANY_RESET_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 DEFAULT_COMPANY_RESET_WEEKDAY = "Monday"
 DEFAULT_COMPANY_RESET_TIME = "20:00"
-SELLER_TERMS_FIELDS = ("Seller", "Sheet Type", "Seller Rate", "Deduction")
+SELLER_TERMS_FIELDS = ("Seller", "Sheet Type", "Min Value", "Max Value", "Seller Rate", "Deduction")
 SELLER_TERMS_FIELD_LABELS = {
+    "Min Value": "Min Value",
+    "Max Value": "Max Value",
     "Seller Rate": "Seller Rate %",
     "Deduction": "Deduction %",
 }
@@ -157,6 +159,8 @@ def read_seller_terms_rows(seller_terms_path: Path) -> list[dict[str, str]]:
                 {
                     "Seller": str(normalized.get("seller") or normalized.get("person") or normalized.get("name") or "").strip(),
                     "Sheet Type": str(normalized.get("sheettype") or normalized.get("type") or normalized.get("company") or "").strip(),
+                    "Min Value": str(normalized.get("minvalue") or normalized.get("min") or normalized.get("minimum") or normalized.get("floor") or "").strip(),
+                    "Max Value": str(normalized.get("maxvalue") or normalized.get("max") or normalized.get("maximum") or normalized.get("ceiling") or "").strip(),
                     "Seller Rate": str(normalized.get("sellerrate") or normalized.get("rate") or normalized.get("payout") or normalized.get("percentage") or "").strip(),
                     "Deduction": str(normalized.get("deduction") or normalized.get("sellerdeduction") or normalized.get("deductionpercent") or normalized.get("deductionpercentage") or "").strip(),
                 }
@@ -210,6 +214,35 @@ def seller_terms_rate(value: object) -> float | None:
     return rate if rate >= 0 else None
 
 
+def seller_terms_money_value(value: object) -> float | None:
+    raw = str(value or "").strip().replace("$", "").replace(",", "")
+    if not raw:
+        return None
+    try:
+        numeric = float(raw)
+    except ValueError:
+        return None
+    return numeric if numeric >= 0 else None
+
+
+def seller_terms_range_label(min_value: float | None, max_value: float | None) -> str:
+    if min_value is None and max_value is None:
+        return "all values"
+    if min_value is None:
+        return f"up to ${max_value:g}"
+    if max_value is None:
+        return f"${min_value:g}+"
+    return f"${min_value:g} to ${max_value:g}"
+
+
+def seller_terms_ranges_overlap(a_min: float | None, a_max: float | None, b_min: float | None, b_max: float | None) -> bool:
+    left_min = float("-inf") if a_min is None else a_min
+    left_max = float("inf") if a_max is None else a_max
+    right_min = float("-inf") if b_min is None else b_min
+    right_max = float("inf") if b_max is None else b_max
+    return left_min <= right_max and right_min <= left_max
+
+
 def normalize_company_reset_weekday(value: object) -> str:
     text = str(value or DEFAULT_COMPANY_RESET_WEEKDAY).strip().title()
     return text if text in COMPANY_RESET_WEEKDAYS else DEFAULT_COMPANY_RESET_WEEKDAY
@@ -257,13 +290,17 @@ def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str,
 
     issues: list[tuple[str, str]] = []
     parsed: list[str] = []
-    seen: dict[tuple[str, str], int] = {}
+    seen: dict[tuple[str, str], list[tuple[int, float | None, float | None]]] = {}
     valid_count = 0
     for index, row in enumerate(rows, start=2):
         seller = str(row.get("Seller") or "").strip()
         sheet_type = str(row.get("Sheet Type") or "").strip()
+        min_raw = row.get("Min Value")
+        max_raw = row.get("Max Value")
         rate_raw = row.get("Seller Rate")
         deduction_raw = row.get("Deduction")
+        min_value = seller_terms_money_value(min_raw)
+        max_value = seller_terms_money_value(max_raw)
         rate = seller_terms_rate(rate_raw)
         deduction = seller_terms_rate(deduction_raw)
         row_errors: list[str] = []
@@ -272,6 +309,12 @@ def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str,
             row_errors.append("missing Seller")
         if not sheet_type:
             row_errors.append("missing Sheet Type")
+        if str(min_raw or "").strip() and min_value is None:
+            row_errors.append(f"invalid Min Value {min_raw!r}")
+        if str(max_raw or "").strip() and max_value is None:
+            row_errors.append(f"invalid Max Value {max_raw!r}")
+        if min_value is not None and max_value is not None and min_value > max_value:
+            row_errors.append("Min Value cannot be above Max Value")
         if str(rate_raw or "").strip() and rate is None:
             row_errors.append(f"invalid Seller Rate {rate_raw!r}")
         if str(deduction_raw or "").strip() and deduction is None:
@@ -292,11 +335,11 @@ def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str,
                 row_errors.append(f"Sheet Type {sheet_type!r} is not an assignment company")
         duplicate_key = (seller.lower(), type_key)
         if seller and sheet_type:
-            previous_row = seen.get(duplicate_key)
-            if previous_row:
-                row_warnings.append(f"duplicate Seller/Sheet Type also appears on row {previous_row}")
-            else:
-                seen[duplicate_key] = index
+            for previous_row, previous_min, previous_max in seen.get(duplicate_key, []):
+                if seller_terms_ranges_overlap(min_value, max_value, previous_min, previous_max):
+                    row_warnings.append(f"overlapping Seller/Sheet Type range also appears on row {previous_row}")
+                    break
+            seen.setdefault(duplicate_key, []).append((index, min_value, max_value))
         label = f"row {index}: {seller or '<missing seller>'} / {sheet_type or '<missing sheet type>'}"
         if row_errors:
             issues.append(("ERROR", f"{label} - {'; '.join(row_errors)}"))
@@ -309,6 +352,7 @@ def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str,
             parts.append(f"rate {rate:.0%}")
         if deduction is not None:
             parts.append(f"deduction {deduction:.0%}")
+        parts.append(seller_terms_range_label(min_value, max_value))
         parsed.append(f"{seller} / {sheet_type}: {', '.join(parts)}")
 
     errors = sum(1 for level, _message in issues if level == "ERROR")
@@ -1509,8 +1553,8 @@ class PeopleRulesDialog(tk.Toplevel):
     def __init__(self, parent: tk.Misc, pipeline_root: Path, companies: list[dict[str, Any]], on_saved: Callable[[], None] | None = None) -> None:
         super().__init__(parent)
         self.title("People Rules")
-        self.geometry("980x620")
-        self.minsize(760, 420)
+        self.geometry("1180x650")
+        self.minsize(920, 460)
         self.transient(parent)
         self.configure(bg="#121212")
         self.pipeline_root = Path(pipeline_root)
@@ -1538,7 +1582,7 @@ class PeopleRulesDialog(tk.Toplevel):
         ttk.Label(shell, text="People Rules", style="AssignHeader.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         ttk.Label(
             shell,
-            text="Add seller payout terms here. Sheet Type must match an active company rule.",
+            text="Add seller payout terms here. Sheet Type must match an active company rule. Optional Min/Max Value ranges let one seller use different rates or deductions by card value.",
             style="AssignBgMuted.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(0, 12))
         table = ttk.Frame(shell, style="AssignPanel.TFrame", padding=12)
@@ -1546,7 +1590,7 @@ class PeopleRulesDialog(tk.Toplevel):
         shell.rowconfigure(2, weight=1)
         self.rows_frame = table
         headings = tuple(SELLER_TERMS_FIELD_LABELS.get(field, field) for field in SELLER_TERMS_FIELDS) + ("",)
-        widths = (26, 24, 14, 14, 10)
+        widths = (24, 22, 12, 12, 12, 12, 10)
         for column, (heading, width) in enumerate(zip(headings, widths)):
             ttk.Label(table, text=heading, style="AssignTitle.TLabel").grid(row=0, column=column, sticky="w", padx=(0, 8), pady=(0, 8))
             table.columnconfigure(column, weight=1 if column in {0, 1} else 0, minsize=width * 8)
@@ -1634,7 +1678,7 @@ class PeopleRulesDialog(tk.Toplevel):
     def _validated_rows(self) -> list[dict[str, str]] | None:
         active_types = {name.lower(): name for name in self._active_sheet_types()}
         rows: list[dict[str, str]] = []
-        seen: set[tuple[str, str]] = set()
+        seen: dict[tuple[str, str], list[tuple[int, float | None, float | None]]] = {}
         for index, vars_by_field in enumerate(self.row_vars, start=1):
             row = {field: var.get().strip() for field, var in vars_by_field.items()}
             if not any(row.values()):
@@ -1647,6 +1691,17 @@ class PeopleRulesDialog(tk.Toplevel):
                 return None
             if row["Sheet Type"].lower() not in active_types:
                 self.status.set(f"Row {index}: Sheet Type must match an active Company Rule.")
+                return None
+            min_value = seller_terms_money_value(row.get("Min Value"))
+            max_value = seller_terms_money_value(row.get("Max Value"))
+            if row["Min Value"] and min_value is None:
+                self.status.set(f"Row {index}: Min Value must be a number only.")
+                return None
+            if row["Max Value"] and max_value is None:
+                self.status.set(f"Row {index}: Max Value must be a number only.")
+                return None
+            if min_value is not None and max_value is not None and min_value > max_value:
+                self.status.set(f"Row {index}: Min Value cannot be above Max Value.")
                 return None
             if not row["Seller Rate"] and not row["Deduction"]:
                 self.status.set(f"Row {index}: enter Seller Rate or Deduction.")
@@ -1673,10 +1728,11 @@ class PeopleRulesDialog(tk.Toplevel):
                 self.status.set(f"Row {index}: Deduction % cannot be above 100.")
                 return None
             key = (row["Seller"].lower(), row["Sheet Type"].lower())
-            if key in seen:
-                self.status.set(f"Row {index}: duplicate Seller and Sheet Type.")
-                return None
-            seen.add(key)
+            for previous_index, previous_min, previous_max in seen.get(key, []):
+                if seller_terms_ranges_overlap(min_value, max_value, previous_min, previous_max):
+                    self.status.set(f"Row {index}: value range overlaps row {previous_index} for this Seller and Sheet Type.")
+                    return None
+            seen.setdefault(key, []).append((index, min_value, max_value))
             row["Sheet Type"] = active_types[row["Sheet Type"].lower()]
             rows.append(row)
         return rows

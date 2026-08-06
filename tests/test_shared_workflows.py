@@ -4028,6 +4028,46 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertTrue(showinfo.called)
         self.assertFalse(dummy.applied_terms)
 
+    def test_seller_terms_deduction_uses_matching_value_range_per_card(self) -> None:
+        class SellerRangeDummy:
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_match = app.CardPipelineApp._seller_terms_match
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+            _seller_terms_match_for_row = app.CardPipelineApp._seller_terms_match_for_row
+
+            def __init__(self):
+                self.assignment_engine = assignment_engine.AssignmentEngine([
+                    assignment_engine.AssignmentCompany(
+                        "Arena Club",
+                        assignment_engine.CompanyRules(accept_all=True),
+                        [assignment_engine.PayoutTier(0, None, 0.95)],
+                        value_source="comps",
+                    )
+                ])
+
+            def _load_seller_terms(self):
+                return [
+                    {"seller": "John", "sheet_type": "Arena Club", "min_value": 0, "max_value": 499.99, "deduction": 0.05},
+                    {"seller": "John", "sheet_type": "Arena Club", "min_value": 500, "max_value": None, "deduction": 0.10},
+                ]
+
+            def _money_value(self, value):
+                return app.CardPipelineApp._money_value(self, value)
+
+        low = WorkbookRow(excel_row=2, cert_number="", grader="", card_title="Low Card", card_ladder_comps_average=400)
+        high = WorkbookRow(excel_row=3, cert_number="", grader="", card_title="High Card", card_ladder_comps_average=1000)
+        dummy = SellerRangeDummy()
+
+        low_term, _low_decision = dummy._seller_terms_match_for_row("John", "Arena Club", low)
+        high_term, _high_decision = dummy._seller_terms_match_for_row("John", "Arena Club", high)
+
+        self.assertEqual(low_term["deduction"], 0.05)
+        self.assertEqual(high_term["deduction"], 0.10)
+        self.assertEqual(dummy._seller_terms_company_price(low, "Arena Club", term=low_term), 360.0)
+        self.assertEqual(dummy._seller_terms_company_price(high, "Arena Club", term=high_term), 850.0)
+
     def test_seller_terms_pending_until_required_values_exist(self) -> None:
         class SellerSummaryDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -4332,12 +4372,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "seller_terms.csv"
             path.write_text(
-                "Seller,Sheet Type,Seller Rate,Deduction\n"
-                "John,Arena Club,90%,\n"
-                "John,Arena Club,85%,\n"
-                "Mary,Fanatics,,5%\n"
-                "No Company,Unknown,90%,\n"
-                "Bad Rate,Arena Club,nope,\n",
+                "Seller,Sheet Type,Min Value,Max Value,Seller Rate,Deduction\n"
+                "John,Arena Club,0,99,90%,\n"
+                "John,Arena Club,100,500,85%,\n"
+                "John,Arena Club,50,150,80%,\n"
+                "Mary,Fanatics,,,,5%\n"
+                "No Company,Unknown,,,90%,\n"
+                "Bad Rate,Arena Club,,,nope,\n",
                 encoding="utf-8",
             )
             lines = assignment_config_ui.seller_terms_health_lines(
@@ -4348,8 +4389,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 ],
             )
         text = "\n".join(lines)
-        self.assertIn("3 valid row(s)", text)
-        self.assertIn("duplicate Seller/Sheet Type", text)
+        self.assertIn("4 valid row(s)", text)
+        self.assertIn("overlapping Seller/Sheet Type range", text)
         self.assertIn("inactive assignment company", text)
         self.assertIn("is not an assignment company", text)
         self.assertIn("invalid Seller Rate", text)
@@ -7210,8 +7251,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class SellerTermsDummy:
             _money_value = app.CardPipelineApp._money_value
             _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_range_label = app.CardPipelineApp._seller_terms_range_label
             _load_seller_terms = app.CardPipelineApp._load_seller_terms
             _seller_terms_match = app.CardPipelineApp._seller_terms_match
+            _seller_terms_match_for_row = app.CardPipelineApp._seller_terms_match_for_row
             _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
             _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
             _restore_create_seller_term_prices = app.CardPipelineApp._restore_create_seller_term_prices

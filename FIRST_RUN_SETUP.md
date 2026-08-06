@@ -320,7 +320,7 @@ CARD_PIPELINE/ASSIGNMENT RULES/seller_terms.csv
 Each row needs:
 
 ```text
-Seller, Sheet Type, Seller Rate, Deduction
+Seller, Sheet Type, Min Value, Max Value, Seller Rate, Deduction
 ```
 
 In the People Rules popup, the percentage fields are labeled **Seller Rate %** and **Deduction %**. Type numbers only, without `%`. Decimals are allowed.
@@ -334,7 +334,7 @@ Examples:
 10.5
 ```
 
-Use **Seller Rate %** for a flat percent of the Sheet Type company's source value. Use **Deduction %** to follow the Sheet Type company's payout logic and subtract that percentage from the company payout. Use one or the other on a row, not both.
+Use **Seller Rate %** for a flat percent of the Sheet Type company's source value. Use **Deduction %** to follow the Sheet Type company's payout logic and subtract that percentage from the company payout. Use one or the other on a row, not both. Add multiple rows for the same seller and sheet type only when their Min/Max Value ranges do not overlap.
 
 ## Step 15: Check The Full Workflow
 

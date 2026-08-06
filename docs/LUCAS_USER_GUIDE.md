@@ -353,7 +353,7 @@ When Network Mode is on:
 Seller terms columns:
 
 ```text
-Seller, Sheet Type, Seller Rate, Deduction
+Seller, Sheet Type, Min Value, Max Value, Seller Rate, Deduction
 ```
 
 The People Rules popup labels the percentage fields as **Seller Rate %** and **Deduction %**. Type numbers only, without a percent sign. Decimals are allowed.
@@ -382,10 +382,11 @@ How seller terms work:
 - `Seller Rate %` pays the seller that percentage of the matching company source value. Example: source value `100` and Seller Rate `90` writes Purchase `90`.
 - `Deduction %` follows the Sheet Type company's payout logic, then subtracts that percentage of the company source value. Example: company payout `95` on source value `100` and Deduction `10` writes Purchase `85`.
 - Use either `Seller Rate %` or `Deduction %` on a row, not both.
+- `Min Value` and `Max Value` are optional card value cutoffs. Leave either side blank for no floor or no cap. Multiple rows for the same seller and sheet type are allowed when these ranges do not overlap.
 - If Seller or Sheet Type is blank, purchase prices stay normal.
 - If terms are invalid, save stops with a clear prompt.
 
-Use **People Rules Health** in Company Rules to find duplicate rows, inactive companies, missing companies, bad rates, and parsed terms.
+Use **People Rules Health** in Company Rules to find overlapping seller ranges, inactive companies, missing companies, bad rates, and parsed terms.
 
 ## Manual Company Rule Year Ranges
 

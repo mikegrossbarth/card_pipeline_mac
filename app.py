@@ -12186,7 +12186,7 @@ class CardPipelineApp(tk.Tk):
                 rate = self._seller_terms_rate(term.get("rate"))
             if deduction is None:
                 deduction = self._seller_terms_rate(term.get("deduction"))
-        if rate is None and deduction is None:
+        if rate is None and deduction is None and not term:
             return None
         return {"seller": seller, "sheet_type": sheet_type, "rate": rate, "deduction": deduction}
 
@@ -12212,14 +12212,20 @@ class CardPipelineApp(tk.Tk):
         sheet_type = str(term.get("sheet_type") or "").strip()
         rate = self._seller_terms_rate(term.get("rate"))
         deduction = self._seller_terms_rate(term.get("deduction"))
+        seller = str(term.get("seller") or marker.get("assigned_person") or "").strip()
         payout_total = 0.0
         ready_count = 0
         missing_count = 0
         for row in rows:
+            row_term, _decision = self._seller_terms_match_for_row(seller, sheet_type, row) if seller else (None, None)
             seller_price = (
-                self._seller_terms_company_price(row, sheet_type, deduction=deduction)
-                if deduction is not None
-                else self._seller_terms_company_price(row, sheet_type, rate=rate)
+                self._seller_terms_company_price(row, sheet_type, term=row_term)
+                if row_term is not None
+                else (
+                    self._seller_terms_company_price(row, sheet_type, deduction=deduction)
+                    if deduction is not None
+                    else self._seller_terms_company_price(row, sheet_type, rate=rate)
+                )
             )
             if seller_price is None:
                 missing_count += 1
@@ -12744,8 +12750,10 @@ class CardPipelineApp(tk.Tk):
             value_source = str(normalized.get("valuesource") or normalized.get("source") or "").strip()
             rate = self._seller_terms_rate(normalized.get("sellerrate") or normalized.get("rate") or normalized.get("payout") or normalized.get("percentage"))
             deduction = self._seller_terms_rate(normalized.get("deduction") or normalized.get("sellerdeduction") or normalized.get("deductionpercent") or normalized.get("deductionpercentage"))
+            min_value = self._money_value(normalized.get("minvalue") or normalized.get("min") or normalized.get("minimum") or normalized.get("floor"))
+            max_value = self._money_value(normalized.get("maxvalue") or normalized.get("max") or normalized.get("maximum") or normalized.get("ceiling"))
             if seller and sheet_type and (rate is not None or deduction is not None):
-                terms.append({"seller": seller, "sheet_type": sheet_type, "value_source": value_source, "rate": rate, "deduction": deduction})
+                terms.append({"seller": seller, "sheet_type": sheet_type, "value_source": value_source, "min_value": min_value, "max_value": max_value, "rate": rate, "deduction": deduction})
         return terms
 
     def _refresh_seller_terms_dropdowns(self) -> None:
@@ -12765,15 +12773,46 @@ class CardPipelineApp(tk.Tk):
         rate = numeric / 100 if "%" in raw or numeric > 1 else numeric
         return rate if rate >= 0 else None
 
-    def _seller_terms_match(self, seller: str, sheet_type: str) -> dict[str, object] | None:
+    def _seller_terms_value_in_range(self, source_value: float | None, term: dict[str, object]) -> bool:
+        min_value = self._money_value(term.get("min_value"))
+        max_value = self._money_value(term.get("max_value"))
+        if source_value is None:
+            return min_value is None and max_value is None
+        if min_value is not None and source_value < min_value:
+            return False
+        if max_value is not None and source_value > max_value:
+            return False
+        return True
+
+    def _seller_terms_range_label(self, term: dict[str, object]) -> str:
+        min_value = self._money_value(term.get("min_value"))
+        max_value = self._money_value(term.get("max_value"))
+        if min_value is None and max_value is None:
+            return "all values"
+        if min_value is None:
+            return f"up to {format_money(max_value or 0)}"
+        if max_value is None:
+            return f"{format_money(min_value)}+"
+        return f"{format_money(min_value)} to {format_money(max_value)}"
+
+    def _seller_terms_match(self, seller: str, sheet_type: str, source_value: float | None = None) -> dict[str, object] | None:
         seller_key = seller.strip().lower()
         type_key = sheet_type.strip().lower()
         if not seller_key or not type_key:
             return None
+        fallback: dict[str, object] | None = None
         for term in self._load_seller_terms():
-            if str(term.get("seller") or "").strip().lower() == seller_key and str(term.get("sheet_type") or "").strip().lower() == type_key:
+            if str(term.get("seller") or "").strip().lower() != seller_key or str(term.get("sheet_type") or "").strip().lower() != type_key:
+                continue
+            if source_value is None:
+                if fallback is None:
+                    fallback = term
+                if self._seller_terms_value_in_range(None, term):
+                    return term
+                continue
+            if self._seller_terms_value_in_range(source_value, term):
                 return term
-        return None
+        return fallback if source_value is None else None
 
     def _seller_terms_company_decision(self, row: WorkbookRow, company_name: str):
         company_key = company_name.strip().lower()
@@ -12785,12 +12824,17 @@ class CardPipelineApp(tk.Tk):
                 return decision, decisions
         return None, decisions
 
-    def _seller_terms_company_price(self, row: WorkbookRow, company_name: str, rate: float | None = None, deduction: float | None = None) -> float | None:
+    def _seller_terms_company_price(self, row: WorkbookRow, company_name: str, rate: float | None = None, deduction: float | None = None, term: dict[str, object] | None = None) -> float | None:
         decision, _decisions = self._seller_terms_company_decision(row, company_name)
         if decision is None:
             return None
         if decision.source_value is None:
             return None
+        if term is not None:
+            if not self._seller_terms_value_in_range(decision.source_value, term):
+                return None
+            rate = self._seller_terms_rate(term.get("rate"))
+            deduction = self._seller_terms_rate(term.get("deduction"))
         if deduction is not None:
             if decision.payout is None:
                 return None
@@ -12800,6 +12844,13 @@ class CardPipelineApp(tk.Tk):
                 return None
             return round(decision.source_value * rate, 2)
         return None
+
+    def _seller_terms_match_for_row(self, seller: str, sheet_type: str, row: WorkbookRow) -> tuple[dict[str, object] | None, object | None]:
+        decision, _decisions = self._seller_terms_company_decision(row, sheet_type)
+        source_value = getattr(decision, "source_value", None) if decision is not None else None
+        if source_value is None:
+            return self._seller_terms_match(seller, sheet_type, None), decision
+        return self._seller_terms_match(seller, sheet_type, source_value), decision
 
     def _seller_terms_no_match_details(self, rows: list[WorkbookRow], company_name: str, limit: int = 5) -> str:
         details: list[str] = []
@@ -12876,10 +12927,15 @@ class CardPipelineApp(tk.Tk):
             return 0
         changed = 0
         skipped = 0
+        applied_ranges: set[str] = set()
         for row in self.intake_rows:
             if not hasattr(row, "_seller_terms_base_purchase"):
                 setattr(row, "_seller_terms_base_purchase", row.existing_value)
-            if deduction is not None:
+            row_term, _decision = self._seller_terms_match_for_row(seller, sheet_type, row)
+            if row_term is not None:
+                applied_ranges.add(self._seller_terms_range_label(row_term))
+                seller_price = self._seller_terms_company_price(row, sheet_type, term=row_term)
+            elif deduction is not None:
                 seller_price = self._seller_terms_company_price(row, sheet_type, deduction=deduction)
             else:
                 seller_price = self._seller_terms_company_price(row, sheet_type, rate=rate)
@@ -12894,10 +12950,12 @@ class CardPipelineApp(tk.Tk):
         if show_status:
             if deduction is not None:
                 suffix = f" ({skipped} skipped: no matching {sheet_type} payout)" if skipped else ""
-                self.status_var.set(f"Applied seller terms: {seller} / {sheet_type} payout minus {deduction:.0%}.{suffix}")
+                range_note = f" across {len(applied_ranges)} range(s)" if len(applied_ranges) > 1 else ""
+                self.status_var.set(f"Applied seller terms: {seller} / {sheet_type} payout minus {deduction:.0%}{range_note}.{suffix}")
             else:
-                suffix = f" ({skipped} skipped: no matching {sheet_type} source value)" if skipped else ""
-                self.status_var.set(f"Applied seller terms: {seller} / {sheet_type} at {rate:.0%} of {sheet_type} rule value.{suffix}")
+                suffix = f" ({skipped} skipped: no matching {sheet_type} source value/range)" if skipped else ""
+                range_note = f" across {len(applied_ranges)} range(s)" if len(applied_ranges) > 1 else ""
+                self.status_var.set(f"Applied seller terms: {seller} / {sheet_type} at {rate:.0%} of {sheet_type} rule value{range_note}.{suffix}")
         return changed
 
     def _known_assigned_people(self) -> list[str]:
@@ -16539,12 +16597,18 @@ class CardPipelineApp(tk.Tk):
         sheet_type = str(term.get("sheet_type") or "").strip()
         rate = self._seller_terms_rate(term.get("rate"))
         deduction = self._seller_terms_rate(term.get("deduction"))
+        seller = str(term.get("seller") or marker.get("assigned_person") or "").strip()
         changed = 0
         for row in rows:
+            row_term, _decision = self._seller_terms_match_for_row(seller, sheet_type, row) if seller else (None, None)
             seller_price = (
-                self._seller_terms_company_price(row, sheet_type, deduction=deduction)
-                if deduction is not None
-                else self._seller_terms_company_price(row, sheet_type, rate=rate)
+                self._seller_terms_company_price(row, sheet_type, term=row_term)
+                if row_term is not None
+                else (
+                    self._seller_terms_company_price(row, sheet_type, deduction=deduction)
+                    if deduction is not None
+                    else self._seller_terms_company_price(row, sheet_type, rate=rate)
+                )
             )
             if seller_price is None:
                 continue
@@ -16609,10 +16673,15 @@ class CardPipelineApp(tk.Tk):
                 deduction = self._money_value(seller_term.get("deduction"))
                 applicable_rows = 0
                 for row in self.intake_rows:
+                    row_term, _decision = self._seller_terms_match_for_row(seller, seller_sheet_type, row)
                     seller_price = (
-                        self._seller_terms_company_price(row, seller_sheet_type, deduction=deduction)
-                        if deduction is not None
-                        else self._seller_terms_company_price(row, seller_sheet_type, rate=rate)
+                        self._seller_terms_company_price(row, seller_sheet_type, term=row_term)
+                        if row_term is not None
+                        else (
+                            self._seller_terms_company_price(row, seller_sheet_type, deduction=deduction)
+                            if deduction is not None
+                            else self._seller_terms_company_price(row, seller_sheet_type, rate=rate)
+                        )
                     )
                     if seller_price is not None:
                         applicable_rows += 1
