@@ -150,7 +150,7 @@ If no company can take a priced row, `Best Company` shows `NOBODY TAKES`.
 
 Use `Payouts/Tabs` to track active balances by assigned person and mark person-level balances paid. Company sheets are stored as one workbook per company under `COMPANY SHEETS/<Company>/<Company>.xlsx`, with weekly tabs named `Week of YYYY-MM-DD`. CourtYard/CY weekly tabs use CY-compatible front columns, and Fanatics weekly tabs use `Category`, `Card`, `Grade`, `Cert #`, `CL Value`, and `Payout` up front with L.U.C.A.S tracking columns trailing to the right.
 
-Use `Profit` to review sold cards and sold sheets. The Profit tab can filter by assigned person, shows a daily profit line chart, and can toggle between individual sold-card rows and grouped sold-sheet summaries.
+Use `Profit` to review sold cards and sold sheets. The Profit tab can filter by assigned person, shows profit line charts with Day/Month breakdown choices for yearly periods, and can toggle between individual sold-card rows and grouped sold-sheet summaries.
 
 ## Tests
 

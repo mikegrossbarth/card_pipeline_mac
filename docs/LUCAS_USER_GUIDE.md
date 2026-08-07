@@ -300,6 +300,7 @@ Profit reads the profit ledger and, when requested, company sheets.
 Use Profit to:
 
 - View daily, overall, profit-to-sales-ratio, and per-company profit trend charts.
+- Switch yearly graph breakdowns between daily points and monthly buckets.
 - View month, year, YTD, and total profit.
 - Search sold cards.
 - Review sold sheets.

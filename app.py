@@ -195,6 +195,8 @@ NO_COMPANY_TAKES_LABEL = "NOBODY TAKES"
 PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Last 30 Days", "Calendar Month", "Year", "YTD", "Total")
 PROFIT_GRAPH_OPTIONS = ("Overall Profit", "Profit to Sales Ratio", "Daily Trend", "Profit by Company")
 PROFIT_PLOT_OPTIONS = ("Overall", "By Sport")
+PROFIT_BREAKDOWN_OPTIONS = ("Day", "Month")
+DEFAULT_PROFIT_BREAKDOWN = "Month"
 DEFAULT_PROFIT_PERIOD = "Calendar Month"
 DEFAULT_PROFIT_GRAPH = "Overall Profit"
 DEFAULT_PROFIT_PLOT = "Overall"
@@ -995,6 +997,7 @@ class CardPipelineApp(tk.Tk):
         self.profit_period_var = tk.StringVar(value=DEFAULT_PROFIT_PERIOD)
         self.profit_graph_var = tk.StringVar(value=DEFAULT_PROFIT_GRAPH)
         self.profit_plot_var = tk.StringVar(value=DEFAULT_PROFIT_PLOT)
+        self.profit_breakdown_var = tk.StringVar(value=DEFAULT_PROFIT_BREAKDOWN)
         self.profit_search_var = tk.StringVar()
         self.profit_chart_title_var = tk.StringVar(value=self._profit_chart_title())
         self.profit_view_mode = tk.StringVar(value="Sold Cards")
@@ -2535,12 +2538,22 @@ class CardPipelineApp(tk.Tk):
         )
         self.profit_plot_combo.grid(row=0, column=8, sticky="w")
         self.profit_plot_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
-        ttk.Button(controls, text="Refresh View", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=9, sticky="w", padx=(10, 0))
-        ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=10, sticky="w", padx=(8, 0))
-        controls.columnconfigure(11, weight=1)
+        ttk.Label(controls, text="Breakdown", style="Muted.TLabel").grid(row=0, column=9, sticky="e", padx=(18, 6))
+        self.profit_breakdown_combo = ttk.Combobox(
+            controls,
+            textvariable=self.profit_breakdown_var,
+            values=PROFIT_BREAKDOWN_OPTIONS,
+            width=8,
+            state="readonly",
+        )
+        self.profit_breakdown_combo.grid(row=0, column=10, sticky="w")
+        self.profit_breakdown_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
+        ttk.Button(controls, text="Refresh View", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=11, sticky="w", padx=(10, 0))
+        ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=12, sticky="w", padx=(8, 0))
+        controls.columnconfigure(13, weight=1)
         self.profit_search_var.trace_add("write", lambda *_args: self.refresh_profit_tab())
-        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=12, sticky="w", pady=(8, 0))
-        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=12, sticky="w", pady=(4, 0))
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=14, sticky="w", pady=(8, 0))
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=14, sticky="w", pady=(4, 0))
 
         profit_split = tk.PanedWindow(
             self.profit_tab,
@@ -10031,10 +10044,19 @@ class CardPipelineApp(tk.Tk):
         plot = self.profit_plot_var.get().strip() if hasattr(self, "profit_plot_var") else DEFAULT_PROFIT_PLOT
         return plot if plot in PROFIT_PLOT_OPTIONS else DEFAULT_PROFIT_PLOT
 
+    def _profit_breakdown_label(self) -> str:
+        breakdown = self.profit_breakdown_var.get().strip() if hasattr(self, "profit_breakdown_var") else DEFAULT_PROFIT_BREAKDOWN
+        return breakdown if breakdown in PROFIT_BREAKDOWN_OPTIONS else DEFAULT_PROFIT_BREAKDOWN
+
+    def _profit_monthly_breakdown(self) -> bool:
+        return self._profit_breakdown_label() == "Month" and self._profit_period_label() in {"Year", "YTD", "Total"}
+
     def _profit_chart_title(self) -> str:
         plot_label = self._profit_plot_label() if hasattr(self, "_profit_plot_label") else DEFAULT_PROFIT_PLOT
         plot_suffix = " by Sport" if plot_label == "By Sport" and self._profit_graph_label() != "Profit by Company" else ""
-        return f"{self._profit_graph_label()}{plot_suffix} ({self._profit_period_label()})"
+        period = self._profit_period_label()
+        breakdown_suffix = f" by {self._profit_breakdown_label()}" if period in {"Year", "YTD", "Total"} else ""
+        return f"{self._profit_graph_label()}{plot_suffix} ({period}{breakdown_suffix})"
 
     def _profit_sport_label(self, record: dict[str, object]) -> str:
         def display_sport(value: str) -> str:
@@ -10066,9 +10088,10 @@ class CardPipelineApp(tk.Tk):
         record["_profit_sport_label"] = "Other"
         return "Other"
 
-    def _profit_chart_bucket_label(self, sold_date) -> str:
-        period = self._profit_period_label()
-        if period in {"Year", "YTD", "Total"}:
+    def _profit_chart_bucket_label(self, sold_date, monthly: bool | None = None) -> str:
+        if monthly is None:
+            monthly = self._profit_monthly_breakdown()
+        if monthly:
             return sold_date.strftime("%Y-%m")
         return sold_date.isoformat()
 
@@ -10089,7 +10112,7 @@ class CardPipelineApp(tk.Tk):
             return [f"{year}-{month:02d}" for month in range(1, month_end + 1)]
         if monthly:
             buckets = {
-                self._profit_chart_bucket_label(sold_date)
+                self._profit_chart_bucket_label(sold_date, monthly)
                 for record in rows
                 for sold_date in [self._profit_record_date(record.get("date_added"))]
                 if sold_date is not None
@@ -10103,7 +10126,7 @@ class CardPipelineApp(tk.Tk):
                 cursor += timedelta(days=1)
             return labels
         buckets = {
-            self._profit_chart_bucket_label(sold_date)
+            self._profit_chart_bucket_label(sold_date, monthly)
             for record in rows
             for sold_date in [self._profit_record_date(record.get("date_added"))]
             if sold_date is not None
@@ -10111,66 +10134,44 @@ class CardPipelineApp(tk.Tk):
         return sorted(buckets)
 
     def _profit_chart_series(self, rows: list[dict[str, object]]) -> tuple[list[str], list[float]]:
-        daily: dict[str, float] = {}
-        sales: dict[str, float] = {}
+        profit_by_bucket: dict[str, float] = {}
+        sales_by_bucket: dict[str, float] = {}
         ratio_mode = self._profit_graph_label() == "Profit to Sales Ratio"
-        monthly_ratio = ratio_mode and self._profit_period_label() in {"Year", "YTD", "Total"}
-        if monthly_ratio:
-            buckets = self._profit_chart_bucket_range(rows, True)
-            profit_by_bucket = {bucket: 0.0 for bucket in buckets}
-            sales_by_bucket = {bucket: 0.0 for bucket in buckets}
-            for record in rows:
-                profit = self._money_value(record.get("profit"))
-                sold_date = self._profit_record_date(record.get("date_added"))
-                if profit is None or sold_date is None:
-                    continue
-                bucket = self._profit_chart_bucket_label(sold_date)
-                profit_by_bucket[bucket] = profit_by_bucket.get(bucket, 0.0) + float(profit)
-                sale = self._money_value(record.get("sale_price"))
-                if sale is not None:
-                    sales_by_bucket[bucket] = sales_by_bucket.get(bucket, 0.0) + float(sale)
-            if not buckets:
-                buckets = sorted(profit_by_bucket)
-            return buckets, [
-                profit_by_bucket.get(bucket, 0.0) / sales_by_bucket[bucket] if sales_by_bucket.get(bucket) else 0.0
-                for bucket in buckets
-            ]
+        monthly = self._profit_monthly_breakdown()
+        buckets = self._profit_chart_bucket_range(rows, monthly)
+        for bucket in buckets:
+            profit_by_bucket.setdefault(bucket, 0.0)
+            sales_by_bucket.setdefault(bucket, 0.0)
         for record in rows:
             profit = self._money_value(record.get("profit"))
             sold_date = self._profit_record_date(record.get("date_added"))
             if profit is None or sold_date is None:
                 continue
-            day = sold_date.isoformat()
-            daily[day] = daily.get(day, 0.0) + float(profit)
+            bucket = self._profit_chart_bucket_label(sold_date, monthly)
+            profit_by_bucket[bucket] = profit_by_bucket.get(bucket, 0.0) + float(profit)
             sale = self._money_value(record.get("sale_price"))
             if sale is not None:
-                sales[day] = sales.get(day, 0.0) + float(sale)
-        period_start, period_end = self._profit_period_bounds(self._profit_period_label())
-        if period_start is not None:
-            cursor = period_start
-            while cursor <= period_end:
-                daily.setdefault(cursor.isoformat(), 0.0)
-                sales.setdefault(cursor.isoformat(), 0.0)
-                cursor += timedelta(days=1)
-        days = sorted(daily)
+                sales_by_bucket[bucket] = sales_by_bucket.get(bucket, 0.0) + float(sale)
+        if not buckets:
+            buckets = sorted(profit_by_bucket)
         if ratio_mode:
-            return days, [daily[day] / sales[day] if sales.get(day) else 0.0 for day in days]
-        daily_values = [daily[day] for day in days]
+            return buckets, [profit_by_bucket[bucket] / sales_by_bucket[bucket] if sales_by_bucket.get(bucket) else 0.0 for bucket in buckets]
+        bucket_values = [profit_by_bucket[bucket] for bucket in buckets]
         if self._profit_graph_label() != "Overall Profit":
-            return days, daily_values
+            return buckets, bucket_values
         running = 0.0
         cumulative_values: list[float] = []
-        for value in daily_values:
+        for value in bucket_values:
             running += value
             cumulative_values.append(running)
-        return days, cumulative_values
+        return buckets, cumulative_values
 
     def _profit_company_label(self, record: dict[str, object]) -> str:
         label = str(record.get("company") or record.get("buyer") or "").strip()
         return label or "General Sold"
 
     def _profit_company_chart_series(self, rows: list[dict[str, object]]) -> tuple[list[str], list[dict[str, object]]]:
-        monthly = self._profit_period_label() in {"Year", "YTD", "Total"}
+        monthly = self._profit_monthly_breakdown()
         buckets = self._profit_chart_bucket_range(rows, monthly)
         profit_by_company: dict[str, dict[str, float]] = {}
         for record in rows:
@@ -10181,7 +10182,7 @@ class CardPipelineApp(tk.Tk):
             if profit is None or sold_date is None:
                 continue
             company = self._profit_company_label(record)
-            bucket = self._profit_chart_bucket_label(sold_date)
+            bucket = self._profit_chart_bucket_label(sold_date, monthly)
             profit_by_company.setdefault(company, {})[bucket] = profit_by_company.setdefault(company, {}).get(bucket, 0.0) + float(profit)
         if not buckets:
             buckets = sorted({bucket for company_values in profit_by_company.values() for bucket in company_values})
@@ -10204,7 +10205,7 @@ class CardPipelineApp(tk.Tk):
         if self._profit_plot_label() != "By Sport":
             labels, values = self._profit_chart_series(rows)
             return labels, [{"label": self._profit_graph_label(), "values": values, "color": "#22c55e"}], self._profit_graph_label() == "Profit to Sales Ratio"
-        monthly = self._profit_period_label() in {"Year", "YTD", "Total"}
+        monthly = self._profit_monthly_breakdown()
         buckets = self._profit_chart_bucket_range(rows, monthly)
         profit_by_sport: dict[str, dict[str, float]] = {}
         sales_by_sport: dict[str, dict[str, float]] = {}
@@ -10216,7 +10217,7 @@ class CardPipelineApp(tk.Tk):
             if profit is None or sold_date is None:
                 continue
             sport = self._profit_sport_label(record)
-            bucket = self._profit_chart_bucket_label(sold_date)
+            bucket = self._profit_chart_bucket_label(sold_date, monthly)
             profit_by_sport.setdefault(sport, {})[bucket] = profit_by_sport.setdefault(sport, {}).get(bucket, 0.0) + float(profit)
             sale = self._money_value(record.get("sale_price"))
             if sale is not None:
