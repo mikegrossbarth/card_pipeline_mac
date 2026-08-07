@@ -7134,7 +7134,7 @@ class CardPipelineApp(tk.Tk):
         popup = tk.Toplevel(self)
         popup.title("Trade Portal")
         trade_outgoing_min_width = 680
-        trade_incoming_min_width = 1040
+        trade_incoming_min_width = 890
         trade_portal_min_width = trade_outgoing_min_width + trade_incoming_min_width + 80
         trade_portal_min_height = 760
         popup.geometry(f"{trade_portal_min_width}x820")
@@ -7256,12 +7256,12 @@ class CardPipelineApp(tk.Tk):
         incoming_top.columnconfigure(0, weight=1)
         ttk.Label(incoming_top, text="Incoming Cards", style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=0, column=0, sticky="w")
         incoming_column_specs = (
-            ("Cert", 170, 0),
-            ("Grader", 112, 0),
+            ("Cert", 150, 0),
+            ("Grader", 118, 0),
             ("Card", 270, 2),
             ("Trade Value", 118, 0),
-            ("Notes", 230, 1),
-            ("", 118, 0),
+            ("Notes", 160, 1),
+            ("", 88, 0),
         )
         incoming_header = ttk.Frame(incoming_panel, style="Panel.TFrame")
         incoming_header.grid(row=1, column=0, sticky="ew", padx=(8, 6), pady=(8, 4))
@@ -7401,12 +7401,12 @@ class CardPipelineApp(tk.Tk):
             grader_var = tk.StringVar(value=str(values.get("grader") or ""))
             title_var = tk.StringVar(value=str(values.get("card_title") or ""))
             value_var = tk.StringVar(value=str(values.get("trade_value") or ""))
-            ttk.Entry(row_frame, textvariable=cert_var).grid(row=0, column=0, sticky="ew", padx=(0, 6))
-            grader_combo = ttk.Combobox(row_frame, textvariable=grader_var, values=INVENTORY_GRADER_OPTIONS, width=8)
+            ttk.Entry(row_frame, textvariable=cert_var, width=1).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+            grader_combo = ttk.Combobox(row_frame, textvariable=grader_var, values=INVENTORY_GRADER_OPTIONS, width=1)
             grader_combo.grid(row=0, column=1, sticky="ew", padx=(0, 6))
-            ttk.Entry(row_frame, textvariable=title_var).grid(row=0, column=2, sticky="ew", padx=(0, 6))
-            ttk.Entry(row_frame, textvariable=value_var).grid(row=0, column=3, sticky="ew", padx=(0, 6))
-            notes = tk.Text(row_frame, height=2, bg="#111111", fg="#f5f5f5", insertbackground="#ffffff", relief=tk.FLAT, wrap=tk.WORD)
+            ttk.Entry(row_frame, textvariable=title_var, width=1).grid(row=0, column=2, sticky="ew", padx=(0, 6))
+            ttk.Entry(row_frame, textvariable=value_var, width=1).grid(row=0, column=3, sticky="ew", padx=(0, 6))
+            notes = tk.Text(row_frame, height=2, width=1, bg="#111111", fg="#f5f5f5", insertbackground="#ffffff", relief=tk.FLAT, wrap=tk.WORD)
             notes.grid(row=0, column=4, sticky="ew", padx=(0, 6))
             if values.get("notes"):
                 notes.insert("1.0", str(values.get("notes") or ""))
