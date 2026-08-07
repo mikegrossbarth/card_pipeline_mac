@@ -7133,8 +7133,12 @@ class CardPipelineApp(tk.Tk):
     def open_trade_portal_popup(self) -> None:
         popup = tk.Toplevel(self)
         popup.title("Trade Portal")
-        popup.geometry("1220x780")
-        popup.minsize(1040, 660)
+        trade_outgoing_min_width = 680
+        trade_incoming_min_width = 1040
+        trade_portal_min_width = trade_outgoing_min_width + trade_incoming_min_width + 80
+        trade_portal_min_height = 760
+        popup.geometry(f"{trade_portal_min_width}x820")
+        popup.minsize(trade_portal_min_width, trade_portal_min_height)
         popup.transient(self)
         popup.grab_set()
         popup.configure(bg="#121212")
@@ -7194,12 +7198,12 @@ class CardPipelineApp(tk.Tk):
         outgoing_panel.rowconfigure(2, weight=1)
         outgoing_panel.rowconfigure(5, weight=1)
         outgoing_panel.columnconfigure(0, weight=1)
-        body.add(outgoing_panel, minsize=420)
+        body.add(outgoing_panel, minsize=trade_outgoing_min_width)
 
         incoming_panel = ttk.Frame(body, style="Panel.TFrame", padding=(12, 10))
         incoming_panel.rowconfigure(2, weight=1)
         incoming_panel.columnconfigure(0, weight=1)
-        body.add(incoming_panel, minsize=430)
+        body.add(incoming_panel, minsize=trade_incoming_min_width)
 
         outgoing_header = ttk.Frame(outgoing_panel, style="Panel.TFrame")
         outgoing_header.grid(row=0, column=0, sticky="ew")
@@ -7483,7 +7487,7 @@ class CardPipelineApp(tk.Tk):
         y = self.winfo_rooty() + max(40, (self.winfo_height() - popup.winfo_height()) // 2)
         popup.geometry(f"+{x}+{y}")
         try:
-            body.sash_place(0, int(popup.winfo_width() * 0.52), 1)
+            body.sash_place(0, trade_outgoing_min_width, 1)
         except Exception:
             pass
         search_inventory()
