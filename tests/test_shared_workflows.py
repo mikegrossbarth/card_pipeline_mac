@@ -5290,6 +5290,42 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_add_inventory_records_recomputes_key_when_assigning_raw_item_id(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _next_raw_item_id = lambda self, records=None: "RAW-TEAM-20260807-0001"
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                self.assertEqual(
+                    dummy.add_inventory_records(
+                        [
+                            {
+                                "assigned_person": "Lucas",
+                                "card_title": "Raw Test Card",
+                                "source_sheet": "Raw Lot.xlsx",
+                                "inventory_key": "stale-key",
+                            }
+                        ]
+                    ),
+                    1,
+                )
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(ledger[0]["item_id"], "RAW-TEAM-20260807-0001")
+                self.assertEqual(ledger[0]["inventory_key"], "raw-team-20260807-0001|raw lot.xlsx")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_inventory_record_from_row_preserves_manual_sport_for_unknown_title(self) -> None:
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -6552,6 +6588,72 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(records[0]["item_id"], "RAW-MIKEY-20260730-0013")
                 self.assertEqual(records[0]["cert_number"], "")
                 self.assertEqual(records[0]["assigned_person"], "Mikey")
+                self.assertEqual(records[0]["inventory_key"], "raw-mikey-20260730-0013|national_thursday_add_7_30_26.xlsx")
+
+                dummy.inventory_rows = records
+                self.assertEqual(dummy._received_inventory_candidate_records(), [])
+            finally:
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.COMPANY_SHEETS_DIR = old_company
+
+    def test_personal_received_inventory_reconcile_includes_barry_style_raw_received_row(self) -> None:
+        class ReconcileDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _company_sheet_source_cert_keys = lambda self: set()
+            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _load_profit_ledger = lambda self: []
+            _inventory_deleted_source_cert_keys = lambda self: set()
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _is_personal_lucas = lambda self: True
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+
+            def __init__(self):
+                self.inventory_rows = []
+
+            def _load_inventory_ledger(self):
+                return self.inventory_rows
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            received_dir.mkdir()
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Item ID", "Cert", "Company", "Sport", "Description", "Purchase Price", "Status", "Source", "RECEIVED"])
+            sheet.append(["RAW-MIKEY-20260803-0001", "", "", "baseball", "2025 Topps Finest Barry Bonds Gold Auto 47/50", 575, "Needs setup", "Manual", "X"])
+            workbook.save(received_dir / "imran_ramjani_7_27_26.xlsx")
+
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_company = app.COMPANY_SHEETS_DIR
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.COMPANY_SHEETS_DIR = root / "COMPANY SHEETS"
+            dummy = ReconcileDummy()
+            dummy.home_sheet_markers = {}
+            try:
+                records = dummy._received_inventory_candidate_records()
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0]["item_type"], "Raw")
+                self.assertEqual(records[0]["item_id"], "RAW-MIKEY-20260803-0001")
+                self.assertEqual(records[0]["cert_number"], "")
+                self.assertEqual(records[0]["grader"], "")
+                self.assertEqual(records[0]["best_company"], "")
+                self.assertEqual(records[0]["assigned_person"], "Mikey")
+                self.assertEqual(records[0]["source_sheet"], "imran_ramjani_7_27_26.xlsx")
+                self.assertEqual(records[0]["source"], "Manual")
+                self.assertEqual(records[0]["inventory_key"], "raw-mikey-20260803-0001|imran_ramjani_7_27_26.xlsx")
 
                 dummy.inventory_rows = records
                 self.assertEqual(dummy._received_inventory_candidate_records(), [])
@@ -7760,6 +7862,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
             _delete_inventory_photo_files_for_removed_records = app.CardPipelineApp._delete_inventory_photo_files_for_removed_records
             _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
@@ -9016,6 +9120,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
@@ -9056,7 +9162,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                         "status": "Active",
                     }
                 )
-                self.assertEqual(record["inventory_key"], item_id.lower())
+                self.assertEqual(record["inventory_key"], f"{item_id.lower()}|raw inventory")
                 dummy._save_inventory_ledger([record])
 
                 self.assertTrue(dummy.mark_inventory_record_sold(record, "Arena Club", 95, expense_type="Shipping", expense_amount=5))

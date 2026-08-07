@@ -2808,6 +2808,9 @@ class CardPipelineApp(tk.Tk):
     def _inventory_record_key(self, record: dict[str, object]) -> str:
         item_id = str(record.get("item_id") or "").strip()
         if item_id:
+            source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+            if source_sheet:
+                return f"{item_id.lower()}|{source_sheet}"
             return item_id.lower()
         return "|".join(
             str(record.get(field) or "").strip().lower()
@@ -3147,6 +3150,7 @@ class CardPipelineApp(tk.Tk):
                 record = dict(record)
                 record["item_type"] = "Raw"
                 record["item_id"] = self._next_raw_item_id([*ledger, *by_key.values()])
+                record.pop("inventory_key", None)
             normalized = self._normalize_inventory_record(record)
             normalized = self._enrich_inventory_record_assignment(normalized)
             key = str(normalized.get("inventory_key") or "")
