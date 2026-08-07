@@ -2679,32 +2679,54 @@ class CardPipelineApp(tk.Tk):
             cert = scan_to_cert(record.get("cert_number"))
             if source_sheet and cert:
                 keys.add((source_sheet, cert))
+            item_id = str(record.get("item_id") or "").strip().lower()
+            if source_sheet and item_id:
+                keys.add((source_sheet, f"item:{item_id}"))
+            title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
+            if source_sheet and not cert and title_identity:
+                keys.add((source_sheet, f"title:{title_identity}"))
         return keys
 
     def _record_inventory_deleted_tombstones(self, records: list[dict[str, object]], reason: str = "inventory_delete") -> int:
         existing = self._load_inventory_deleted_tombstones()
-        existing_keys = {
-            (
-                Path(str(record.get("source_sheet") or "")).name.strip().lower(),
-                scan_to_cert(record.get("cert_number")),
-            )
-            for record in existing
-        }
+        existing_keys: set[tuple[str, str]] = set()
+        for record in existing:
+            source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+            cert = scan_to_cert(record.get("cert_number"))
+            item_id = str(record.get("item_id") or "").strip().lower()
+            title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
+            if source_sheet and cert:
+                existing_keys.add((source_sheet, cert))
+            if source_sheet and item_id:
+                existing_keys.add((source_sheet, f"item:{item_id}"))
+            if source_sheet and not cert and title_identity:
+                existing_keys.add((source_sheet, f"title:{title_identity}"))
         added = 0
         deleted_at = datetime.now().isoformat(timespec="seconds")
         for raw_record in records:
             record = self._normalize_inventory_record(raw_record)
             source_sheet = Path(str(record.get("source_sheet") or "")).name.strip()
             cert = scan_to_cert(record.get("cert_number"))
-            if not source_sheet or not cert:
+            item_id = str(record.get("item_id") or "").strip()
+            title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
+            if cert:
+                identity = cert
+            elif item_id:
+                identity = f"item:{item_id.lower()}"
+            elif title_identity:
+                identity = f"title:{title_identity}"
+            else:
+                identity = ""
+            if not source_sheet or not identity:
                 continue
-            key = (source_sheet.lower(), cert)
+            key = (source_sheet.lower(), identity)
             if key in existing_keys:
                 continue
             existing.append(
                 {
                     "source_sheet": source_sheet,
                     "cert_number": cert,
+                    "item_id": item_id,
                     "inventory_key": str(record.get("inventory_key") or ""),
                     "card_title": str(record.get("card_title") or ""),
                     "assigned_person": str(record.get("assigned_person") or ""),
@@ -4454,6 +4476,9 @@ class CardPipelineApp(tk.Tk):
                 keys.add((source_sheet, cert))
         return keys
 
+    def _received_inventory_title_identity(self, card_title: object) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(card_title or "").lower())).strip()
+
     def _received_inventory_accounted_source_cert_keys(self) -> set[tuple[str, str]]:
         keys: set[tuple[str, str]] = set()
         for record in [self._normalize_inventory_record(row) for row in self._load_inventory_ledger()]:
@@ -4461,18 +4486,32 @@ class CardPipelineApp(tk.Tk):
             cert = scan_to_cert(record.get("cert_number"))
             if source_sheet and cert:
                 keys.add((source_sheet, cert))
+            if cert:
+                keys.add(("", cert))
             item_id = str(record.get("item_id") or "").strip().lower()
             if source_sheet and item_id:
                 keys.add((source_sheet, f"item:{item_id}"))
+            if item_id:
+                keys.add(("", f"item:{item_id}"))
+            title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
+            if source_sheet and not cert and title_identity:
+                keys.add((source_sheet, f"title:{title_identity}"))
         for record in [self._normalize_profit_record(row) for row in self._load_profit_ledger()]:
             cert = scan_to_cert(record.get("cert_number"))
             for source_value in (record.get("source_sheet"), record.get("original_source_sheet")):
                 source_sheet = Path(str(source_value or "")).name.strip().lower()
                 if source_sheet and cert:
                     keys.add((source_sheet, cert))
+                if cert:
+                    keys.add(("", cert))
                 item_id = str(record.get("item_id") or "").strip().lower()
                 if source_sheet and item_id:
                     keys.add((source_sheet, f"item:{item_id}"))
+                if item_id:
+                    keys.add(("", f"item:{item_id}"))
+                title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
+                if source_sheet and not cert and title_identity:
+                    keys.add((source_sheet, f"title:{title_identity}"))
         keys.update(self._inventory_deleted_source_cert_keys())
         return keys
 
@@ -4511,7 +4550,12 @@ class CardPipelineApp(tk.Tk):
                 continue
             if (path.name.lower(), row_identity) in accounted_keys:
                 continue
+            if ("", row_identity) in accounted_keys:
+                continue
             card_title = str(row.get("card_title") or "")
+            title_identity = CardPipelineApp._received_inventory_title_identity(self, card_title)
+            if not cert and title_identity and (path.name.lower(), f"title:{title_identity}") in accounted_keys:
+                continue
             sport = CardPipelineApp._inventory_sport_from_value(self, row.get("sport") or row.get("category"), card_title)
             item_type = "Graded" if cert else "Raw"
             candidates.append(

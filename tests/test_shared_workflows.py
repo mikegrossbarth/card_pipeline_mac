@@ -6663,9 +6663,143 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.WORKING_SHEETS_DIR = old_working
                 app.COMPANY_SHEETS_DIR = old_company
 
+    def test_received_inventory_reconcile_skips_raw_same_source_title_with_different_item_id(self) -> None:
+        class ReconcileDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _company_sheet_source_cert_keys = lambda self: set()
+            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _load_profit_ledger = lambda self: []
+            _inventory_deleted_source_cert_keys = lambda self: set()
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _is_personal_lucas = lambda self: True
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+
+            def __init__(self):
+                self.inventory_rows = []
+
+            def _load_inventory_ledger(self):
+                return self.inventory_rows
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            received_dir.mkdir()
+            title = "2025 Panini National Treasures Brett Favre American Treasures NFL Shield Reebok Patch Auto Booklet 1/1"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Item ID", "Cert", "Sport", "Description", "Source", "RECEIVED"])
+            sheet.append(["RAW-MIKEY-20260710-0015", "", "football", title, "Manual", "X"])
+            workbook.save(received_dir / "RAW_INVENTORY_ADDITION_7_7_6.xlsx")
+
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_company = app.COMPANY_SHEETS_DIR
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.COMPANY_SHEETS_DIR = root / "COMPANY SHEETS"
+            dummy = ReconcileDummy()
+            dummy.home_sheet_markers = {}
+            dummy.inventory_rows = [
+                dummy._normalize_inventory_record(
+                    {
+                        "item_type": "Raw",
+                        "item_id": "RAW-MIKEY-20260708-0102",
+                        "assigned_person": "Mikey",
+                        "source_sheet": "RAW_INVENTORY_ADDITION_7_7_6.xlsx",
+                        "card_title": title,
+                        "purchase_price": 3850,
+                        "status": "Active",
+                    }
+                )
+            ]
+            try:
+                self.assertEqual(dummy._received_inventory_candidate_records(), [])
+            finally:
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.COMPANY_SHEETS_DIR = old_company
+
+    def test_received_inventory_reconcile_skips_raw_item_id_already_active_from_other_source(self) -> None:
+        class ReconcileDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _company_sheet_source_cert_keys = lambda self: set()
+            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _load_profit_ledger = lambda self: []
+            _inventory_deleted_source_cert_keys = lambda self: set()
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _is_personal_lucas = lambda self: True
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+
+            def __init__(self):
+                self.inventory_rows = []
+
+            def _load_inventory_ledger(self):
+                return self.inventory_rows
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            received_dir.mkdir()
+            title = "2024 Panini Flawless Michael Irvin Emerald 5/5"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Item ID", "Cert", "Sport", "Description", "Source", "RECEIVED"])
+            sheet.append(["RAW-MIKEY-20260708-0014", "", "football", title, "Manual", "X"])
+            workbook.save(received_dir / "COMPLETE_RAW_INVENTORY_ADD_7_7_26.xlsx")
+
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_company = app.COMPANY_SHEETS_DIR
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            app.COMPANY_SHEETS_DIR = root / "COMPANY SHEETS"
+            dummy = ReconcileDummy()
+            dummy.home_sheet_markers = {}
+            dummy.inventory_rows = [
+                dummy._normalize_inventory_record(
+                    {
+                        "item_type": "Raw",
+                        "item_id": "RAW-MIKEY-20260708-0014",
+                        "assigned_person": "Mikey",
+                        "source_sheet": "Mikey General Sold",
+                        "card_title": title,
+                        "purchase_price": 130,
+                        "status": "Active",
+                    }
+                )
+            ]
+            try:
+                self.assertEqual(dummy._received_inventory_candidate_records(), [])
+            finally:
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.COMPANY_SHEETS_DIR = old_company
+
     def test_received_inventory_reconcile_skips_already_sold_profit_rows(self) -> None:
         class ReconcileDummy:
             _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
@@ -6773,6 +6907,24 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.RECEIVED_SHEETS_DIR = old_received
                 app.INCOMING_SHEETS_DIR = old_incoming
                 app.WORKING_SHEETS_DIR = old_working
+
+    def test_inventory_deleted_tombstones_account_for_raw_item_ids(self) -> None:
+        class TombstoneDummy:
+            _inventory_deleted_source_cert_keys = app.CardPipelineApp._inventory_deleted_source_cert_keys
+
+            def _load_inventory_deleted_tombstones(self):
+                return [
+                    {
+                        "source_sheet": "Raw Lot.xlsx",
+                        "item_id": "RAW-MIKEY-20260708-0014",
+                        "card_title": "2024 Panini Flawless Michael Irvin Emerald 5/5",
+                    }
+                ]
+
+        keys = TombstoneDummy()._inventory_deleted_source_cert_keys()
+
+        self.assertIn(("raw lot.xlsx", "item:raw-mikey-20260708-0014"), keys)
+        self.assertIn(("raw lot.xlsx", "title:2024 panini flawless michael irvin emerald 5 5"), keys)
 
     def test_inventory_refresh_enrich_preserves_non_active_ledger_rows(self) -> None:
         class InventoryDummy:
