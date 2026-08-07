@@ -7208,12 +7208,8 @@ class CardPipelineApp(tk.Tk):
 
         outgoing_tree_frame = ttk.Frame(outgoing_panel, style="Panel.TFrame")
         outgoing_tree_frame.grid(row=2, column=0, sticky="nsew", pady=(8, 12))
-        outgoing_tree_frame.rowconfigure(1, weight=1)
+        outgoing_tree_frame.rowconfigure(0, weight=1)
         outgoing_tree_frame.columnconfigure(0, weight=1)
-        outgoing_table_tools = ttk.Frame(outgoing_tree_frame, style="Panel.TFrame")
-        outgoing_table_tools.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        outgoing_table_tools.columnconfigure(0, weight=1)
-        ttk.Button(outgoing_table_tools, text="-", command=lambda: remove_selected_outgoing(), style="Soft.TButton", width=3).grid(row=0, column=0, sticky="e")
         outgoing_tree = ttk.Treeview(outgoing_tree_frame, columns=("card", "id", "basis"), show="headings", height=7)
         outgoing_tree.heading("card", text="Outgoing Card")
         outgoing_tree.heading("id", text="Cert / Item")
@@ -7221,10 +7217,11 @@ class CardPipelineApp(tk.Tk):
         outgoing_tree.column("card", width=430, minwidth=220, stretch=True, anchor=tk.W)
         outgoing_tree.column("id", width=130, minwidth=90, stretch=False, anchor=tk.W)
         outgoing_tree.column("basis", width=90, minwidth=78, stretch=False, anchor=tk.E)
-        outgoing_tree.grid(row=1, column=0, sticky="nsew")
+        outgoing_tree.grid(row=0, column=0, sticky="nsew")
         outgoing_scroll = ttk.Scrollbar(outgoing_tree_frame, orient=tk.VERTICAL, command=outgoing_tree.yview)
-        outgoing_scroll.grid(row=1, column=1, sticky="ns")
+        outgoing_scroll.grid(row=0, column=1, sticky="ns")
         outgoing_tree.configure(yscrollcommand=outgoing_scroll.set)
+        outgoing_tree.tag_configure("add_review_row", background="#242424", foreground="#1ed760")
 
         search_header = ttk.Frame(outgoing_panel, style="Panel.TFrame")
         search_header.grid(row=3, column=0, sticky="ew")
@@ -7269,7 +7266,6 @@ class CardPipelineApp(tk.Tk):
                 ttk.Label(incoming_header, text=label, style="Muted.TLabel").grid(row=0, column=index, sticky="w", padx=(0, 6))
             incoming_header.grid_columnconfigure(index, minsize=minsize)
             incoming_header.columnconfigure(index, weight=weight)
-        ttk.Button(incoming_header, text="+", command=lambda: add_incoming_row(), style="Primary.TButton", width=3).grid(row=0, column=5, sticky="e", padx=(0, 6))
         incoming_canvas = tk.Canvas(incoming_panel, bg="#1f1f1f", highlightthickness=1, highlightbackground="#333333")
         incoming_scroll = ttk.Scrollbar(incoming_panel, orient=tk.VERTICAL, command=incoming_canvas.yview)
         incoming_canvas.grid(row=2, column=0, sticky="nsew")
@@ -7337,6 +7333,7 @@ class CardPipelineApp(tk.Tk):
             outgoing_tree.delete(*outgoing_tree.get_children())
             for key, record in outgoing_by_key.items():
                 outgoing_tree.insert("", tk.END, iid=key, values=(record.get("card_title") or "", record_id(record), record_basis(record)))
+            outgoing_tree.insert("", tk.END, iid="__remove_selected_outgoing__", tags=("add_review_row",), values=("Remove selected", "", ""))
             update_summary()
 
         def add_outgoing(record: dict[str, object]) -> None:
@@ -7348,8 +7345,22 @@ class CardPipelineApp(tk.Tk):
 
         def remove_selected_outgoing() -> None:
             for iid in outgoing_tree.selection():
+                if str(iid) == "__remove_selected_outgoing__":
+                    continue
                 outgoing_by_key.pop(str(iid), None)
             render_outgoing()
+
+        def handle_outgoing_click(event) -> str | None:
+            row_id = outgoing_tree.identify_row(event.y)
+            if row_id == "__remove_selected_outgoing__":
+                selected = [str(iid) for iid in outgoing_tree.selection() if str(iid) != "__remove_selected_outgoing__"]
+                for iid in selected:
+                    outgoing_by_key.pop(iid, None)
+                render_outgoing()
+                return "break"
+            return None
+
+        outgoing_tree.bind("<Button-1>", handle_outgoing_click, add="+")
 
         def search_inventory() -> None:
             result_tree.delete(*result_tree.get_children())
@@ -7401,6 +7412,7 @@ class CardPipelineApp(tk.Tk):
             for variable in (cert_var, grader_var, title_var, value_var):
                 variable.trace_add("write", update_summary)
             notes.bind("<KeyRelease>", lambda _event: update_summary(), add="+")
+            render_incoming_add_row()
             update_summary()
 
         def remove_incoming_row(row: dict[str, object]) -> None:
@@ -7410,6 +7422,21 @@ class CardPipelineApp(tk.Tk):
             if hasattr(frame, "destroy"):
                 frame.destroy()
             update_summary()
+
+        def render_incoming_add_row() -> None:
+            existing = getattr(incoming_host, "_trade_add_row", None)
+            if hasattr(existing, "destroy"):
+                existing.destroy()
+            add_frame = ttk.Frame(incoming_host, style="Panel.TFrame")
+            add_frame.pack(fill=tk.X, padx=(8, 6), pady=(8, 0))
+            for index, (_label, minsize, weight) in enumerate(incoming_column_specs):
+                add_frame.grid_columnconfigure(index, minsize=minsize)
+                add_frame.columnconfigure(index, weight=weight)
+            add_label = ttk.Label(add_frame, text="Add row", style="Muted.TLabel", cursor="hand2")
+            add_label.grid(row=0, column=0, columnspan=len(incoming_column_specs), sticky="ew", ipady=8)
+            add_label.bind("<Button-1>", lambda _event: add_incoming_row(), add="+")
+            add_frame.bind("<Button-1>", lambda _event: add_incoming_row(), add="+")
+            incoming_host._trade_add_row = add_frame
 
         def save_trade() -> None:
             payload = self._desktop_trade_payload(
@@ -7445,6 +7472,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(actions, text="Save Trade", command=save_trade, style="Primary.TButton").pack(side=tk.LEFT)
         for record in selected_records:
             add_outgoing(record)
+        render_outgoing()
         add_incoming_row()
         for variable in (person_var, date_var, cash_paid_var, cash_received_var):
             variable.trace_add("write", update_summary)
