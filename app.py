@@ -7253,12 +7253,22 @@ class CardPipelineApp(tk.Tk):
         incoming_top.grid(row=0, column=0, sticky="ew")
         incoming_top.columnconfigure(0, weight=1)
         ttk.Label(incoming_top, text="Incoming Cards", style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=0, column=0, sticky="w")
-        ttk.Button(incoming_top, text="Add Incoming Card", command=lambda: add_incoming_row(), style="Soft.TButton").grid(row=0, column=1, sticky="e")
+        incoming_column_specs = (
+            ("Cert", 170, 0),
+            ("Grader", 112, 0),
+            ("Card", 270, 2),
+            ("Trade Value", 118, 0),
+            ("Notes", 230, 1),
+            ("", 118, 0),
+        )
         incoming_header = ttk.Frame(incoming_panel, style="Panel.TFrame")
-        incoming_header.grid(row=1, column=0, sticky="ew", pady=(8, 4))
-        for index, (label, width, weight) in enumerate((("Cert", 16, 0), ("Grader", 9, 0), ("Card", 38, 1), ("Trade Value", 12, 0), ("Notes", 24, 1), ("", 8, 0))):
-            ttk.Label(incoming_header, text=label, style="Muted.TLabel", width=width).grid(row=0, column=index, sticky="w", padx=(0, 6))
+        incoming_header.grid(row=1, column=0, sticky="ew", padx=(8, 6), pady=(8, 4))
+        for index, (label, minsize, weight) in enumerate(incoming_column_specs):
+            if label:
+                ttk.Label(incoming_header, text=label, style="Muted.TLabel").grid(row=0, column=index, sticky="w", padx=(0, 6))
+            incoming_header.grid_columnconfigure(index, minsize=minsize)
             incoming_header.columnconfigure(index, weight=weight)
+        ttk.Button(incoming_header, text="+", command=lambda: add_incoming_row(), style="Primary.TButton", width=3).grid(row=0, column=5, sticky="e", padx=(0, 6))
         incoming_canvas = tk.Canvas(incoming_panel, bg="#1f1f1f", highlightthickness=1, highlightbackground="#333333")
         incoming_scroll = ttk.Scrollbar(incoming_panel, orient=tk.VERTICAL, command=incoming_canvas.yview)
         incoming_canvas.grid(row=2, column=0, sticky="nsew")
@@ -7368,18 +7378,19 @@ class CardPipelineApp(tk.Tk):
             values = values or {}
             row_frame = ttk.Frame(incoming_host, style="Panel.TFrame")
             row_frame.pack(fill=tk.X, padx=(8, 6), pady=(8, 0))
-            row_frame.columnconfigure(2, weight=2)
-            row_frame.columnconfigure(4, weight=1)
+            for index, (_label, minsize, weight) in enumerate(incoming_column_specs):
+                row_frame.grid_columnconfigure(index, minsize=minsize)
+                row_frame.columnconfigure(index, weight=weight)
             cert_var = tk.StringVar(value=str(values.get("cert_number") or ""))
             grader_var = tk.StringVar(value=str(values.get("grader") or ""))
             title_var = tk.StringVar(value=str(values.get("card_title") or ""))
             value_var = tk.StringVar(value=str(values.get("trade_value") or ""))
-            ttk.Entry(row_frame, textvariable=cert_var, width=16).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+            ttk.Entry(row_frame, textvariable=cert_var).grid(row=0, column=0, sticky="ew", padx=(0, 6))
             grader_combo = ttk.Combobox(row_frame, textvariable=grader_var, values=INVENTORY_GRADER_OPTIONS, width=8)
             grader_combo.grid(row=0, column=1, sticky="ew", padx=(0, 6))
             ttk.Entry(row_frame, textvariable=title_var).grid(row=0, column=2, sticky="ew", padx=(0, 6))
-            ttk.Entry(row_frame, textvariable=value_var, width=12).grid(row=0, column=3, sticky="ew", padx=(0, 6))
-            notes = tk.Text(row_frame, height=2, width=20, bg="#111111", fg="#f5f5f5", insertbackground="#ffffff", relief=tk.FLAT, wrap=tk.WORD)
+            ttk.Entry(row_frame, textvariable=value_var).grid(row=0, column=3, sticky="ew", padx=(0, 6))
+            notes = tk.Text(row_frame, height=2, bg="#111111", fg="#f5f5f5", insertbackground="#ffffff", relief=tk.FLAT, wrap=tk.WORD)
             notes.grid(row=0, column=4, sticky="ew", padx=(0, 6))
             if values.get("notes"):
                 notes.insert("1.0", str(values.get("notes") or ""))
