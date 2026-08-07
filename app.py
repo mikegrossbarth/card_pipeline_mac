@@ -13743,6 +13743,8 @@ class CardPipelineApp(tk.Tk):
     def move_selected_home_sheet_to_stage(self, target_stage: str) -> None:
         move_started = time.perf_counter()
         move_phases: list[str] = []
+        inventory_rows_added = 0
+        inventory_candidate_rows = 0
         if not self.home_selected_sheet_key:
             messagebox.showinfo("Choose sheet", "Choose a sheet on Home before moving.")
             return
@@ -13770,6 +13772,18 @@ class CardPipelineApp(tk.Tk):
                 move_phases.append(f"move={time.perf_counter() - phase_started:.3f}s")
                 self.home_selected_sheet_key = moved_key
                 self.home_sheet_kind.set(target_stage)
+                if target_stage == "Received" and moved_key:
+                    received_stage, received_name = self._split_home_sheet_key(moved_key)
+                    marker = self.home_sheet_markers.get(moved_key, {})
+                    person = str(marker.get("assigned_person") or "").strip()
+                    if received_stage == "Received" and received_name and person:
+                        phase_started = time.perf_counter()
+                        inventory_rows_added, inventory_candidate_rows = self._sync_received_sheet_inventory_to_ledger(
+                            received_stage,
+                            self._sheet_path_for_stage(received_stage, received_name),
+                            person,
+                        )
+                        move_phases.append(f"inventory_sync={time.perf_counter() - phase_started:.3f}s")
                 phase_started = time.perf_counter()
                 self._save_sheet_markers()
                 move_phases.append(f"save_markers={time.perf_counter() - phase_started:.3f}s")
@@ -13788,9 +13802,25 @@ class CardPipelineApp(tk.Tk):
                 f"removed {cleanup.get('profit_rows_removed', 0)} profit ledger row(s), "
                 f"and removed {cleanup.get('inventory_rows_removed', 0)} inventory row(s)."
             )
-        self.status_var.set(f"Moved {name} from {source_stage} to {target_stage}.{cleanup_note}")
+        inventory_note = ""
+        if inventory_rows_added:
+            inventory_note = f" Added {inventory_rows_added} inventory row(s)."
+        elif inventory_candidate_rows:
+            inventory_note = " Inventory was already up to date."
+        self.status_var.set(f"Moved {name} from {source_stage} to {target_stage}.{cleanup_note}{inventory_note}")
         phase_started = time.perf_counter()
-        self._append_activity("Sheet Move", f"Moved {name} from {source_stage} to {target_stage}.", {"sheet": name, "from": source_stage, "to": target_stage, "cleanup": cleanup})
+        self._append_activity(
+            "Sheet Move",
+            f"Moved {name} from {source_stage} to {target_stage}.",
+            {
+                "sheet": name,
+                "from": source_stage,
+                "to": target_stage,
+                "cleanup": cleanup,
+                "inventory_rows_added": inventory_rows_added,
+                "inventory_candidate_rows": inventory_candidate_rows,
+            },
+        )
         move_phases.append(f"activity={time.perf_counter() - phase_started:.3f}s")
         record_performance_event(
             "home.stage_move.total",

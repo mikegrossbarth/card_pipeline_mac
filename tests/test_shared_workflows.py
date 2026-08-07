@@ -4763,6 +4763,81 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.PROFIT_LEDGER_PATH = old_ledger
                 app.INVENTORY_LEDGER_PATH = old_inventory_ledger
 
+    def test_right_click_move_to_received_syncs_sheet_inventory(self) -> None:
+        class Status:
+            def set(self, value):
+                self.value = value
+
+        class StageVar:
+            def set(self, value):
+                self.value = value
+
+        class MoveDummy:
+            move_selected_home_sheet_to_stage = app.CardPipelineApp.move_selected_home_sheet_to_stage
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+
+            def __init__(self, root: Path):
+                self.root = root
+                self.lucas_identity = "test"
+                self.home_selected_sheet_key = "Incoming|Lot A.xlsx"
+                self.home_sheet_kind = StageVar()
+                self.status_var = Status()
+                self.home_sheet_markers = {
+                    "Incoming|Lot A.xlsx": {"assigned_person": "Mikey"},
+                }
+                self.activity_payload = None
+                self.sync_args = None
+
+            def _sheet_path_for_stage(self, stage, name):
+                return self.root / stage / name
+
+            def _sheet_path_is_visible_home_sheet(self, _stage, _path):
+                return True
+
+            def _confirm_home_stage_move(self, _source_stage, _target_stage, _name):
+                return True
+
+            def _move_home_sheet_to_stage(self, _key, target_stage):
+                moved_key = f"{target_stage}|Lot A.xlsx"
+                self.home_sheet_markers[moved_key] = {"assigned_person": "Mikey", "all_received": True}
+                return moved_key, {}
+
+            def _sync_received_sheet_inventory_to_ledger(self, stage, path, person):
+                self.sync_args = (stage, path, person)
+                return 2, 2
+
+            def _save_sheet_markers(self):
+                self.saved_markers = True
+
+            def _refresh_after_home_stage_move(self, *_args):
+                self.refreshed = True
+
+            def _append_activity(self, _kind, _message, payload):
+                self.activity_payload = payload
+
+        class NullLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        with TemporaryDirectory() as tmp:
+            old_card_pipeline = app.CARD_PIPELINE_DIR
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            try:
+                dummy = MoveDummy(Path(tmp))
+                with patch.object(app, "shared_lock", return_value=NullLock()):
+                    dummy.move_selected_home_sheet_to_stage("Received")
+
+                self.assertEqual(dummy.sync_args, ("Received", Path(tmp) / "Received" / "Lot A.xlsx", "Mikey"))
+                self.assertEqual(dummy.home_selected_sheet_key, "Received|Lot A.xlsx")
+                self.assertEqual(dummy.home_sheet_kind.value, "Received")
+                self.assertIn("Added 2 inventory row(s).", dummy.status_var.value)
+                self.assertEqual(dummy.activity_payload["inventory_rows_added"], 2)
+            finally:
+                app.CARD_PIPELINE_DIR = old_card_pipeline
+
     def test_received_sheet_move_requires_second_cleanup_confirmation(self) -> None:
         class MoveConfirmDummy:
             _confirm_home_stage_move = app.CardPipelineApp._confirm_home_stage_move
