@@ -2198,6 +2198,7 @@ class CardPipelineApp(tk.Tk):
         action_row = ttk.Frame(controls, style="Panel.TFrame")
         action_row.grid(row=2, column=0, columnspan=10, sticky="w", pady=(10, 0))
         ttk.Button(action_row, text="Add Card", command=self.add_raw_inventory_card, style="Primary.TButton").pack(side=tk.LEFT)
+        ttk.Button(action_row, text="Enter Trade Portal", command=self.open_trade_portal_popup, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(action_row, text="Export", command=self.export_inventory, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         self._make_inventory_toolbar_icon_button(
             action_row,
@@ -7100,6 +7101,284 @@ class CardPipelineApp(tk.Tk):
             self.refresh_inventory_tab()
             self.refresh_profit_tab()
             self.status_var.set(f"Marked inventory card sold: {record.get('cert_number') or record.get('card_title') or 'card'} for {format_money(sale_price)}.")
+
+    def _desktop_trade_payload(
+        self,
+        outgoing_records: list[dict[str, object]],
+        incoming_payloads: list[dict[str, object]],
+        assigned_person: object = "",
+        trade_date: object = "",
+        cash_paid: object = "",
+        cash_received: object = "",
+        notes: object = "",
+    ) -> dict[str, object]:
+        return {
+            "assigned_person": self._personal_default_person() if self._is_personal_lucas() else str(assigned_person or "").strip(),
+            "trade_date": str(trade_date or "").strip(),
+            "cash_paid": str(cash_paid or "").strip(),
+            "cash_received": str(cash_received or "").strip(),
+            "notes": str(notes or "").strip(),
+            "outgoing": [
+                {
+                    "inventory_key": str(record.get("inventory_key") or "").strip(),
+                    "cert_number": str(record.get("cert_number") or "").strip(),
+                    "item_id": str(record.get("item_id") or "").strip(),
+                    "card_title": str(record.get("card_title") or "").strip(),
+                }
+                for record in outgoing_records
+            ],
+            "incoming": incoming_payloads,
+        }
+
+    def open_trade_portal_popup(self) -> None:
+        popup = tk.Toplevel(self)
+        popup.title("Trade Portal")
+        popup.geometry("1180x760")
+        popup.minsize(940, 620)
+        popup.transient(self)
+        popup.grab_set()
+        popup.configure(bg="#121212")
+
+        selected_records: list[dict[str, object]] = []
+        if hasattr(self, "inventory_tree"):
+            selected_records = [
+                self._normalize_inventory_record(record)
+                for iid in self.inventory_tree.selection()
+                for record in [self.inventory_tree_records.get(iid)]
+                if record and str(record.get("status") or "").lower() == "active"
+            ]
+        outgoing_by_key: dict[str, dict[str, object]] = {}
+        search_results: dict[str, dict[str, object]] = {}
+        incoming_rows: list[dict[str, object]] = []
+
+        frame = self._scrollable_popup_frame(popup, style_name="Panel.TFrame", bg="#121212", padding=(18, 16))
+        ttk.Label(frame, text="Trade Portal", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 2))
+        ttk.Label(frame, text="Trades use the same inventory/profit logic as mobile.", style="Muted.TLabel").grid(row=1, column=0, columnspan=6, sticky="w", pady=(0, 12))
+
+        person_var = tk.StringVar(value=self._personal_default_person() if self._is_personal_lucas() else (self.inventory_person_var.get() or ""))
+        date_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
+        cash_paid_var = tk.StringVar()
+        cash_received_var = tk.StringVar()
+        notes_text = tk.Text(frame, height=3, width=72, bg="#111111", fg="#f5f5f5", insertbackground="#ffffff", relief=tk.FLAT, wrap=tk.WORD)
+        status_var = tk.StringVar(value="")
+        summary_var = tk.StringVar(value="")
+        search_var = tk.StringVar()
+
+        if not self._is_personal_lucas():
+            ttk.Label(frame, text="Person", style="Panel.TLabel").grid(row=2, column=0, sticky="w", pady=(0, 8))
+            person_combo = ttk.Combobox(frame, textvariable=person_var, width=24)
+            person_combo.grid(row=2, column=1, sticky="ew", padx=(0, 14), pady=(0, 8))
+            self._bind_person_autocomplete(person_combo)
+        ttk.Label(frame, text="Date", style="Panel.TLabel").grid(row=2, column=2, sticky="w", pady=(0, 8))
+        ttk.Entry(frame, textvariable=date_var, width=14).grid(row=2, column=3, sticky="w", padx=(0, 14), pady=(0, 8))
+        ttk.Label(frame, text="Cash Paid", style="Panel.TLabel").grid(row=2, column=4, sticky="w", pady=(0, 8))
+        ttk.Entry(frame, textvariable=cash_paid_var, width=12).grid(row=2, column=5, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text="Cash Received", style="Panel.TLabel").grid(row=3, column=4, sticky="w", pady=(0, 8))
+        ttk.Entry(frame, textvariable=cash_received_var, width=12).grid(row=3, column=5, sticky="w", pady=(0, 8))
+
+        ttk.Label(frame, text="Outgoing Inventory", style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=4, column=0, columnspan=6, sticky="w", pady=(8, 6))
+        search_row = ttk.Frame(frame, style="Panel.TFrame")
+        search_row.grid(row=5, column=0, columnspan=6, sticky="ew", pady=(0, 8))
+        ttk.Entry(search_row, textvariable=search_var, width=48).pack(side=tk.LEFT)
+
+        outgoing_tree = ttk.Treeview(frame, columns=("card", "id", "basis"), show="headings", height=5)
+        outgoing_tree.heading("card", text="Outgoing Card")
+        outgoing_tree.heading("id", text="Cert / Item")
+        outgoing_tree.heading("basis", text="Basis")
+        outgoing_tree.column("card", width=560, anchor=tk.W)
+        outgoing_tree.column("id", width=150, anchor=tk.W)
+        outgoing_tree.column("basis", width=90, anchor=tk.E)
+        outgoing_tree.grid(row=6, column=0, columnspan=6, sticky="ew", pady=(0, 8))
+
+        result_tree = ttk.Treeview(frame, columns=("card", "id", "basis"), show="headings", height=5)
+        result_tree.heading("card", text="Search Result")
+        result_tree.heading("id", text="Cert / Item")
+        result_tree.heading("basis", text="Basis")
+        result_tree.column("card", width=560, anchor=tk.W)
+        result_tree.column("id", width=150, anchor=tk.W)
+        result_tree.column("basis", width=90, anchor=tk.E)
+        result_tree.grid(row=7, column=0, columnspan=6, sticky="ew", pady=(0, 12))
+
+        incoming_host = ttk.Frame(frame, style="Panel.TFrame")
+        incoming_host.grid(row=10, column=0, columnspan=6, sticky="ew")
+
+        def record_id(record: dict[str, object]) -> str:
+            return str(record.get("cert_number") or record.get("item_id") or record.get("inventory_key") or "").strip()
+
+        def record_basis(record: dict[str, object]) -> str:
+            return format_money(self._mobile_trade_basis(record))
+
+        def active_outgoing_records() -> list[dict[str, object]]:
+            return [self._normalize_inventory_record(record) for record in outgoing_by_key.values()]
+
+        def incoming_payloads() -> list[dict[str, object]]:
+            payloads: list[dict[str, object]] = []
+            for row in list(incoming_rows):
+                payload = {
+                    "cert_number": row["cert"].get().strip(),
+                    "grader": row["grader"].get().strip(),
+                    "card_title": row["title"].get().strip(),
+                    "trade_value": row["value"].get().strip(),
+                    "notes": row["notes"].get("1.0", tk.END).strip(),
+                }
+                if any(payload.values()):
+                    payloads.append(payload)
+            return payloads
+
+        def update_summary(*_args) -> None:
+            incoming = incoming_payloads()
+            allocation = self._mobile_trade_allocations(active_outgoing_records(), incoming, cash_paid_var.get(), cash_received_var.get())
+            if incoming:
+                allocation_text = []
+                for index, incoming_row in enumerate(incoming):
+                    label = incoming_row.get("card_title") or incoming_row.get("cert_number") or f"Incoming {index + 1}"
+                    amount = allocation["allocations"][index] if index < len(allocation["allocations"]) else 0.0
+                    allocation_text.append(f"{label}: {format_money(amount)}")
+                allocation_note = " | ".join(allocation_text)
+            else:
+                allocation_note = "No incoming cards."
+            difference = float(allocation.get("difference") or 0.0)
+            if difference > 0.01:
+                status_var.set(f"Needs {format_money(difference)} more incoming cost or cash received.")
+            elif status_var.get().startswith("Needs "):
+                status_var.set("")
+            summary_var.set(
+                f"Outgoing cost {format_money(allocation['outgoing_side'])}. "
+                f"Incoming cost {format_money(allocation['incoming_side'])}. "
+                f"Incoming basis {format_money(allocation['total_cost'])}. {allocation_note}"
+            )
+
+        def render_outgoing() -> None:
+            outgoing_tree.delete(*outgoing_tree.get_children())
+            for key, record in outgoing_by_key.items():
+                outgoing_tree.insert("", tk.END, iid=key, values=(record.get("card_title") or "", record_id(record), record_basis(record)))
+            update_summary()
+
+        def add_outgoing(record: dict[str, object]) -> None:
+            normalized = self._normalize_inventory_record(record)
+            key = str(normalized.get("inventory_key") or "").strip()
+            if key and str(normalized.get("status") or "").lower() == "active":
+                outgoing_by_key[key] = normalized
+                render_outgoing()
+
+        def remove_selected_outgoing() -> None:
+            for iid in outgoing_tree.selection():
+                outgoing_by_key.pop(str(iid), None)
+            render_outgoing()
+
+        def search_inventory() -> None:
+            result_tree.delete(*result_tree.get_children())
+            search_results.clear()
+            result = self.mobile_inventory_search({"query": search_var.get(), "person": "" if self._is_personal_lucas() else person_var.get(), "limit": 50})
+            if not result.get("ok"):
+                status_var.set(str(result.get("error") or "Trade search failed."))
+                return
+            selected_keys = set(outgoing_by_key)
+            for index, record in enumerate(result.get("items") or []):
+                key = str(record.get("inventory_key") or "").strip()
+                if not key or key in selected_keys:
+                    continue
+                iid = f"result-{index}"
+                search_results[iid] = record
+                result_tree.insert("", tk.END, iid=iid, values=(record.get("card_title") or "", record_id(record), record_basis(record)))
+            status_var.set(f"Found {len(search_results)} trade search result(s).")
+
+        def add_selected_search_result() -> None:
+            for iid in result_tree.selection():
+                record = search_results.get(str(iid))
+                if record:
+                    add_outgoing(record)
+            search_inventory()
+
+        def add_incoming_row(values: dict[str, object] | None = None) -> None:
+            values = values or {}
+            row_frame = ttk.Frame(incoming_host, style="Panel.TFrame")
+            row_frame.pack(fill=tk.X, pady=(0, 8))
+            cert_var = tk.StringVar(value=str(values.get("cert_number") or ""))
+            grader_var = tk.StringVar(value=str(values.get("grader") or ""))
+            title_var = tk.StringVar(value=str(values.get("card_title") or ""))
+            value_var = tk.StringVar(value=str(values.get("trade_value") or ""))
+            ttk.Entry(row_frame, textvariable=cert_var, width=16).grid(row=0, column=0, sticky="w", padx=(0, 6))
+            grader_combo = ttk.Combobox(row_frame, textvariable=grader_var, values=INVENTORY_GRADER_OPTIONS, width=8)
+            grader_combo.grid(row=0, column=1, sticky="w", padx=(0, 6))
+            ttk.Entry(row_frame, textvariable=title_var, width=58).grid(row=0, column=2, sticky="ew", padx=(0, 6))
+            ttk.Entry(row_frame, textvariable=value_var, width=12).grid(row=0, column=3, sticky="w", padx=(0, 6))
+            notes = tk.Text(row_frame, height=2, width=28, bg="#111111", fg="#f5f5f5", insertbackground="#ffffff", relief=tk.FLAT, wrap=tk.WORD)
+            notes.grid(row=0, column=4, sticky="ew", padx=(0, 6))
+            if values.get("notes"):
+                notes.insert("1.0", str(values.get("notes") or ""))
+            row: dict[str, object] = {"frame": row_frame, "cert": cert_var, "grader": grader_var, "title": title_var, "value": value_var, "notes": notes}
+            ttk.Button(row_frame, text="Remove", command=lambda current=row: remove_incoming_row(current), style="Soft.TButton").grid(row=0, column=5, sticky="w")
+            row_frame.columnconfigure(2, weight=1)
+            incoming_rows.append(row)
+            for variable in (cert_var, grader_var, title_var, value_var):
+                variable.trace_add("write", update_summary)
+            notes.bind("<KeyRelease>", lambda _event: update_summary(), add="+")
+            update_summary()
+
+        def remove_incoming_row(row: dict[str, object]) -> None:
+            if row in incoming_rows:
+                incoming_rows.remove(row)
+            frame = row.get("frame")
+            if hasattr(frame, "destroy"):
+                frame.destroy()
+            update_summary()
+
+        def save_trade() -> None:
+            payload = self._desktop_trade_payload(
+                active_outgoing_records(),
+                incoming_payloads(),
+                assigned_person=person_var.get(),
+                trade_date=date_var.get(),
+                cash_paid=cash_paid_var.get(),
+                cash_received=cash_received_var.get(),
+                notes=notes_text.get("1.0", tk.END),
+            )
+            result = self.mobile_inventory_trade(payload)
+            if not result.get("ok"):
+                status_var.set(str(result.get("error") or "Trade failed."))
+                update_summary()
+                return
+            popup.destroy()
+            self.refresh_inventory_tab()
+            self.refresh_profit_tab()
+            message = f"Trade saved: {result.get('trade', {}).get('outgoing_count', 0)} outgoing, {result.get('trade', {}).get('incoming_count', 0)} incoming."
+            self.status_var.set(message)
+            self.inventory_status_var.set(message)
+            messagebox.showinfo("Trade saved", message)
+
+        ttk.Button(search_row, text="Search", command=search_inventory, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(search_row, text="Add Selected Search Result", command=add_selected_search_result, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(search_row, text="Remove Selected Outgoing", command=remove_selected_outgoing, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(frame, text="Incoming Cards", style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=8, column=0, columnspan=6, sticky="w", pady=(4, 6))
+        ttk.Label(frame, text="Cert", style="Muted.TLabel").grid(row=9, column=0, sticky="w")
+        ttk.Label(frame, text="Grader", style="Muted.TLabel").grid(row=9, column=1, sticky="w")
+        ttk.Label(frame, text="Card", style="Muted.TLabel").grid(row=9, column=2, sticky="w")
+        ttk.Label(frame, text="Trade Value", style="Muted.TLabel").grid(row=9, column=3, sticky="w")
+        ttk.Label(frame, text="Notes", style="Muted.TLabel").grid(row=9, column=4, sticky="w")
+        ttk.Button(frame, text="Add Incoming Card", command=add_incoming_row, style="Soft.TButton").grid(row=11, column=0, columnspan=2, sticky="w", pady=(2, 12))
+        ttk.Label(frame, text="Trade Notes", style="Panel.TLabel").grid(row=12, column=0, sticky="nw", pady=(0, 8))
+        notes_text.grid(row=12, column=1, columnspan=5, sticky="ew", pady=(0, 8))
+        ttk.Label(frame, textvariable=summary_var, style="Panel.TLabel", wraplength=1000).grid(row=13, column=0, columnspan=6, sticky="w", pady=(6, 4))
+        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel", wraplength=1000).grid(row=14, column=0, columnspan=6, sticky="w", pady=(0, 10))
+        actions = ttk.Frame(frame, style="Panel.TFrame")
+        actions.grid(row=15, column=0, columnspan=6, sticky="e")
+        ttk.Button(actions, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(actions, text="Save Trade", command=save_trade, style="Primary.TButton").pack(side=tk.LEFT)
+        for column in range(6):
+            frame.columnconfigure(column, weight=1 if column in {2, 4} else 0)
+        for record in selected_records:
+            add_outgoing(record)
+        add_incoming_row()
+        for variable in (person_var, date_var, cash_paid_var, cash_received_var):
+            variable.trace_add("write", update_summary)
+        search_var.trace_add("write", lambda *_args: search_inventory() if len(search_var.get().strip()) >= 2 else None)
+        popup.bind("<Escape>", lambda _event: popup.destroy())
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(40, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(40, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        search_inventory()
 
     def _inventory_edit_row_dialog(self, record: dict[str, object]) -> dict[str, object] | None:
         normalized = self._normalize_inventory_record(record)

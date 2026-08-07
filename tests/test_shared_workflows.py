@@ -12490,6 +12490,46 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.PROFIT_LEDGER_PATH = old_profit
 
+    def test_desktop_trade_payload_matches_mobile_trade_shape(self) -> None:
+        class TradePayloadDummy:
+            _desktop_trade_payload = app.CardPipelineApp._desktop_trade_payload
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+
+            def _is_personal_lucas(self):
+                return True
+
+        payload = TradePayloadDummy()._desktop_trade_payload(
+            [
+                {
+                    "inventory_key": "111|source.xlsx|mikey",
+                    "cert_number": "111",
+                    "item_id": "",
+                    "card_title": "Outgoing Card",
+                }
+            ],
+            [
+                {
+                    "cert_number": "",
+                    "grader": "",
+                    "card_title": "Incoming Card",
+                    "trade_value": "120",
+                    "notes": "Trade note",
+                }
+            ],
+            assigned_person="Someone Else",
+            trade_date="2026-06-22",
+            cash_paid="5",
+            cash_received="",
+            notes="Desktop trade",
+        )
+
+        self.assertEqual(payload["assigned_person"], "Mikey")
+        self.assertEqual(payload["trade_date"], "2026-06-22")
+        self.assertEqual(payload["cash_paid"], "5")
+        self.assertEqual(payload["outgoing"], [{"inventory_key": "111|source.xlsx|mikey", "cert_number": "111", "item_id": "", "card_title": "Outgoing Card"}])
+        self.assertEqual(payload["incoming"][0]["card_title"], "Incoming Card")
+        self.assertEqual(payload["notes"], "Desktop trade")
+
     def test_mobile_trade_allows_favorable_and_zero_cost_incoming(self) -> None:
         class MobileTradeDummy:
             _money_value = app.CardPipelineApp._money_value
