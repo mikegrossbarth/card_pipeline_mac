@@ -8003,6 +8003,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             record_profit_sales = app.CardPipelineApp.record_profit_sales
             _append_profit_records = app.CardPipelineApp._append_profit_records
+            _update_duplicate_inventory_sale_profit_record = app.CardPipelineApp._update_duplicate_inventory_sale_profit_record
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _delete_inventory_photo_files_for_removed_records = lambda self, removed, kept=None: 0
@@ -12206,6 +12207,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
             _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
             _append_profit_records = app.CardPipelineApp._append_profit_records
+            _update_duplicate_inventory_sale_profit_record = app.CardPipelineApp._update_duplicate_inventory_sale_profit_record
             _canonical_person_choice = app.CardPipelineApp._canonical_person_choice
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _mobile_local_calendar_date = app.CardPipelineApp._mobile_local_calendar_date
@@ -12387,6 +12389,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
             _append_profit_records = app.CardPipelineApp._append_profit_records
+            _update_duplicate_inventory_sale_profit_record = app.CardPipelineApp._update_duplicate_inventory_sale_profit_record
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
             _mobile_inventory_sale_match = app.CardPipelineApp._mobile_inventory_sale_match
@@ -12397,6 +12400,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             mobile_inventory_mark_sold = app.CardPipelineApp.mobile_inventory_mark_sold
             _append_activity = lambda self, action, summary, details=None: None
+            _record_mobile_direct_action = lambda self, payload, action: None
 
             def __init__(self):
                 self.events = queue.Queue()
@@ -12485,6 +12489,48 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertTrue(already_result["ok"])
                 self.assertTrue(already_result["already_applied"])
                 self.assertEqual(len(dummy._load_profit_ledger()), len(profit))
+
+                stale_profit = dummy._normalize_profit_record(
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "cert_number": "49960916",
+                        "grader": "PSA",
+                        "card_title": "1988 Fleer 120 Michael Jordan All-Star PSA 9",
+                        "company": "General Sold",
+                        "source_sheet": "Kevin Hambone General Sold",
+                        "purchase_price": 1200,
+                        "sale_price": 1300,
+                        "date_added": "2026-07-12",
+                        "status": "Sold from inventory",
+                    }
+                )
+                dummy._save_profit_ledger([stale_profit])
+                active_record = dummy._normalize_inventory_record(
+                    {
+                        "assigned_person": "Kevin Hambone",
+                        "cert_number": "49960916",
+                        "grader": "PSA",
+                        "card_title": "1988 Fleer 120 Michael Jordan All-Star PSA 9",
+                        "purchase_price": 1200,
+                        "source_sheet": "Manual Inventory",
+                    }
+                )
+                dummy._save_inventory_ledger([active_record])
+                corrected_result = dummy.mobile_inventory_mark_sold(
+                    {
+                        "inventory_key": active_record["inventory_key"],
+                        "sale_price": "1800",
+                        "sale_date": "2026-08-07",
+                    }
+                )
+                self.assertTrue(corrected_result["ok"])
+                corrected_profit = [dummy._normalize_profit_record(item) for item in dummy._load_profit_ledger()]
+                self.assertEqual(len(corrected_profit), 1)
+                self.assertEqual(corrected_profit[0]["sale_price"], 1800.0)
+                self.assertEqual(corrected_profit[0]["profit"], 600.0)
+                self.assertEqual(corrected_profit[0]["date_added"], "2026-08-07")
+                self.assertEqual(corrected_profit[0]["recorded_by"], "Tester")
+                self.assertEqual(dummy._load_inventory_ledger(), [])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
@@ -12552,6 +12598,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
             _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
             _append_profit_records = app.CardPipelineApp._append_profit_records
+            _update_duplicate_inventory_sale_profit_record = app.CardPipelineApp._update_duplicate_inventory_sale_profit_record
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _mobile_local_calendar_date = app.CardPipelineApp._mobile_local_calendar_date
             _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
@@ -12668,6 +12715,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
             _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
             _inventory_sale_profit_record = app.CardPipelineApp._inventory_sale_profit_record
             _append_profit_records = app.CardPipelineApp._append_profit_records
+            _update_duplicate_inventory_sale_profit_record = app.CardPipelineApp._update_duplicate_inventory_sale_profit_record
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _mobile_local_calendar_date = app.CardPipelineApp._mobile_local_calendar_date
             _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date

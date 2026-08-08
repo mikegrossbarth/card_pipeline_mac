@@ -10856,23 +10856,77 @@ class CardPipelineApp(tk.Tk):
             return 0
         with shared_lock(CARD_PIPELINE_DIR, "profit-ledger", self.lucas_identity):
             ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
-            existing_keys = set().union(*(CardPipelineApp._profit_record_identity_keys(self, record) for record in ledger)) if ledger else set()
+            existing_key_map: dict[str, int] = {}
+            for index, record in enumerate(ledger):
+                for key in CardPipelineApp._profit_record_identity_keys(self, record):
+                    existing_key_map.setdefault(key, index)
+            existing_keys = set(existing_key_map)
             added = 0
             for record in records:
                 normalized = self._normalize_profit_record(record)
                 keys = CardPipelineApp._profit_record_identity_keys(self, normalized)
-                if not keys or keys & existing_keys:
+                matching_keys = keys & existing_keys
+                if not keys:
+                    continue
+                if matching_keys:
+                    existing_index = existing_key_map[next(iter(matching_keys))]
+                    if self._update_duplicate_inventory_sale_profit_record(ledger, existing_index, normalized):
+                        for key in CardPipelineApp._profit_record_identity_keys(self, ledger[existing_index]):
+                            existing_key_map[key] = existing_index
+                        existing_keys = set(existing_key_map)
+                        added += 1
                     continue
                 if not str(normalized.get("ledger_added_at") or "").strip():
                     normalized["ledger_added_at"] = datetime.now().isoformat(timespec="microseconds")
                 normalized["recorded_by"] = self.lucas_identity.get("display_name", "")
                 normalized["recorded_machine"] = self.lucas_identity.get("machine", "")
                 ledger.append(normalized)
-                existing_keys.update(keys)
+                new_index = len(ledger) - 1
+                for key in keys:
+                    existing_key_map[key] = new_index
+                existing_keys = set(existing_key_map)
                 added += 1
             if added:
                 self._save_profit_ledger(ledger)
         return added
+
+    def _update_duplicate_inventory_sale_profit_record(
+        self,
+        ledger: list[dict[str, object]],
+        existing_index: int,
+        incoming: dict[str, object],
+    ) -> bool:
+        if existing_index < 0 or existing_index >= len(ledger):
+            return False
+        existing = self._normalize_profit_record(ledger[existing_index])
+        if str(existing.get("record_type") or "").strip().lower() == "expense":
+            return False
+        if str(incoming.get("record_type") or "").strip().lower() == "expense":
+            return False
+        if str(existing.get("status") or "") != "Sold from inventory" or str(incoming.get("status") or "") != "Sold from inventory":
+            return False
+        existing_stable_id = scan_to_cert(existing.get("cert_number")) or str(existing.get("item_id") or "").strip().lower()
+        incoming_stable_id = scan_to_cert(incoming.get("cert_number")) or str(incoming.get("item_id") or "").strip().lower()
+        if not existing_stable_id or existing_stable_id != incoming_stable_id:
+            return False
+        existing_sale = self._money_value(existing.get("sale_price"))
+        incoming_sale = self._money_value(incoming.get("sale_price"))
+        existing_purchase = self._money_value(existing.get("purchase_price"))
+        incoming_purchase = self._money_value(incoming.get("purchase_price"))
+        existing_date = str(existing.get("date_added") or "")[:10]
+        incoming_date = str(incoming.get("date_added") or "")[:10]
+        has_sale_change = incoming_sale is not None and existing_sale != incoming_sale
+        has_purchase_change = incoming_purchase is not None and existing_purchase != incoming_purchase
+        has_date_change = bool(incoming_date and incoming_date != existing_date)
+        if not (has_sale_change or has_purchase_change or has_date_change):
+            return False
+        updated = dict(existing)
+        updated.update(incoming)
+        updated["ledger_added_at"] = datetime.now().isoformat(timespec="microseconds")
+        updated["recorded_by"] = self.lucas_identity.get("display_name", "")
+        updated["recorded_machine"] = self.lucas_identity.get("machine", "")
+        ledger[existing_index] = self._normalize_profit_record(updated)
+        return True
 
     def record_profit_sales(self, records: list[dict[str, object]]) -> int:
         added = CardPipelineApp._append_profit_records(self, records)
