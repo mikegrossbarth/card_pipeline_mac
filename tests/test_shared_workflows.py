@@ -5255,6 +5255,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _money_value = app.CardPipelineApp._money_value
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             record_profit_sales = app.CardPipelineApp.record_profit_sales
             _profit_record_date = app.CardPipelineApp._profit_record_date
             _profit_today = lambda self: datetime(2026, 6, 19).date()
@@ -5262,11 +5263,16 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _canonical_profit_period = app.CardPipelineApp._canonical_profit_period
             _profit_period_label = app.CardPipelineApp._profit_period_label
             _profit_graph_label = app.CardPipelineApp._profit_graph_label
+            _profit_breakdown_label = app.CardPipelineApp._profit_breakdown_label
             _profit_chart_title = app.CardPipelineApp._profit_chart_title
             _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
+            _profit_monthly_breakdown = app.CardPipelineApp._profit_monthly_breakdown
+            _profit_chart_bucket_label = app.CardPipelineApp._profit_chart_bucket_label
+            _profit_chart_bucket_range = app.CardPipelineApp._profit_chart_bucket_range
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
             _expense_related_label = app.CardPipelineApp._expense_related_label
             _expense_link_options = app.CardPipelineApp._expense_link_options
+            _update_profit_expense_record = app.CardPipelineApp._update_profit_expense_record
             _delete_profit_expense_records = app.CardPipelineApp._delete_profit_expense_records
             refresh_profit_tab = lambda self: None
 
@@ -5280,6 +5286,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy.profit_person_var = types.SimpleNamespace(get=lambda: "Kevin")
             dummy.profit_period_var = types.SimpleNamespace(get=lambda: "YTD")
             dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Daily Trend")
+            dummy.profit_breakdown_var = types.SimpleNamespace(get=lambda: "Day")
             try:
                 expense = {
                     "record_type": "expense",
@@ -5322,7 +5329,43 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 filtered = dummy._filtered_profit_records(ledger)
                 _days, values = dummy._profit_chart_series(filtered)
                 self.assertEqual(sum(values), 25)
-                self.assertEqual(dummy._delete_profit_expense_records([expense_row]), 1)
+                old_expense_key = expense_row["ledger_key"]
+                edited = dummy._update_profit_expense_record(
+                    expense_row,
+                    {
+                        "date_added": "2026-06-19",
+                        "expense_type": "Fees",
+                        "expense_amount": "30.50",
+                        "related_type": "Sheet",
+                        "source_sheet": "Lot B.xlsx",
+                        "item_id": "unused-item",
+                        "cert_number": "unused-cert",
+                        "notes": "Corrected fee",
+                    },
+                )
+                self.assertIsNotNone(edited)
+                assert edited is not None
+                self.assertEqual(edited["expense_id"], "expense-1")
+                self.assertEqual(edited["profit"], -30.5)
+                self.assertEqual(edited["company"], "Expense: Fees")
+                self.assertEqual(edited["source_sheet"], "Lot B.xlsx")
+                self.assertEqual(edited["item_id"], "")
+                self.assertEqual(edited["cert_number"], "")
+                self.assertEqual(edited["notes"], "Corrected fee")
+                self.assertNotEqual(edited["ledger_key"], old_expense_key)
+                ledger_after_edit = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                edited_expenses = [record for record in ledger_after_edit if record.get("record_type") == "expense"]
+                self.assertEqual(len(edited_expenses), 1)
+                self.assertEqual(edited_expenses[0]["ledger_key"], edited["ledger_key"])
+                self.assertNotIn(old_expense_key, {record.get("ledger_key") for record in ledger_after_edit})
+                edited_again = dummy._update_profit_expense_record(expense_row, {"expense_amount": 31, "notes": "Second edit"})
+                self.assertIsNotNone(edited_again)
+                ledger_after_second_edit = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                edited_expenses = [record for record in ledger_after_second_edit if record.get("record_type") == "expense"]
+                self.assertEqual(len(edited_expenses), 1)
+                self.assertEqual(edited_expenses[0]["expense_amount"], 31)
+                self.assertEqual(edited_expenses[0]["notes"], "Second edit")
+                self.assertEqual(dummy._delete_profit_expense_records([edited_expenses[0]]), 1)
                 ledger_after_delete = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
                 self.assertEqual(len(ledger_after_delete), 1)
                 self.assertNotEqual(ledger_after_delete[0].get("record_type"), "expense")

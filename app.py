@@ -11121,6 +11121,177 @@ class CardPipelineApp(tk.Tk):
         else:
             messagebox.showinfo("Expense not added", "That expense already exists in the profit ledger.")
 
+    def _expense_edit_row_dialog(self, record: dict[str, object]) -> dict[str, object] | None:
+        normalized = self._normalize_profit_record(record)
+        if str(normalized.get("record_type") or "").strip().lower() != "expense":
+            return None
+        personal_inventory = self._is_personal_lucas()
+        fields = [
+            ("date_added", "Date"),
+            ("assigned_person", "Person"),
+            ("expense_type", "Type"),
+            ("expense_amount", "Amount"),
+            ("related_type", "Tie To"),
+            ("source_sheet", "Sheet"),
+            ("item_id", "Item ID"),
+            ("cert_number", "Cert"),
+            ("notes", "Notes"),
+        ]
+        popup = tk.Toplevel(self)
+        popup.title("Edit Expense")
+        popup.geometry("760x420")
+        popup.minsize(620, 340)
+        popup.transient(self)
+        popup.grab_set()
+        popup.configure(bg="#121212")
+        result: dict[str, object] = {}
+        vars_by_field: dict[str, tk.StringVar] = {}
+
+        frame = self._scrollable_popup_frame(popup, style_name="Panel.TFrame", bg="#121212", padding=(18, 16))
+        ttk.Label(frame, text="Edit Expense", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 2))
+        ttk.Label(frame, text=str(normalized.get("ledger_added_at") or "Profit expense row"), style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 14))
+        for index, (field, label) in enumerate(fields):
+            row = 2 + index // 2
+            col = 0 if index % 2 == 0 else 2
+            value = normalized.get(field)
+            text = "" if value is None else f"{value:.2f}" if field == "expense_amount" and isinstance(value, (int, float)) else str(value)
+            var = tk.StringVar(value=text)
+            vars_by_field[field] = var
+            if personal_inventory and field == "assigned_person":
+                continue
+            ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=col, sticky="w", padx=(0, 8), pady=(0, 8))
+            if field == "assigned_person":
+                person_combo = ttk.Combobox(frame, textvariable=var, width=24)
+                person_combo.grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
+                self._bind_person_autocomplete(person_combo)
+            elif field == "expense_type":
+                ttk.Combobox(frame, textvariable=var, values=EXPENSE_CATEGORY_OPTIONS, width=22, state="readonly").grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
+            elif field == "related_type":
+                ttk.Combobox(frame, textvariable=var, values=EXPENSE_LINK_OPTIONS, width=22, state="readonly").grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
+            else:
+                width = 46 if field in {"source_sheet", "notes"} else 24
+                ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
+        status_var = tk.StringVar(value="Edits replace this expense row in the profit ledger.")
+        status_row = 2 + (len(fields) + 1) // 2
+        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=status_row, column=0, columnspan=4, sticky="w", pady=(4, 14))
+
+        def submit() -> None:
+            person = vars_by_field["assigned_person"].get().strip()
+            if personal_inventory:
+                person = self._personal_default_person()
+            person_choice = self._canonical_person_choice(person)
+            if person_choice is None:
+                status_var.set("Choose an existing person.")
+                return
+            expense_date = vars_by_field["date_added"].get().strip()
+            if self._profit_record_date(expense_date) is None:
+                status_var.set("Enter the expense date as YYYY-MM-DD.")
+                return
+            amount = self._money_value(vars_by_field["expense_amount"].get())
+            if amount is None or amount <= 0:
+                status_var.set("Enter an expense amount greater than zero.")
+                return
+            expense_type = vars_by_field["expense_type"].get().strip()
+            if expense_type not in EXPENSE_CATEGORY_OPTIONS:
+                expense_type = "Fees"
+            related_type = vars_by_field["related_type"].get().strip()
+            if related_type not in EXPENSE_LINK_OPTIONS:
+                related_type = "General"
+            source_sheet = vars_by_field["source_sheet"].get().strip()
+            item_id = vars_by_field["item_id"].get().strip()
+            cert_number = vars_by_field["cert_number"].get().strip()
+            if related_type == "Sheet" and not source_sheet:
+                status_var.set("Choose or enter the sold sheet this expense belongs to.")
+                return
+            if related_type == "Card" and not (source_sheet or item_id or cert_number):
+                status_var.set("Enter a sheet, item ID, or cert for the related card.")
+                return
+            result.update(
+                {
+                    "date_added": expense_date[:10],
+                    "assigned_person": person_choice,
+                    "expense_type": expense_type,
+                    "expense_amount": float(amount),
+                    "related_type": related_type,
+                    "source_sheet": source_sheet,
+                    "item_id": item_id,
+                    "cert_number": cert_number,
+                    "notes": vars_by_field["notes"].get().strip(),
+                }
+            )
+            popup.destroy()
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=status_row + 1, column=0, columnspan=4, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(buttons, text="Save", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
+        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(3, weight=1)
+        popup.bind("<Return>", lambda _event: submit())
+        popup.bind("<Escape>", lambda _event: popup.destroy())
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        self.wait_window(popup)
+        return result or None
+
+    def _update_profit_expense_record(self, original_record: dict[str, object], updates: dict[str, object]) -> dict[str, object] | None:
+        original = self._normalize_profit_record(original_record)
+        if str(original.get("record_type") or "").strip().lower() != "expense":
+            return None
+        original_key = str(original.get("ledger_key") or self._profit_record_key(original) or "").strip().lower()
+        original_expense_id = str(original.get("expense_id") or "").strip()
+        with shared_lock(CARD_PIPELINE_DIR, "profit-expense-edit", self.lucas_identity):
+            ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+            for index, record in enumerate(ledger):
+                if str(record.get("record_type") or "").strip().lower() != "expense":
+                    continue
+                record_key = str(record.get("ledger_key") or self._profit_record_key(record) or "").strip().lower()
+                record_expense_id = str(record.get("expense_id") or "").strip()
+                id_matches = bool(original_expense_id and record_expense_id == original_expense_id)
+                key_matches = bool(original_key and record_key == original_key)
+                if not (id_matches or key_matches):
+                    continue
+                merged = dict(record)
+                merged.update(updates)
+                merged["record_type"] = "expense"
+                merged["expense_id"] = record_expense_id or original_expense_id or datetime.now().strftime("%Y%m%d%H%M%S%f")
+                merged["ledger_added_at"] = str(record.get("ledger_added_at") or original.get("ledger_added_at") or "").strip()
+                if not merged["ledger_added_at"]:
+                    merged["ledger_added_at"] = datetime.now().isoformat(timespec="microseconds")
+                merged["recorded_by"] = self.lucas_identity.get("display_name", "")
+                merged["recorded_machine"] = self.lucas_identity.get("machine", "")
+                normalized = self._normalize_profit_record(merged)
+                ledger[index] = normalized
+                self._save_profit_ledger(ledger)
+                return normalized
+        return None
+
+    def edit_selected_profit_expense(self) -> None:
+        if not hasattr(self, "profit_tree"):
+            return
+        selected = list(self.profit_tree.selection())
+        records = [self.profit_tree_records.get(iid) for iid in selected if self.profit_tree_records.get(iid)]
+        if len(records) != 1:
+            messagebox.showinfo("Choose one expense", "Select one expense row to edit.")
+            return
+        record = self._normalize_profit_record(records[0])
+        if str(record.get("record_type") or "").strip().lower() != "expense":
+            messagebox.showinfo("Expense required", "Only expense rows can be edited here.")
+            return
+        updates = self._expense_edit_row_dialog(record)
+        if not updates:
+            return
+        updated = self._update_profit_expense_record(record, updates)
+        self.refresh_profit_tab()
+        if updated:
+            amount = self._money_value(updated.get("expense_amount")) or 0.0
+            self.status_var.set(f"Edited {updated.get('expense_type') or 'expense'} expense: {format_money(amount)}.")
+            self._append_activity("Expense Edit", f"Edited {updated.get('expense_type') or 'expense'} expense: {format_money(amount)}.", {"expense_id": updated.get("expense_id"), "expense_type": updated.get("expense_type"), "amount": amount})
+        else:
+            messagebox.showinfo("Expense not found", "That expense row could not be found in the profit ledger.")
+
     def _delete_profit_expense_records(self, records: list[dict[str, object]]) -> int:
         expense_keys: set[str] = set()
         for record in records:
@@ -11212,6 +11383,8 @@ class CardPipelineApp(tk.Tk):
         if sold_cards and len(sold_cards) == len(records):
             menu.add_command(label="Refund to Inventory", command=self.refund_selected_profit_to_inventory)
         if expenses and len(expenses) == len(records):
+            if len(expenses) == 1:
+                menu.add_command(label="Edit Expense", command=self.edit_selected_profit_expense)
             menu.add_command(label="Delete Expense", command=self.delete_selected_profit_expenses)
         if menu.index("end") is None:
             return
