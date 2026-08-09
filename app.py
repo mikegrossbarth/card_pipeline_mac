@@ -2182,7 +2182,7 @@ class CardPipelineApp(tk.Tk):
         controls.pack(fill=tk.X, pady=(0, 10))
         controls.columnconfigure(9, weight=1)
         ttk.Label(controls, text="Inventory", style="Panel.TLabel", font=("Segoe UI Semibold", 13)).grid(row=0, column=0, sticky="w")
-        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=1, columnspan=8, sticky="e", padx=(18, 0))
+        ttk.Label(controls, textvariable=self.inventory_metric_var, style="Panel.TLabel").grid(row=0, column=1, columnspan=9, sticky="w", padx=(18, 0))
         inventory_person_label = ttk.Label(controls, text="Person", style="Muted.TLabel")
         if not self._is_personal_lucas():
             inventory_person_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
