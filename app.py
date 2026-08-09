@@ -12814,7 +12814,7 @@ class CardPipelineApp(tk.Tk):
         rows: list[WorkbookRow] = []
         for offset, record in enumerate(records, start=2):
             cert = str(record.get("cert_number") or "")
-            grader = str(record.get("grader") or infer_grader(str(record.get("card_title") or "")) or "PSA").upper()
+            grader = str(record.get("grader") or infer_grader(str(record.get("card_title") or ""))).upper()
             card = str(record.get("card_title") or "").strip()
             rows.append(
                 WorkbookRow(
@@ -12822,6 +12822,7 @@ class CardPipelineApp(tk.Tk):
                     cert_number=cert,
                     card_title=card,
                     grader=grader,
+                    item_id=str(record.get("item_id") or ""),
                     category=str(record.get("sport") or record.get("category") or "").strip(),
                     existing_value=record.get("purchase_price"),
                     card_ladder_value=record.get("card_ladder_value"),
@@ -17492,7 +17493,7 @@ class CardPipelineApp(tk.Tk):
         sources: dict[int, str] = {}
         for offset, row in enumerate(rows, start=2):
             cert = str(row.get("cert_number") or "")
-            grader = str(row.get("grader") or infer_grader(str(row.get("card_title") or "")) or "PSA").upper()
+            grader = str(row.get("grader") or infer_grader(str(row.get("card_title") or ""))).upper()
             card = str(row.get("card_title") or "").strip()
             workbook_rows.append(
                 WorkbookRow(
@@ -17630,6 +17631,7 @@ class CardPipelineApp(tk.Tk):
                     cert_number=cert,
                     card_title=card,
                     grader=grader,
+                    item_id=str(row.get("item_id") or ""),
                     category=str(row.get("sport") or row.get("category") or "").strip(),
                     existing_value=row.get("purchase_price"),
                     status=status,

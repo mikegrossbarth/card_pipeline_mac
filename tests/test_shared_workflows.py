@@ -7130,6 +7130,56 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(rows[1].item_id, f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-0005")
         self.assertEqual(rows[2].item_id, "")
 
+    def test_manual_create_raw_rows_keep_blank_grader_when_saved_and_reloaded(self) -> None:
+        class CreateDummy:
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _raw_item_id_namespace = lambda self: "MIKEY"
+            _ensure_raw_item_ids_for_rows = app.CardPipelineApp._ensure_raw_item_ids_for_rows
+            _workbook_rows_from_simple_records = app.CardPipelineApp._workbook_rows_from_simple_records
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _live_sheet_raw_item_records(self):
+                return []
+
+        today = datetime.now().strftime("%Y%m%d")
+        dummy = CreateDummy()
+        rows = [
+            WorkbookRow(
+                excel_row=2,
+                cert_number="",
+                grader="",
+                card_title="2025 Topps Finest Barry Bonds Gold Auto 47/50",
+                category="baseball",
+                existing_value=575,
+            )
+        ]
+
+        added = dummy._ensure_raw_item_ids_for_rows(rows)
+
+        self.assertEqual(added, 1)
+        self.assertEqual(rows[0].item_id, f"RAW-MIKEY-{today}-0001")
+        self.assertEqual(rows[0].grader, "")
+
+        reloaded = dummy._workbook_rows_from_simple_records(
+            [
+                {
+                    "item_id": rows[0].item_id,
+                    "cert_number": "",
+                    "grader": "",
+                    "card_title": rows[0].card_title,
+                    "sport": rows[0].category,
+                    "purchase_price": rows[0].existing_value,
+                }
+            ],
+            source_name="manual.xlsx",
+        )
+
+        self.assertEqual(reloaded[0].item_id, rows[0].item_id)
+        self.assertEqual(reloaded[0].grader, "")
+        self.assertEqual(reloaded[0].status, "Needs setup")
+
     def test_raw_item_ids_are_namespaced_by_profile(self) -> None:
         class RawIdDummy:
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
