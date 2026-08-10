@@ -15150,19 +15150,36 @@ class CardPipelineApp(tk.Tk):
             return relative.as_posix()
         return str(path)
 
+    def _inventory_photo_windows_safe_relative(self, path: Path) -> Path:
+        safe_parts = []
+        for part in path.parts:
+            if part in {"", ".", ".."}:
+                safe_parts.append(part)
+                continue
+            safe_parts.append(re.sub(r'[<>:"/\\|?*]', " ", part))
+        return Path(*safe_parts) if safe_parts else path
+
     def _inventory_photo_path_candidates(self, path_value: object) -> list[Path]:
         text = str(path_value or "").strip()
         path = Path(text).expanduser()
         candidates: list[Path] = []
+        relative_variants: list[Path] = []
         if path.is_absolute():
             candidates.append(path)
             relative = self._inventory_photo_relative_path(path)
             if relative and not relative.is_absolute() and ".." not in relative.parts:
-                candidates.extend([self._inventory_photo_shared_folder() / relative, self._inventory_photo_source_folder() / relative])
+                relative_variants.append(relative)
             elif path.name:
-                candidates.extend([self._inventory_photo_shared_folder() / path.name, self._inventory_photo_source_folder() / path.name])
+                relative_variants.append(Path(path.name))
         else:
-            candidates.extend([self._inventory_photo_shared_folder() / path, self._inventory_photo_source_folder() / path, path])
+            relative_variants.append(path)
+            candidates.append(path)
+        for relative in list(relative_variants):
+            safe_relative = self._inventory_photo_windows_safe_relative(relative)
+            if safe_relative != relative:
+                relative_variants.append(safe_relative)
+        for relative in relative_variants:
+            candidates.extend([self._inventory_photo_shared_folder() / relative, self._inventory_photo_source_folder() / relative])
         seen: set[str] = set()
         unique: list[Path] = []
         for candidate in candidates:
