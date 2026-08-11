@@ -4487,7 +4487,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_people_rules_column_map_keeps_rate_and_deduction_after_min_max(self) -> None:
         self.assertEqual(
             assignment_config_ui.SELLER_TERMS_FIELDS,
-            ("Seller", "Sheet Type", "Min Value", "Max Value", "Seller Rate", "Deduction", "Balance Share"),
+            ("Person", "Sheet Type", "Min Value", "Max Value", "Seller Rate", "Deduction", "Balance Share"),
         )
         self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Min Value"], 2)
         self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Max Value"], 3)
@@ -4511,7 +4511,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "seller_terms.csv"
             path.write_text(
-                "Seller,Sheet Type,Min Value,Max Value,Seller Rate,Deduction,Balance Share\n"
+                "Person,Sheet Type,Min Value,Max Value,Seller Rate,Deduction,Balance Share\n"
                 "Kevin Hambone,,,,,,50%\n",
                 encoding="utf-8",
             )
@@ -4523,6 +4523,54 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn("1 valid row(s)", text)
         self.assertIn("Kevin Hambone / Team Balance: balance share 50%", text)
         self.assertNotIn("missing Sheet Type", text)
+
+    def test_people_rules_still_read_legacy_seller_header(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "seller_terms.csv"
+            path.write_text(
+                "Seller,Sheet Type,Min Value,Max Value,Seller Rate,Deduction,Balance Share\n"
+                "Kevin Hambone,,,,,,50%\n",
+                encoding="utf-8",
+            )
+
+            rows = assignment_config_ui.read_seller_terms_rows(path)
+
+        self.assertEqual(rows[0]["Person"], "Kevin Hambone")
+        self.assertEqual(rows[0]["Balance Share"], "50%")
+
+    def test_people_rules_sheet_type_clears_balance_share_on_save(self) -> None:
+        class Var:
+            def __init__(self, value: str):
+                self.value = value
+            def get(self) -> str:
+                return self.value
+
+        class Status:
+            def __init__(self):
+                self.value = ""
+            def set(self, value: str) -> None:
+                self.value = value
+
+        dialog = assignment_config_ui.PeopleRulesDialog.__new__(assignment_config_ui.PeopleRulesDialog)
+        dialog.status = Status()
+        dialog._active_sheet_types = lambda: ["Arena Club"]
+        dialog.row_vars = [
+            {
+                "Person": Var("John Seller"),
+                "Sheet Type": Var("Arena Club"),
+                "Min Value": Var(""),
+                "Max Value": Var(""),
+                "Seller Rate": Var("90"),
+                "Deduction": Var(""),
+                "Balance Share": Var("50"),
+            }
+        ]
+
+        rows = dialog._validated_rows()
+
+        self.assertIsNotNone(rows)
+        self.assertEqual(rows[0]["Balance Share"], "")
+        self.assertEqual(rows[0]["Sheet Type"], "Arena Club")
 
     def test_paid_received_sheets_archive_after_two_weeks_only_when_paid(self) -> None:
         class ArchiveDummy:

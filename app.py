@@ -1555,7 +1555,7 @@ class CardPipelineApp(tk.Tk):
             style="Panel.TCheckbutton",
         ).grid(row=0, column=3, sticky="e", padx=(16, 0))
         intake_controls.columnconfigure(3, weight=1)
-        self.network_seller_label = ttk.Label(intake_controls, text="Seller", style="Muted.TLabel")
+        self.network_seller_label = ttk.Label(intake_controls, text="Person", style="Muted.TLabel")
         self.network_seller_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.seller_terms_seller_combo = ttk.Combobox(intake_controls, textvariable=self.seller_terms_seller_var, width=24)
         self.seller_terms_seller_combo.grid(row=1, column=1, sticky="w", padx=(8, 16), pady=(10, 0))
@@ -13418,7 +13418,7 @@ class CardPipelineApp(tk.Tk):
                 self._refresh_table()
             self.status_var.set("Network Mode off. Seller terms hidden.")
         else:
-            self.status_var.set("Network Mode on. Seller and Sheet Type are available in Create.")
+            self.status_var.set("Network Mode on. Person and Sheet Type are available in Create.")
             self.apply_create_seller_terms(show_status=False)
 
     def _load_seller_terms(self) -> list[dict[str, object]]:
@@ -13609,7 +13609,7 @@ class CardPipelineApp(tk.Tk):
             if restored:
                 self._refresh_table()
             if show_status and (seller or sheet_type):
-                self.status_var.set("Seller terms need both Seller and Sheet Type.")
+                self.status_var.set("Seller terms need both Person and Sheet Type.")
             return 0
         term = self._seller_terms_match(seller, sheet_type)
         if not term:
@@ -17406,7 +17406,7 @@ class CardPipelineApp(tk.Tk):
                 if not seller or not seller_sheet_type:
                     messagebox.showinfo(
                         "Seller terms required",
-                        "Network Mode seller buys need both Seller and Sheet Type. Leave both blank for a normal Open Team sheet.",
+                        "Network Mode person buys need both Person and Sheet Type. Leave both blank for a normal Open Team sheet.",
                     )
                     return
                 seller_term = self._seller_terms_match(seller, seller_sheet_type)
