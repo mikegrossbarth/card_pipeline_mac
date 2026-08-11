@@ -12702,6 +12702,77 @@ class PhotoOcrSpeedTests(unittest.TestCase):
                 self.assertEqual(payouts["summary"][0]["person"], "Mike Seller")
                 self.assertEqual(payouts["details"][0]["status"], "Ready")
 
+                class MobilePayoutRefreshDummy:
+                    mobile_payouts = app.CardPipelineApp.mobile_payouts
+                    _refresh_mobile_payout_state_from_disk = app.CardPipelineApp._refresh_mobile_payout_state_from_disk
+
+                    def __init__(self):
+                        self.home_sheet_markers = {}
+                        self.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {}}
+                        self.home_sheet_summaries = {}
+
+                    def _load_sheet_markers(self):
+                        return {"Sold::Kevin Hambone|Sold Cards": {"paid": True}}
+
+                    def _known_people(self):
+                        return ["Kevin Hambone", "Mike Seller"]
+
+                    def _payout_sheet_items(self):
+                        return [
+                            {
+                                "key": "Sold::Kevin Hambone|Sold Cards",
+                                "name": "Sold Cards",
+                                "stage": "Sold",
+                                "person": "Kevin Hambone",
+                                "paid": bool(self.home_sheet_markers.get("Sold::Kevin Hambone|Sold Cards", {}).get("paid")),
+                                "row_count": 1,
+                                "received_count": 1,
+                                "payout_balance": 50.0,
+                                "status": "Sold",
+                            },
+                            {
+                                "key": "Received::Pending.xlsx",
+                                "name": "Pending.xlsx",
+                                "stage": "Received",
+                                "person": "Mike Seller",
+                                "paid": False,
+                                "payable": False,
+                                "row_count": 2,
+                                "received_count": 2,
+                                "payout_balance": 999.0,
+                                "status": "Seller payout pending values",
+                            },
+                            {
+                                "key": "Received::Ready.xlsx",
+                                "name": "Ready.xlsx",
+                                "stage": "Received",
+                                "person": "Mike Seller",
+                                "paid": False,
+                                "payable": True,
+                                "row_count": 3,
+                                "received_count": 3,
+                                "payout_balance": 120.0,
+                                "status": "Ready",
+                            },
+                        ]
+
+                old_incoming = app.INCOMING_SHEETS_DIR
+                old_working = app.WORKING_SHEETS_DIR
+                old_received = app.RECEIVED_SHEETS_DIR
+                app.INCOMING_SHEETS_DIR = Path(tmp) / "incoming"
+                app.WORKING_SHEETS_DIR = Path(tmp) / "working"
+                app.RECEIVED_SHEETS_DIR = Path(tmp) / "received"
+                try:
+                    refreshed = MobilePayoutRefreshDummy().mobile_payouts({})
+                finally:
+                    app.INCOMING_SHEETS_DIR = old_incoming
+                    app.WORKING_SHEETS_DIR = old_working
+                    app.RECEIVED_SHEETS_DIR = old_received
+                self.assertEqual(refreshed["totals"]["balance"], 120.0)
+                self.assertEqual([item["person"] for item in refreshed["summary"]], ["Mike Seller"])
+                pending_detail = next(item for item in refreshed["details"] if item["name"] == "Pending.xlsx")
+                self.assertFalse(pending_detail["payable"])
+
                 dummy._save_profit_ledger(
                     [
                         {

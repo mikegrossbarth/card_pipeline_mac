@@ -4247,6 +4247,9 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("Import Mobile Queue", f"Applied {applied} queued mobile action(s). Skipped {skipped} already-applied action(s).")
 
     def mobile_payouts(self, payload: dict) -> dict:
+        refresh_state = getattr(self, "_refresh_mobile_payout_state_from_disk", None)
+        if callable(refresh_state):
+            refresh_state()
         needle = str(payload.get("person") or "").strip().lower()
         balances: dict[str, dict[str, float | int]] = {}
         details: list[dict[str, object]] = []
@@ -4254,7 +4257,7 @@ class CardPipelineApp(tk.Tk):
             person = str(item.get("person") or "Unassigned")
             if needle and needle not in person.lower():
                 continue
-            if not item.get("paid"):
+            if not item.get("paid") and item.get("payable", True):
                 balance = balances.setdefault(person, {"sheets": 0, "cards": 0, "balance": 0.0})
                 balance["sheets"] = int(balance["sheets"]) + 1
                 balance["cards"] = int(balance["cards"]) + int(item.get("row_count") or 0)
@@ -4270,6 +4273,7 @@ class CardPipelineApp(tk.Tk):
                     "payout_balance_display": format_money(float(item.get("payout_balance") or 0.0)),
                     "status": item.get("status") or "",
                     "paid": bool(item.get("paid")),
+                    "payable": bool(item.get("payable", True)),
                 }
             )
         summary = [
@@ -4295,6 +4299,50 @@ class CardPipelineApp(tk.Tk):
                 "cards": sum(int(item["cards"]) for item in summary),
             },
         }
+
+    def _refresh_mobile_payout_state_from_disk(self) -> None:
+        try:
+            self.home_sheet_markers = self._load_sheet_markers()
+        except Exception:
+            pass
+        if not hasattr(self, "home_sheet_paths") or not isinstance(getattr(self, "home_sheet_paths", None), dict):
+            self.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {}}
+        if not hasattr(self, "home_sheet_summaries") or not isinstance(getattr(self, "home_sheet_summaries", None), dict):
+            self.home_sheet_summaries = {}
+
+        live_summary_paths: list[Path] = []
+        for stage, directory in (("Incoming", INCOMING_SHEETS_DIR), ("Working", WORKING_SHEETS_DIR), ("Received", RECEIVED_SHEETS_DIR)):
+            try:
+                if not directory.exists():
+                    self.home_sheet_paths[stage] = {}
+                    continue
+                paths = sorted(directory.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
+            except Exception:
+                continue
+            self.home_sheet_paths[stage] = {path.name: path for path in paths}
+            live_summary_paths.extend(paths)
+            for path in paths:
+                key = self._home_sheet_key(stage, path.name)
+                marker = self.home_sheet_markers.get(key, {}) if isinstance(getattr(self, "home_sheet_markers", None), dict) else {}
+                try:
+                    summary = self._summarize_home_workbook_cached(path)
+                    summary = self._enrich_home_seller_payout_summary(path, marker, summary)
+                except Exception:
+                    summary = dict(self.home_sheet_summaries.get(key) or {})
+                    if not summary:
+                        summary = {
+                            "name": path.name,
+                            "row_count": 0,
+                            "received_count": 0,
+                            "purchase_total": 0.0,
+                            "all_received": stage == "Received",
+                            "partially_received": False,
+                        }
+                self.home_sheet_summaries[key] = summary
+        try:
+            self._prune_home_summary_cache(live_summary_paths)
+        except Exception:
+            pass
 
     def _mobile_image_parts(self, image: str) -> tuple[str, str, bytes]:
         match = re.match(r"^data:([^;]+);base64,(.*)$", image, re.S)
