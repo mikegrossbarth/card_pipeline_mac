@@ -4579,6 +4579,17 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dialog._balance_share_entry_state("  "), assignment_config_ui.tk.NORMAL)
         self.assertEqual(dialog._balance_share_entry_state("Arena Club"), assignment_config_ui.tk.DISABLED)
 
+    def test_people_rules_sheet_type_choices_include_blank_reset_option(self) -> None:
+        dialog = assignment_config_ui.PeopleRulesDialog.__new__(assignment_config_ui.PeopleRulesDialog)
+        dialog.companies = [
+            {"name": "Fanatics", "active": True},
+            {"name": "Arena Club", "active": True},
+            {"name": "Inactive", "active": False},
+            {"name": "Arena Club", "active": True},
+        ]
+
+        self.assertEqual(dialog._sheet_type_choices(), ["", "Arena Club", "Fanatics"])
+
     def test_paid_received_sheets_archive_after_two_weeks_only_when_paid(self) -> None:
         class ArchiveDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key

@@ -1608,6 +1608,9 @@ class PeopleRulesDialog(tk.Toplevel):
         ]
         return sorted(set(names), key=str.lower)
 
+    def _sheet_type_choices(self) -> list[str]:
+        return [""] + self._active_sheet_types()
+
     def _build_ui(self) -> None:
         shell = build_scrollable_dialog_body(self, "Assign.TFrame", padding=16)
         shell.columnconfigure(0, weight=1)
@@ -1709,7 +1712,7 @@ class PeopleRulesDialog(tk.Toplevel):
             row = int(child.grid_info().get("row") or 0)
             if row > 0:
                 child.destroy()
-        sheet_types = self._active_sheet_types()
+        sheet_types = self._sheet_type_choices()
         for index, vars_by_field in enumerate(self.row_vars, start=1):
             self._bind_people_rule_exclusivity(vars_by_field)
             bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Person"], style="Assign.TEntry", width=26)).grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Person"], sticky="ew", padx=(0, 8), pady=(0, 8))
