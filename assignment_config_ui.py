@@ -61,6 +61,8 @@ VALUE_SOURCE_LABELS = {
 COMPANY_RESET_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 DEFAULT_COMPANY_RESET_WEEKDAY = "Monday"
 DEFAULT_COMPANY_RESET_TIME = "20:00"
+DEFAULT_SELLER_TERMS_MIN_VALUE = 0.0
+DEFAULT_SELLER_TERMS_MAX_VALUE = 1_000_000_000.0
 SELLER_TERMS_FIELDS = ("Seller", "Sheet Type", "Min Value", "Max Value", "Seller Rate", "Deduction")
 SELLER_TERMS_FIELD_COLUMNS = {field: index for index, field in enumerate(SELLER_TERMS_FIELDS)}
 SELLER_TERMS_FIELD_LABELS = {
@@ -226,14 +228,32 @@ def seller_terms_money_value(value: object) -> float | None:
     return numeric if numeric >= 0 else None
 
 
+def seller_terms_min_value(value: object) -> float | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return DEFAULT_SELLER_TERMS_MIN_VALUE
+    return seller_terms_money_value(value)
+
+
+def seller_terms_max_value(value: object) -> float | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return DEFAULT_SELLER_TERMS_MAX_VALUE
+    return seller_terms_money_value(value)
+
+
+def seller_terms_money_label(value: float) -> str:
+    return f"${value:,.0f}" if float(value).is_integer() else f"${value:,.2f}"
+
+
 def seller_terms_range_label(min_value: float | None, max_value: float | None) -> str:
     if min_value is None and max_value is None:
         return "all values"
     if min_value is None:
-        return f"up to ${max_value:g}"
+        return f"up to {seller_terms_money_label(max_value)}"
     if max_value is None:
-        return f"${min_value:g}+"
-    return f"${min_value:g} to ${max_value:g}"
+        return f"{seller_terms_money_label(min_value)}+"
+    return f"{seller_terms_money_label(min_value)} to {seller_terms_money_label(max_value)}"
 
 
 def seller_terms_ranges_overlap(a_min: float | None, a_max: float | None, b_min: float | None, b_max: float | None) -> bool:
@@ -300,8 +320,8 @@ def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str,
         max_raw = row.get("Max Value")
         rate_raw = row.get("Seller Rate")
         deduction_raw = row.get("Deduction")
-        min_value = seller_terms_money_value(min_raw)
-        max_value = seller_terms_money_value(max_raw)
+        min_value = seller_terms_min_value(min_raw)
+        max_value = seller_terms_max_value(max_raw)
         rate = seller_terms_rate(rate_raw)
         deduction = seller_terms_rate(deduction_raw)
         row_errors: list[str] = []
@@ -1695,8 +1715,8 @@ class PeopleRulesDialog(tk.Toplevel):
             if row["Sheet Type"].lower() not in active_types:
                 self.status.set(f"Row {index}: Sheet Type must match an active Company Rule.")
                 return None
-            min_value = seller_terms_money_value(row.get("Min Value"))
-            max_value = seller_terms_money_value(row.get("Max Value"))
+            min_value = seller_terms_min_value(row.get("Min Value"))
+            max_value = seller_terms_max_value(row.get("Max Value"))
             if row["Min Value"] and min_value is None:
                 self.status.set(f"Row {index}: Min Value must be a number only.")
                 return None

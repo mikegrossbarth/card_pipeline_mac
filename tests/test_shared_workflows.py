@@ -4031,6 +4031,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_seller_terms_deduction_uses_matching_value_range_per_card(self) -> None:
         class SellerRangeDummy:
             _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
             _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
             _seller_terms_match = app.CardPipelineApp._seller_terms_match
             _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
@@ -4068,11 +4070,46 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy._seller_terms_company_price(low, "Arena Club", term=low_term), 360.0)
         self.assertEqual(dummy._seller_terms_company_price(high, "Arena Club", term=high_term), 850.0)
 
+    def test_seller_terms_blank_bounds_default_to_full_value_range(self) -> None:
+        class SellerRangeDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_range_label = app.CardPipelineApp._seller_terms_range_label
+            _load_seller_terms = app.CardPipelineApp._load_seller_terms
+
+        with TemporaryDirectory() as tmp:
+            old_terms = app.SELLER_TERMS_PATH
+            app.SELLER_TERMS_PATH = Path(tmp) / "seller_terms.csv"
+            app.SELLER_TERMS_PATH.write_text(
+                "Seller,Sheet Type,Min Value,Max Value,Seller Rate,Deduction\n"
+                "John,Arena Club,,,80%,\n",
+                encoding="utf-8",
+            )
+            try:
+                dummy = SellerRangeDummy()
+                term = dummy._load_seller_terms()[0]
+            finally:
+                app.SELLER_TERMS_PATH = old_terms
+
+        self.assertEqual(term["min_value"], 0.0)
+        self.assertEqual(term["max_value"], 1_000_000_000.0)
+        self.assertTrue(dummy._seller_terms_value_in_range(0, term))
+        self.assertTrue(dummy._seller_terms_value_in_range(1_000_000_000, term))
+        self.assertFalse(dummy._seller_terms_value_in_range(1_000_000_000.01, term))
+        self.assertEqual(dummy._seller_terms_range_label(term), "$0.00 to $1,000,000,000.00")
+
     def test_seller_terms_pending_until_required_values_exist(self) -> None:
         class SellerSummaryDummy:
             _money_value = app.CardPipelineApp._money_value
             _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
-            _seller_terms_match = lambda self, seller, sheet_type: {"seller": seller, "sheet_type": sheet_type, "deduction": 0.1}
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_match = lambda self, seller, sheet_type, source_value=None: {"seller": seller, "sheet_type": sheet_type, "deduction": 0.1}
+            _seller_terms_match_for_row = app.CardPipelineApp._seller_terms_match_for_row
             _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
             _seller_term_for_marker = app.CardPipelineApp._seller_term_for_marker
             _seller_terms_value_label = app.CardPipelineApp._seller_terms_value_label
@@ -4412,6 +4449,18 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Max Value"], 3)
         self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Seller Rate"], 4)
         self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Deduction"], 5)
+
+    def test_people_rules_blank_bounds_default_to_zero_and_large_max(self) -> None:
+        self.assertEqual(assignment_config_ui.seller_terms_min_value(""), 0.0)
+        self.assertEqual(assignment_config_ui.seller_terms_max_value(""), 1_000_000_000.0)
+        self.assertTrue(assignment_config_ui.seller_terms_ranges_overlap(None, None, 0.0, 1_000_000_000.0))
+        self.assertEqual(
+            assignment_config_ui.seller_terms_range_label(
+                assignment_config_ui.seller_terms_min_value(""),
+                assignment_config_ui.seller_terms_max_value(""),
+            ),
+            "$0 to $1,000,000,000",
+        )
 
     def test_paid_received_sheets_archive_after_two_weeks_only_when_paid(self) -> None:
         class ArchiveDummy:
@@ -7683,6 +7732,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class SellerTermsDummy:
             _money_value = app.CardPipelineApp._money_value
             _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
             _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
             _seller_terms_range_label = app.CardPipelineApp._seller_terms_range_label
             _load_seller_terms = app.CardPipelineApp._load_seller_terms

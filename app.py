@@ -203,6 +203,8 @@ DEFAULT_PROFIT_PLOT = "Overall"
 COMPANY_RESET_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 DEFAULT_COMPANY_RESET_WEEKDAY = "Monday"
 DEFAULT_COMPANY_RESET_TIME = "20:00"
+DEFAULT_SELLER_TERMS_MIN_VALUE = 0.0
+DEFAULT_SELLER_TERMS_MAX_VALUE = 1_000_000_000.0
 PROFIT_SPORT_COLORS = {
     "Football": "#3b82f6",
     "Baseball": "#ef4444",
@@ -13418,8 +13420,10 @@ class CardPipelineApp(tk.Tk):
             value_source = str(normalized.get("valuesource") or normalized.get("source") or "").strip()
             rate = self._seller_terms_rate(normalized.get("sellerrate") or normalized.get("rate") or normalized.get("payout") or normalized.get("percentage"))
             deduction = self._seller_terms_rate(normalized.get("deduction") or normalized.get("sellerdeduction") or normalized.get("deductionpercent") or normalized.get("deductionpercentage"))
-            min_value = self._money_value(normalized.get("minvalue") or normalized.get("min") or normalized.get("minimum") or normalized.get("floor"))
-            max_value = self._money_value(normalized.get("maxvalue") or normalized.get("max") or normalized.get("maximum") or normalized.get("ceiling"))
+            min_raw = normalized.get("minvalue") or normalized.get("min") or normalized.get("minimum") or normalized.get("floor")
+            max_raw = normalized.get("maxvalue") or normalized.get("max") or normalized.get("maximum") or normalized.get("ceiling")
+            min_value = self._seller_terms_min_value(min_raw)
+            max_value = self._seller_terms_max_value(max_raw)
             if seller and sheet_type and (rate is not None or deduction is not None):
                 terms.append({"seller": seller, "sheet_type": sheet_type, "value_source": value_source, "min_value": min_value, "max_value": max_value, "rate": rate, "deduction": deduction})
         return terms
@@ -13441,11 +13445,21 @@ class CardPipelineApp(tk.Tk):
         rate = numeric / 100 if "%" in raw or numeric > 1 else numeric
         return rate if rate >= 0 else None
 
+    def _seller_terms_min_value(self, value: object) -> float | None:
+        if not str(value or "").strip():
+            return DEFAULT_SELLER_TERMS_MIN_VALUE
+        return self._money_value(value)
+
+    def _seller_terms_max_value(self, value: object) -> float | None:
+        if not str(value or "").strip():
+            return DEFAULT_SELLER_TERMS_MAX_VALUE
+        return self._money_value(value)
+
     def _seller_terms_value_in_range(self, source_value: float | None, term: dict[str, object]) -> bool:
-        min_value = self._money_value(term.get("min_value"))
-        max_value = self._money_value(term.get("max_value"))
+        min_value = self._seller_terms_min_value(term.get("min_value"))
+        max_value = self._seller_terms_max_value(term.get("max_value"))
         if source_value is None:
-            return min_value is None and max_value is None
+            return False
         if min_value is not None and source_value < min_value:
             return False
         if max_value is not None and source_value > max_value:
@@ -13453,8 +13467,8 @@ class CardPipelineApp(tk.Tk):
         return True
 
     def _seller_terms_range_label(self, term: dict[str, object]) -> str:
-        min_value = self._money_value(term.get("min_value"))
-        max_value = self._money_value(term.get("max_value"))
+        min_value = self._seller_terms_min_value(term.get("min_value"))
+        max_value = self._seller_terms_max_value(term.get("max_value"))
         if min_value is None and max_value is None:
             return "all values"
         if min_value is None:
