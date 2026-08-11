@@ -4247,7 +4247,7 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("Import Mobile Queue", f"Applied {applied} queued mobile action(s). Skipped {skipped} already-applied action(s).")
 
     def mobile_payouts(self, payload: dict) -> dict:
-        refresh_state = getattr(self, "_refresh_mobile_payout_state_from_disk", None)
+        refresh_state = getattr(self, "_refresh_payout_state_from_disk", None)
         if callable(refresh_state):
             refresh_state()
         needle = str(payload.get("person") or "").strip().lower()
@@ -4300,7 +4300,7 @@ class CardPipelineApp(tk.Tk):
             },
         }
 
-    def _refresh_mobile_payout_state_from_disk(self) -> None:
+    def _refresh_payout_state_from_disk(self) -> None:
         try:
             self.home_sheet_markers = self._load_sheet_markers()
         except Exception:
@@ -13022,6 +13022,9 @@ class CardPipelineApp(tk.Tk):
         if not hasattr(self, "payout_summary_tree"):
             record_performance_event("payouts.refresh", perf_start, "tree=missing")
             return
+        refresh_state = getattr(self, "_refresh_payout_state_from_disk", None)
+        if callable(refresh_state):
+            refresh_state()
         self._refresh_person_combo_values()
         self.payout_summary_tree.delete(*self.payout_summary_tree.get_children())
         self.payout_detail_tree.delete(*self.payout_detail_tree.get_children())

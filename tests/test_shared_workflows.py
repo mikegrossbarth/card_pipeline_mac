@@ -12704,7 +12704,7 @@ class PhotoOcrSpeedTests(unittest.TestCase):
 
                 class MobilePayoutRefreshDummy:
                     mobile_payouts = app.CardPipelineApp.mobile_payouts
-                    _refresh_mobile_payout_state_from_disk = app.CardPipelineApp._refresh_mobile_payout_state_from_disk
+                    _refresh_payout_state_from_disk = app.CardPipelineApp._refresh_payout_state_from_disk
 
                     def __init__(self):
                         self.home_sheet_markers = {}
