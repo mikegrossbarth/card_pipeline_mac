@@ -1701,6 +1701,9 @@ class PeopleRulesDialog(tk.Toplevel):
         setattr(deduction_var, "_lucas_exclusive_bound", True)
         setattr(sheet_type_var, "_lucas_exclusive_bound", True)
 
+    def _balance_share_entry_state(self, sheet_type: object) -> str:
+        return tk.DISABLED if str(sheet_type or "").strip() else tk.NORMAL
+
     def _render_rows(self) -> None:
         for child in self.rows_frame.grid_slaves():
             row = int(child.grid_info().get("row") or 0)
@@ -1721,7 +1724,17 @@ class PeopleRulesDialog(tk.Toplevel):
             bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Max Value"], style="Assign.TEntry", width=14)).grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Max Value"], sticky="ew", padx=(0, 8), pady=(0, 8))
             bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller Rate"], style="Assign.TEntry", width=14)).grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Seller Rate"], sticky="ew", padx=(0, 8), pady=(0, 8))
             bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Deduction"], style="Assign.TEntry", width=14)).grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Deduction"], sticky="ew", padx=(0, 8), pady=(0, 8))
-            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Balance Share"], style="Assign.TEntry", width=14)).grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Balance Share"], sticky="ew", padx=(0, 8), pady=(0, 8))
+            balance_entry = bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Balance Share"], style="Assign.TEntry", width=14))
+            balance_entry.grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Balance Share"], sticky="ew", padx=(0, 8), pady=(0, 8))
+
+            def sync_balance_share_state(*_args, entry=balance_entry, row_vars=vars_by_field) -> None:
+                try:
+                    entry.configure(state=self._balance_share_entry_state(row_vars["Sheet Type"].get()))
+                except tk.TclError:
+                    pass
+
+            vars_by_field["Sheet Type"].trace_add("write", sync_balance_share_state)
+            sync_balance_share_state()
             ttk.Button(self.rows_frame, text="Delete", command=lambda row_index=index - 1: self._delete_row(row_index), style="AssignSoft.TButton").grid(row=index, column=len(SELLER_TERMS_FIELDS), sticky="ew", pady=(0, 8))
 
     def _validated_rows(self) -> list[dict[str, str]] | None:
