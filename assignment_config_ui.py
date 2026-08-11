@@ -356,6 +356,8 @@ def seller_terms_health_lines(seller_terms_path: Path, companies: list[dict[str,
             row_errors.append(f"Deduction parses above 100% ({deduction:.0%})")
         if balance_share is not None and balance_share > 1:
             row_errors.append(f"Balance Share parses above 100% ({balance_share:.0%})")
+        if balance_share is not None and balance_share != 1:
+            row_errors.append("Balance Share must be 100% for Network Mode pass-through")
         type_key = sheet_type.lower()
         if sheet_type and type_key not in active_companies:
             if type_key in inactive_companies:
@@ -1614,7 +1616,7 @@ class PeopleRulesDialog(tk.Toplevel):
         ttk.Label(shell, text="People Rules", style="AssignHeader.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         ttk.Label(
             shell,
-            text="Add seller payout terms here. Sheet Type must match an active company rule for Seller Rate or Deduction rows. Balance Share % rows can omit Sheet Type to define Team balance owed from unpaid net profit.",
+            text="Add seller payout terms here. Sheet Type must match an active company rule for Seller Rate or Deduction rows. Use Balance Share % = 100 with blank Sheet Type to make a Network Mode person pass sheet purchase value through to payouts.",
             style="AssignBgMuted.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(0, 12))
         table = ttk.Frame(shell, style="AssignPanel.TFrame", padding=12)
@@ -1773,6 +1775,9 @@ class PeopleRulesDialog(tk.Toplevel):
                 return None
             if row["Balance Share"] and (seller_terms_rate(row["Balance Share"]) or 0) > 1:
                 self.status.set(f"Row {index}: Balance Share % cannot be above 100.")
+                return None
+            if balance_share is not None and balance_share != 1:
+                self.status.set(f"Row {index}: Balance Share % must be 100 for Network Mode pass-through.")
                 return None
             if row["Sheet Type"]:
                 key = (row["Seller"].lower(), row["Sheet Type"].lower())

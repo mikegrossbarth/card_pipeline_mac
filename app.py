@@ -13323,8 +13323,13 @@ class CardPipelineApp(tk.Tk):
             str(term.get("seller") or "").strip().lower()
             for term in self._load_seller_terms()
             if str(term.get("seller") or "").strip()
-            and str(term.get("sheet_type") or "").strip()
-            and (term.get("rate") is not None or term.get("deduction") is not None)
+            and (
+                (
+                    str(term.get("sheet_type") or "").strip()
+                    and (term.get("rate") is not None or term.get("deduction") is not None)
+                )
+                or term.get("balance_share") is not None
+            )
         }
 
     def _team_balance_share_for_person(self, person: str) -> float:
@@ -13373,7 +13378,7 @@ class CardPipelineApp(tk.Tk):
         normalized_person = str(person or "").strip().lower()
         seller_names = seller_names if seller_names is not None else self._seller_terms_seller_names()
         if seller_payout is True or (seller_payout is None and normalized_person and normalized_person in seller_names):
-            return round(float(purchase_total or 0.0), 2), "Seller purchase total"
+            return round(float(purchase_total or 0.0), 2), "Sheet purchase pass-through"
         realized_profit = float(realized_profit_total or 0.0)
         share = self._team_balance_share_for_person(person)
         return round(realized_profit * share, 2), f"Team balance share {share:.0%}"
