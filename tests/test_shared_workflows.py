@@ -4403,6 +4403,16 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertFalse(assignment_config_ui.seller_terms_percent_input_is_number("10%"))
         self.assertFalse(assignment_config_ui.seller_terms_percent_input_is_number("ten"))
 
+    def test_people_rules_column_map_keeps_rate_and_deduction_after_min_max(self) -> None:
+        self.assertEqual(
+            assignment_config_ui.SELLER_TERMS_FIELDS,
+            ("Seller", "Sheet Type", "Min Value", "Max Value", "Seller Rate", "Deduction"),
+        )
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Min Value"], 2)
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Max Value"], 3)
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Seller Rate"], 4)
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Deduction"], 5)
+
     def test_paid_received_sheets_archive_after_two_weeks_only_when_paid(self) -> None:
         class ArchiveDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key

@@ -62,6 +62,7 @@ COMPANY_RESET_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday"
 DEFAULT_COMPANY_RESET_WEEKDAY = "Monday"
 DEFAULT_COMPANY_RESET_TIME = "20:00"
 SELLER_TERMS_FIELDS = ("Seller", "Sheet Type", "Min Value", "Max Value", "Seller Rate", "Deduction")
+SELLER_TERMS_FIELD_COLUMNS = {field: index for index, field in enumerate(SELLER_TERMS_FIELDS)}
 SELLER_TERMS_FIELD_LABELS = {
     "Min Value": "Min Value",
     "Max Value": "Max Value",
@@ -1663,17 +1664,19 @@ class PeopleRulesDialog(tk.Toplevel):
         sheet_types = self._active_sheet_types()
         for index, vars_by_field in enumerate(self.row_vars, start=1):
             self._bind_rate_deduction_exclusivity(vars_by_field)
-            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller"], style="Assign.TEntry", width=26)).grid(row=index, column=0, sticky="ew", padx=(0, 8), pady=(0, 8))
+            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller"], style="Assign.TEntry", width=26)).grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Seller"], sticky="ew", padx=(0, 8), pady=(0, 8))
             bind_single_paste(ttk.Combobox(
                 self.rows_frame,
                 textvariable=vars_by_field["Sheet Type"],
                 values=sheet_types,
                 style="Assign.TCombobox",
                 width=24,
-            )).grid(row=index, column=1, sticky="ew", padx=(0, 8), pady=(0, 8))
-            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller Rate"], style="Assign.TEntry", width=14)).grid(row=index, column=2, sticky="ew", padx=(0, 8), pady=(0, 8))
-            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Deduction"], style="Assign.TEntry", width=14)).grid(row=index, column=3, sticky="ew", padx=(0, 8), pady=(0, 8))
-            ttk.Button(self.rows_frame, text="Delete", command=lambda row_index=index - 1: self._delete_row(row_index), style="AssignSoft.TButton").grid(row=index, column=4, sticky="ew", pady=(0, 8))
+            )).grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Sheet Type"], sticky="ew", padx=(0, 8), pady=(0, 8))
+            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Min Value"], style="Assign.TEntry", width=14)).grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Min Value"], sticky="ew", padx=(0, 8), pady=(0, 8))
+            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Max Value"], style="Assign.TEntry", width=14)).grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Max Value"], sticky="ew", padx=(0, 8), pady=(0, 8))
+            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Seller Rate"], style="Assign.TEntry", width=14)).grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Seller Rate"], sticky="ew", padx=(0, 8), pady=(0, 8))
+            bind_single_paste(ttk.Entry(self.rows_frame, textvariable=vars_by_field["Deduction"], style="Assign.TEntry", width=14)).grid(row=index, column=SELLER_TERMS_FIELD_COLUMNS["Deduction"], sticky="ew", padx=(0, 8), pady=(0, 8))
+            ttk.Button(self.rows_frame, text="Delete", command=lambda row_index=index - 1: self._delete_row(row_index), style="AssignSoft.TButton").grid(row=index, column=len(SELLER_TERMS_FIELDS), sticky="ew", pady=(0, 8))
 
     def _validated_rows(self) -> list[dict[str, str]] | None:
         active_types = {name.lower(): name for name in self._active_sheet_types()}
