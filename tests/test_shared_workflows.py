@@ -3950,17 +3950,18 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _seller_terms_seller_names = app.CardPipelineApp._seller_terms_seller_names
 
             def _load_seller_terms(self):
-                return [{"seller": "Kevin Hambone", "balance_share": 1.0}]
+                return [{"seller": "Kevin Hambone", "balance_share": 0.5}]
 
         dummy = PayoutDummy()
         sellers = {"john seller"} | dummy._seller_terms_seller_names()
 
-        self.assertEqual(dummy._active_payout_balance("John Seller", 80.0, 150.0, sellers), (80.0, "Sheet purchase pass-through"))
-        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers), (80.0, "Sheet purchase pass-through"))
-        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 100.0, 80.0, sellers), (100.0, "Sheet purchase pass-through"))
+        self.assertEqual(dummy._active_payout_balance("John Seller", 80.0, 150.0, sellers), (80.0, "Seller purchase total"))
+        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers), (0.0, "Team balance share 50%"))
+        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 80.0, 150.0, sellers, realized_profit_total=70.0), (35.0, "Team balance share 50%"))
+        self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 100.0, 80.0, sellers, realized_profit_total=-20.0), (-10.0, "Team balance share 50%"))
         self.assertEqual(dummy._active_payout_balance("James Copeland", 80.0, 150.0, sellers, realized_profit_total=70.0), (35.0, "Team balance share 50%"))
 
-    def test_balance_share_only_people_rule_marks_direct_payout_source(self) -> None:
+    def test_balance_share_only_people_rule_does_not_make_person_seller_source(self) -> None:
         class PayoutDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
             _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
@@ -3977,7 +3978,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             app.SELLER_TERMS_PATH = Path(tmp) / "seller_terms.csv"
             app.SELLER_TERMS_PATH.write_text(
                 "Seller,Sheet Type,Min Value,Max Value,Seller Rate,Deduction,Balance Share\n"
-                "Kevin Hambone,,,,,,100%\n"
+                "Kevin Hambone,,,,,,50%\n"
                 "John Seller,Arena Club,,,90%,,\n",
                 encoding="utf-8",
             )
@@ -3986,9 +3987,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 dummy.home_sheet_markers = {}
                 terms = dummy._load_seller_terms()
                 sellers = dummy._seller_terms_seller_names()
-                self.assertEqual(next(term for term in terms if term["seller"] == "Kevin Hambone")["balance_share"], 1.0)
-                self.assertEqual(sellers, {"john seller", "kevin hambone"})
-                self.assertTrue(dummy._source_sheet_is_seller_payout("Team Lot.xlsx", "Kevin Hambone", sellers))
+                self.assertEqual(next(term for term in terms if term["seller"] == "Kevin Hambone")["balance_share"], 0.5)
+                self.assertEqual(sellers, {"john seller"})
+                self.assertFalse(dummy._source_sheet_is_seller_payout("Team Lot.xlsx", "Kevin Hambone", sellers))
                 self.assertTrue(dummy._source_sheet_is_seller_payout("Seller Lot.xlsx", "John Seller", sellers))
             finally:
                 app.SELLER_TERMS_PATH = old_terms
@@ -4511,16 +4512,16 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             path = Path(tmp) / "seller_terms.csv"
             path.write_text(
                 "Seller,Sheet Type,Min Value,Max Value,Seller Rate,Deduction,Balance Share\n"
-                "Kevin Hambone,,,,,,100%\n",
+                "Kevin Hambone,,,,,,50%\n",
                 encoding="utf-8",
             )
             rows = assignment_config_ui.read_seller_terms_rows(path)
             lines = assignment_config_ui.seller_terms_health_lines(path, [{"name": "Arena Club", "active": True}])
 
-        self.assertEqual(rows[0]["Balance Share"], "100%")
+        self.assertEqual(rows[0]["Balance Share"], "50%")
         text = "\n".join(lines)
         self.assertIn("1 valid row(s)", text)
-        self.assertIn("Kevin Hambone / Team Balance: balance share 100%", text)
+        self.assertIn("Kevin Hambone / Team Balance: balance share 50%", text)
         self.assertNotIn("missing Sheet Type", text)
 
     def test_paid_received_sheets_archive_after_two_weeks_only_when_paid(self) -> None:
