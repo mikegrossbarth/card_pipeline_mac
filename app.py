@@ -2843,6 +2843,46 @@ class CardPipelineApp(tk.Tk):
             for field in ("cert_number", "source_sheet", "assigned_person")
         )
 
+    def _inventory_identity_keys(self, record: dict[str, object]) -> set[str]:
+        keys: set[str] = set()
+        cert = scan_to_cert(record.get("cert_number"))
+        if cert:
+            keys.add(f"cert:{cert}")
+        item_id = str(record.get("item_id") or "").strip().lower()
+        if item_id:
+            keys.add(f"item:{item_id}")
+        return keys
+
+    def _sold_inventory_identity_keys(self, record: dict[str, object]) -> set[str]:
+        if str(record.get("record_type") or "").strip().lower() == "expense":
+            return set()
+        if self._money_value(record.get("sale_price")) is None:
+            return set()
+        return self._inventory_identity_keys(record)
+
+    def _active_inventory_rows_excluding_sold_profit(
+        self,
+        rows: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        profit_loader = getattr(self, "_load_profit_ledger", None)
+        if not callable(profit_loader):
+            return rows, []
+        sold_keys: set[str] = set()
+        for raw_record in profit_loader():
+            if isinstance(raw_record, dict):
+                sold_keys.update(self._sold_inventory_identity_keys(raw_record))
+        if not sold_keys:
+            return rows, []
+        kept: list[dict[str, object]] = []
+        removed: list[dict[str, object]] = []
+        for record in rows:
+            keys = self._inventory_identity_keys(record)
+            if keys and keys & sold_keys:
+                removed.append(record)
+            else:
+                kept.append(record)
+        return kept, removed
+
     def _raw_item_id_namespace(self) -> str:
         return "MIKEY" if self._is_personal_lucas() else "TEAM"
 
@@ -9226,6 +9266,12 @@ class CardPipelineApp(tk.Tk):
         all_stored_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         non_active_stored_rows = [record for record in all_stored_rows if str(record.get("status") or "").lower() != "active"]
         stored_rows = [record for record in all_stored_rows if str(record.get("status") or "").lower() == "active"]
+        sold_filter = getattr(self, "_active_inventory_rows_excluding_sold_profit", None)
+        if callable(sold_filter):
+            stored_rows, sold_profit_removed_rows = sold_filter(stored_rows)
+        else:
+            sold_profit_removed_rows = []
+        should_save_inventory_rows = bool(sold_profit_removed_rows) or bool(non_active_stored_rows and not enrich)
         if enrich and filtered_only:
             filtered_keys = {str(record.get("inventory_key") or "") for record in self._filtered_inventory_records(stored_rows)}
             self._last_inventory_enrich_visible_count = len(filtered_keys)
@@ -9252,7 +9298,10 @@ class CardPipelineApp(tk.Tk):
             else:
                 self.inventory_rows = stored_rows
         if enrich and self.inventory_rows != stored_rows:
-            self._save_inventory_ledger([*non_active_stored_rows, *self.inventory_rows])
+            should_save_inventory_rows = True
+        if should_save_inventory_rows:
+            preserved_non_active_rows = non_active_stored_rows if enrich else []
+            self._save_inventory_ledger([*preserved_non_active_rows, *self.inventory_rows])
         self.filtered_inventory_rows = self._filtered_inventory_records(self.inventory_rows)
         if hasattr(self, "_sorted_records"):
             self.filtered_inventory_rows = self._sorted_records(
@@ -13661,7 +13710,7 @@ class CardPipelineApp(tk.Tk):
     def _known_assigned_people(self) -> list[str]:
         people = {
             str(marker.get("assigned_person") or "").strip()
-            for marker in self.home_sheet_markers.values()
+            for marker in getattr(self, "home_sheet_markers", {}).values()
             if CardPipelineApp._is_real_person_name(marker.get("assigned_person"))
         }
         return sorted(people, key=str.lower)

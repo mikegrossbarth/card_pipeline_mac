@@ -4035,6 +4035,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(PeopleDummy()._known_people(), ["James Copeland", "John Seller", "Kevin Hambone", "Tyler Hamlin"])
 
+    def test_known_assigned_people_allows_startup_before_markers_load(self) -> None:
+        class PeopleDummy:
+            _known_assigned_people = app.CardPipelineApp._known_assigned_people
+
+        self.assertEqual(PeopleDummy()._known_assigned_people(), [])
+
     def test_save_working_sheet_requires_valid_network_seller_terms(self) -> None:
         class Var:
             def __init__(self, value=""):
@@ -6112,6 +6118,57 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual([row["cert_number"] for row in ledger], ["111"])
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_inventory_refresh_purges_active_rows_already_sold_in_profit(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _inventory_identity_keys = app.CardPipelineApp._inventory_identity_keys
+            _sold_inventory_identity_keys = app.CardPipelineApp._sold_inventory_identity_keys
+            _active_inventory_rows_excluding_sold_profit = app.CardPipelineApp._active_inventory_rows_excluding_sold_profit
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+            _inventory_cl_comp_delta = app.CardPipelineApp._inventory_cl_comp_delta
+            _format_inventory_cl_comp_delta = app.CardPipelineApp._format_inventory_cl_comp_delta
+            refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
+
+            def __init__(self):
+                self.inventory_filter_after_id = None
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                dummy._save_inventory_ledger([
+                    dummy._normalize_inventory_record({"assigned_person": "Kevin Hambone", "cert_number": "111", "grader": "PSA", "card_title": "Keep Card", "source_sheet": "A.xlsx", "status": "Active"}),
+                    dummy._normalize_inventory_record({"assigned_person": "Kevin Hambone", "cert_number": "222", "grader": "PSA", "card_title": "Sold Card", "source_sheet": "B.xlsx", "status": "Active"}),
+                    dummy._normalize_inventory_record({"assigned_person": "Kevin Hambone", "cert_number": "333", "grader": "PSA", "card_title": "Sold Card", "source_sheet": "C.xlsx", "status": "Active"}),
+                    dummy._normalize_inventory_record({"assigned_person": "Kevin Hambone", "item_id": "RAW-TEAM-20260811-0001", "card_title": "Raw Sold Card", "source_sheet": "D.xlsx", "status": "Active"}),
+                ])
+                dummy._save_profit_ledger([
+                    dummy._normalize_profit_record({"assigned_person": "Kevin Hambone", "cert_number": "222", "grader": "PSA", "card_title": "Sold Card", "company": "Cash Buyer", "source_sheet": "Kevin Hambone General Sold", "purchase_price": 50, "sale_price": 125, "date_added": "2026-08-11", "status": "Sold from inventory"}),
+                    dummy._normalize_profit_record({"assigned_person": "Kevin Hambone", "item_id": "RAW-TEAM-20260811-0001", "card_title": "Raw Sold Card", "company": "Cash Buyer", "source_sheet": "Kevin Hambone General Sold", "purchase_price": 10, "sale_price": 20, "date_added": "2026-08-11", "status": "Sold from inventory"}),
+                ])
+
+                dummy.refresh_inventory_tab()
+
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual([row.get("cert_number") or row.get("item_id") for row in ledger], ["111", "333"])
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
 
     def test_inventory_table_values_can_be_copied_without_editing(self) -> None:
         class FakeTree:
