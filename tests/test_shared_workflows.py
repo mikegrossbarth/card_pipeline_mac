@@ -3859,6 +3859,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _team_payout_record_sort_key = app.CardPipelineApp._team_payout_record_sort_key
+            _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
+            _expense_payout_key = app.CardPipelineApp._expense_payout_key
+            _legacy_group_paid_state = app.CardPipelineApp._legacy_group_paid_state
+            _team_record_paid_state = app.CardPipelineApp._team_record_paid_state
+            _team_sold_card_payout_item = app.CardPipelineApp._team_sold_card_payout_item
+            _team_expense_payout_item = app.CardPipelineApp._team_expense_payout_item
             _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
             _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
             _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
@@ -4712,6 +4719,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _team_payout_record_sort_key = app.CardPipelineApp._team_payout_record_sort_key
+            _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
+            _expense_payout_key = app.CardPipelineApp._expense_payout_key
+            _legacy_group_paid_state = app.CardPipelineApp._legacy_group_paid_state
+            _team_record_paid_state = app.CardPipelineApp._team_record_paid_state
+            _team_sold_card_payout_item = app.CardPipelineApp._team_sold_card_payout_item
+            _team_expense_payout_item = app.CardPipelineApp._team_expense_payout_item
             _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
             _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
             _profit_record_payout_time = app.CardPipelineApp._profit_record_payout_time
@@ -4719,6 +4733,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _add_profit_record_to_realized_group = app.CardPipelineApp._add_profit_record_to_realized_group
             _payout_realized_groups_for_marker = app.CardPipelineApp._payout_realized_groups_for_marker
             _team_balance_share_for_person = app.CardPipelineApp._team_balance_share_for_person
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
 
             def __init__(self):
                 self.home_sheet_paths = {"Incoming": {"Lot A.xlsx": Path("Lot A.xlsx")}, "Received": {}}
@@ -4774,17 +4789,84 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             }
         ]
         payout_items = dummy._payout_sheet_items()
-        self.assertEqual(len(payout_items), 2)
-        by_name = {item["name"]: item for item in payout_items}
-        self.assertEqual(by_name["Lot A.xlsx"]["stage"], "Sold")
-        self.assertEqual(by_name["Lot A.xlsx"]["row_count"], 1)
-        self.assertEqual(by_name["Lot A.xlsx"]["expense_total"], 20.0)
-        self.assertEqual(by_name["Lot A.xlsx"]["realized_profit_total"], 50.0)
-        self.assertEqual(by_name["Lot A.xlsx"]["payout_balance"], 25.0)
-        self.assertEqual(by_name["Expense Adjustments"]["expense_total"], 10.0)
-        self.assertEqual(by_name["Expense Adjustments"]["net_profit_total"], -10.0)
-        self.assertEqual(by_name["Expense Adjustments"]["payout_balance"], -5.0)
+        self.assertEqual(len(payout_items), 3)
+        sold_items = [item for item in payout_items if item["stage"] == "Sold Card"]
+        expense_items = [item for item in payout_items if item["stage"] == "Expense"]
+        self.assertEqual(len(sold_items), 1)
+        self.assertEqual(sold_items[0]["name"], "123")
+        self.assertEqual(sold_items[0]["row_count"], 1)
+        self.assertEqual(sold_items[0]["realized_profit_total"], 70.0)
+        self.assertEqual(sold_items[0]["payout_balance"], 35.0)
+        self.assertEqual(sum(float(item["expense_total"]) for item in expense_items), 30.0)
+        self.assertEqual(sum(float(item["net_profit_total"]) for item in expense_items), -30.0)
+        self.assertEqual(sum(float(item["payout_balance"]) for item in expense_items), -15.0)
         self.assertEqual(sum(float(item["payout_balance"]) for item in payout_items), 20.0)
+        self.assertTrue(all(item["key"].startswith(("SoldCard|", "SoldExpense|")) for item in payout_items))
+
+    def test_team_general_sold_blank_paid_marker_does_not_hide_card_payouts(self) -> None:
+        class PayoutDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
+            _sold_payout_key = app.CardPipelineApp._sold_payout_key
+            _realized_profit_groups_by_person_sheet = app.CardPipelineApp._realized_profit_groups_by_person_sheet
+            _loose_expense_adjustments_by_person = app.CardPipelineApp._loose_expense_adjustments_by_person
+            _active_payout_balance = app.CardPipelineApp._active_payout_balance
+            _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
+            _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _team_payout_record_sort_key = app.CardPipelineApp._team_payout_record_sort_key
+            _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
+            _expense_payout_key = app.CardPipelineApp._expense_payout_key
+            _legacy_group_paid_state = app.CardPipelineApp._legacy_group_paid_state
+            _team_record_paid_state = app.CardPipelineApp._team_record_paid_state
+            _team_sold_card_payout_item = app.CardPipelineApp._team_sold_card_payout_item
+            _team_expense_payout_item = app.CardPipelineApp._team_expense_payout_item
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
+            _profit_record_payout_time = app.CardPipelineApp._profit_record_payout_time
+            _empty_realized_profit_group = app.CardPipelineApp._empty_realized_profit_group
+            _add_profit_record_to_realized_group = app.CardPipelineApp._add_profit_record_to_realized_group
+            _payout_realized_groups_for_marker = app.CardPipelineApp._payout_realized_groups_for_marker
+            _team_balance_share_for_person = app.CardPipelineApp._team_balance_share_for_person
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+
+            def __init__(self):
+                key = self._sold_payout_key("Tyler Hamlin", "Tyler Hamlin General Sold")
+                self.home_sheet_paths = {"Incoming": {}, "Received": {}}
+                self.home_sheet_markers = {key: {"assigned_person": "Tyler Hamlin", "paid": True}}
+                self.home_sheet_summaries = {}
+                self.ledger = [
+                    {
+                        "assigned_person": "Tyler Hamlin",
+                        "source_sheet": "Tyler Hamlin General Sold",
+                        "purchase_price": 100.0,
+                        "sale_price": 160.0,
+                        "company": "General Sold",
+                        "cert_number": "111",
+                        "date_added": "2026-08-10",
+                        "ledger_added_at": "2026-08-10T12:00:00",
+                    }
+                ]
+
+            def _seller_terms_seller_names(self):
+                return set()
+
+            def _load_seller_terms(self):
+                return [{"seller": "Tyler Hamlin", "balance_share": 0.5}]
+
+            def _load_profit_ledger(self):
+                return self.ledger
+
+        items = PayoutDummy()._payout_sheet_items()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["stage"], "Sold Card")
+        self.assertFalse(items[0]["paid"])
+        self.assertEqual(items[0]["payout_balance"], 30.0)
 
     def test_team_payout_reopens_balance_for_sales_after_paid_marker(self) -> None:
         class PayoutDummy:
@@ -4802,6 +4884,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
             _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _team_payout_record_sort_key = app.CardPipelineApp._team_payout_record_sort_key
+            _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
+            _expense_payout_key = app.CardPipelineApp._expense_payout_key
+            _legacy_group_paid_state = app.CardPipelineApp._legacy_group_paid_state
+            _team_record_paid_state = app.CardPipelineApp._team_record_paid_state
+            _team_sold_card_payout_item = app.CardPipelineApp._team_sold_card_payout_item
+            _team_expense_payout_item = app.CardPipelineApp._team_expense_payout_item
             _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
             _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
             _profit_record_payout_time = app.CardPipelineApp._profit_record_payout_time
@@ -4809,6 +4898,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _add_profit_record_to_realized_group = app.CardPipelineApp._add_profit_record_to_realized_group
             _payout_realized_groups_for_marker = app.CardPipelineApp._payout_realized_groups_for_marker
             _team_balance_share_for_person = app.CardPipelineApp._team_balance_share_for_person
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
 
             def __init__(self):
                 key = self._sold_payout_key("Kevin Hambone", "Lot A.xlsx")
@@ -5570,7 +5660,35 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(len(edited_expenses), 1)
                 self.assertEqual(edited_expenses[0]["expense_amount"], 31)
                 self.assertEqual(edited_expenses[0]["notes"], "Second edit")
-                self.assertEqual(dummy._delete_profit_expense_records([edited_expenses[0]]), 1)
+
+                legacy_expense = {
+                    "record_type": "expense",
+                    "assigned_person": "Kevin Hambone",
+                    "date_added": "2026-06-20",
+                    "expense_type": "Shipping",
+                    "expense_amount": 11,
+                    "related_type": "General",
+                    "notes": "Legacy shipping",
+                }
+                self.assertEqual(dummy.record_profit_sales([legacy_expense]), 1)
+                ledger_with_legacy = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                legacy_row = next(record for record in ledger_with_legacy if record.get("notes") == "Legacy shipping")
+                legacy_original_key = legacy_row["ledger_key"]
+                self.assertFalse(legacy_row.get("expense_id"))
+                legacy_edited = dummy._update_profit_expense_record(legacy_row, {"expense_amount": 12, "notes": "Legacy edited"})
+                self.assertIsNotNone(legacy_edited)
+                assert legacy_edited is not None
+                self.assertTrue(legacy_edited.get("expense_id"))
+                self.assertIn(legacy_original_key, legacy_edited.get("previous_ledger_keys") or [])
+                legacy_edited_again = dummy._update_profit_expense_record(legacy_row, {"expense_amount": 14, "notes": "Legacy second edit"})
+                self.assertIsNotNone(legacy_edited_again)
+                ledger_after_legacy_edit = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                legacy_rows = [record for record in ledger_after_legacy_edit if record.get("notes") == "Legacy second edit"]
+                self.assertEqual(len(legacy_rows), 1)
+                self.assertEqual(legacy_rows[0]["expense_amount"], 14)
+
+                expenses_to_delete = [record for record in ledger_after_legacy_edit if record.get("record_type") == "expense"]
+                self.assertEqual(dummy._delete_profit_expense_records(expenses_to_delete), 2)
                 ledger_after_delete = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
                 self.assertEqual(len(ledger_after_delete), 1)
                 self.assertNotEqual(ledger_after_delete[0].get("record_type"), "expense")

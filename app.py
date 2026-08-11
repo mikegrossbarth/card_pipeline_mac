@@ -11324,7 +11324,7 @@ class CardPipelineApp(tk.Tk):
         buttons = ttk.Frame(frame, style="Panel.TFrame")
         buttons.grid(row=status_row + 1, column=0, columnspan=4, sticky="e")
         ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(buttons, text="Save", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Save Changes", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
         frame.columnconfigure(1, weight=1)
         frame.columnconfigure(3, weight=1)
         popup.bind("<Return>", lambda _event: submit())
@@ -11342,6 +11342,13 @@ class CardPipelineApp(tk.Tk):
             return None
         original_key = str(original.get("ledger_key") or self._profit_record_key(original) or "").strip().lower()
         original_expense_id = str(original.get("expense_id") or "").strip()
+        original_previous_keys = {
+            str(key).strip().lower()
+            for key in (original.get("previous_ledger_keys") or [])
+            if str(key).strip()
+        }
+        if original_key:
+            original_previous_keys.add(original_key)
         with shared_lock(CARD_PIPELINE_DIR, "profit-expense-edit", self.lucas_identity):
             ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
             for index, record in enumerate(ledger):
@@ -11349,9 +11356,18 @@ class CardPipelineApp(tk.Tk):
                     continue
                 record_key = str(record.get("ledger_key") or self._profit_record_key(record) or "").strip().lower()
                 record_expense_id = str(record.get("expense_id") or "").strip()
+                record_previous_keys = {
+                    str(key).strip().lower()
+                    for key in (record.get("previous_ledger_keys") or [])
+                    if str(key).strip()
+                }
+                searchable_record_keys = set(record_previous_keys)
+                if record_key:
+                    searchable_record_keys.add(record_key)
                 id_matches = bool(original_expense_id and record_expense_id == original_expense_id)
-                key_matches = bool(original_key and record_key == original_key)
-                if not (id_matches or key_matches):
+                key_matches = bool(original_key and original_key in searchable_record_keys)
+                previous_key_matches = bool(original_previous_keys and searchable_record_keys & original_previous_keys)
+                if not (id_matches or key_matches or previous_key_matches):
                     continue
                 merged = dict(record)
                 merged.update(updates)
@@ -11360,6 +11376,10 @@ class CardPipelineApp(tk.Tk):
                 merged["ledger_added_at"] = str(record.get("ledger_added_at") or original.get("ledger_added_at") or "").strip()
                 if not merged["ledger_added_at"]:
                     merged["ledger_added_at"] = datetime.now().isoformat(timespec="microseconds")
+                previous_keys = set(searchable_record_keys) | original_previous_keys
+                if original_key:
+                    previous_keys.add(original_key)
+                merged["previous_ledger_keys"] = sorted(previous_keys)
                 merged["recorded_by"] = self.lucas_identity.get("display_name", "")
                 merged["recorded_machine"] = self.lucas_identity.get("machine", "")
                 normalized = self._normalize_profit_record(merged)
@@ -13119,7 +13139,7 @@ class CardPipelineApp(tk.Tk):
             )
         filter_label = self.payout_person_var.get().strip()
         suffix = f" | Filter: {filter_label}" if filter_label else ""
-        self.payout_status_var.set(f"{detail_count} payment sheet(s) | Active balance: {format_money(total_balance)}{suffix}")
+        self.payout_status_var.set(f"{detail_count} payout row(s) | Active balance: {format_money(total_balance)}{suffix}")
         record_performance_event(
             "payouts.refresh",
             perf_start,
@@ -13130,7 +13150,7 @@ class CardPipelineApp(tk.Tk):
         items: list[dict[str, object]] = []
         seller_names = self._seller_terms_seller_names()
         realized_profit_groups = self._realized_profit_groups_by_person_sheet()
-        loose_expense_groups = self._loose_expense_adjustments_by_person()
+        team_profit_records = self._enrich_profit_records_with_people(self._load_profit_ledger())
         for stage in ("Incoming", "Received"):
             for name in self.home_sheet_paths.get(stage, {}):
                 key = self._home_sheet_key(stage, name)
@@ -13190,81 +13210,142 @@ class CardPipelineApp(tk.Tk):
                         "status": status,
                     }
                 )
-        for (person_key, source_key), group in sorted(realized_profit_groups.items(), key=lambda pair: (pair[0][0], pair[0][1])):
-            if self._source_sheet_is_seller_payout(str(group.get("source_sheet") or ""), str(group.get("person") or ""), seller_names):
+        for record in sorted(team_profit_records, key=self._team_payout_record_sort_key):
+            if str(record.get("record_type") or "").strip().lower() == "expense":
+                item = self._team_expense_payout_item(record, seller_names)
+                if item:
+                    items.append(item)
                 continue
-            person = str(group.get("person") or "").strip() or "Unassigned"
-            source_sheet = str(group.get("source_sheet") or "").strip() or "Sold Cards"
-            key = self._sold_payout_key(person, source_sheet)
-            marker = self.home_sheet_markers.get(key, {})
-            paid_groups = self._payout_realized_groups_for_marker(person, source_sheet, group, marker)
-            for paid, payout_group in paid_groups:
-                realized_profit_total = float(payout_group.get("profit") or 0.0)
-                if realized_profit_total == 0:
-                    continue
-                payout_balance, payout_basis = self._active_payout_balance(
-                    person,
-                    float(payout_group.get("purchase_total") or 0.0),
-                    float(payout_group.get("sale_total") or 0.0),
-                    seller_names,
-                    realized_profit_total=realized_profit_total,
-                    seller_payout=False,
-                )
-                items.append(
-                    {
-                        "key": key,
-                        "stage": "Sold",
-                        "name": source_sheet,
-                        "person": person,
-                        "paid": paid,
-                        "paid_at": str(marker.get("paid_at") or "") if paid else "",
-                        "row_count": int(payout_group.get("row_count") or 0),
-                        "received_count": int(payout_group.get("row_count") or 0),
-                        "purchase_total": float(payout_group.get("purchase_total") or 0.0),
-                        "estimated_payout_total": float(payout_group.get("sale_total") or 0.0),
-                        "estimated_profit": round(float(payout_group.get("sale_total") or 0.0) - float(payout_group.get("purchase_total") or 0.0), 2),
-                        "realized_profit_total": round(realized_profit_total, 2),
-                        "expense_total": round(float(payout_group.get("expense_total") or 0.0), 2),
-                        "net_profit_total": round(realized_profit_total, 2),
-                        "payout_balance": payout_balance,
-                        "payout_basis": payout_basis,
-                        "status": "Paid" if paid else "Sold",
-                    }
-                )
-        for person_key, group in sorted(loose_expense_groups.items(), key=lambda pair: pair[1]["person"].lower()):
-            person = str(group.get("person") or "").strip() or "Unassigned"
-            source_sheet = "Expense Adjustments"
-            key = self._sold_payout_key(person, source_sheet)
-            marker = self.home_sheet_markers.get(key, {})
-            paid_groups = self._payout_realized_groups_for_marker(person, source_sheet, group, marker)
-            for paid, payout_group in paid_groups:
-                net_profit_total = float(payout_group.get("profit") or 0.0)
-                if net_profit_total == 0:
-                    continue
-                balance_share = self._team_balance_share_for_person(person)
-                payout_balance = min(0.0, round(net_profit_total * balance_share, 2))
-                items.append(
-                    {
-                        "key": key,
-                        "stage": "Sold",
-                        "name": source_sheet,
-                        "person": person,
-                        "paid": paid,
-                        "paid_at": str(marker.get("paid_at") or "") if paid else "",
-                        "row_count": 0,
-                        "received_count": 0,
-                        "purchase_total": 0.0,
-                        "estimated_payout_total": 0.0,
-                        "estimated_profit": round(net_profit_total, 2),
-                        "realized_profit_total": round(net_profit_total, 2),
-                        "expense_total": round(float(payout_group.get("expense_total") or 0.0), 2),
-                        "net_profit_total": round(net_profit_total, 2),
-                        "payout_balance": payout_balance,
-                        "payout_basis": f"Expense adjustment to team net profit at {balance_share:.0%}",
-                        "status": "Paid" if paid else "Expenses",
-                    }
-                )
+            item = self._team_sold_card_payout_item(record, seller_names)
+            if item:
+                items.append(item)
         return items
+
+    def _team_payout_record_sort_key(self, record: dict[str, object]) -> tuple[str, str, str, str]:
+        person = str(record.get("assigned_person") or "Unassigned").strip().lower()
+        added_at = str(record.get("ledger_added_at") or record.get("created_at") or record.get("recorded_at") or record.get("date_added") or "")
+        source = Path(str(record.get("source_sheet") or "")).name.lower()
+        title = str(record.get("card_title") or record.get("notes") or "").lower()
+        return person, added_at, source, title
+
+    def _sold_card_payout_key(self, person: str, record: dict[str, object]) -> str:
+        ledger_key = str(record.get("ledger_key") or self._profit_record_key(record) or "").strip()
+        return self._home_sheet_key("SoldCard", f"{str(person or '').strip()}|{ledger_key}")
+
+    def _expense_payout_key(self, person: str, record: dict[str, object]) -> str:
+        ledger_key = str(record.get("ledger_key") or self._profit_record_key(record) or "").strip()
+        return self._home_sheet_key("SoldExpense", f"{str(person or '').strip()}|{ledger_key}")
+
+    def _legacy_group_paid_state(self, person: str, source_sheet: str, record: dict[str, object]) -> tuple[bool, str]:
+        key = self._sold_payout_key(person, source_sheet)
+        marker = self.home_sheet_markers.get(key, {})
+        if not marker.get("paid"):
+            return False, ""
+        paid_at_text = str(marker.get("paid_at") or "").strip()
+        if not paid_at_text:
+            if Path(str(source_sheet or "")).name.lower().endswith("general sold"):
+                return False, ""
+            return True, ""
+        try:
+            paid_at = datetime.fromisoformat(paid_at_text.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return True, paid_at_text
+        record_time = self._profit_record_payout_time(record)
+        if record_time and record_time > paid_at:
+            return False, ""
+        return True, paid_at_text
+
+    def _team_record_paid_state(self, key: str, person: str, source_sheet: str, record: dict[str, object]) -> tuple[bool, str]:
+        marker = self.home_sheet_markers.get(key, {})
+        if "paid" in marker:
+            return bool(marker.get("paid")), str(marker.get("paid_at") or "") if marker.get("paid") else ""
+        return self._legacy_group_paid_state(person, source_sheet, record)
+
+    def _team_sold_card_payout_item(self, record: dict[str, object], seller_names: set[str]) -> dict[str, object] | None:
+        person = str(record.get("assigned_person") or "").strip() or "Unassigned"
+        source_sheet = Path(str(record.get("source_sheet") or "")).name.strip()
+        profit = self._money_value(record.get("profit"))
+        if not person or not source_sheet or profit is None or profit == 0:
+            return None
+        if self._source_sheet_is_seller_payout(source_sheet, person, seller_names):
+            return None
+        key = self._sold_card_payout_key(person, record)
+        paid, paid_at = self._team_record_paid_state(key, person, source_sheet, record)
+        purchase = self._money_value(record.get("purchase_price")) or 0.0
+        sale = self._money_value(record.get("sale_price")) or 0.0
+        payout_balance, payout_basis = self._active_payout_balance(
+            person,
+            purchase,
+            sale,
+            seller_names,
+            realized_profit_total=profit,
+            seller_payout=False,
+        )
+        cert_or_item = str(record.get("cert_number") or record.get("item_id") or "").strip()
+        card_title = str(record.get("card_title") or "").strip() or cert_or_item or "Sold Card"
+        if cert_or_item and cert_or_item not in card_title:
+            card_title = f"{card_title} [{cert_or_item}]"
+        return {
+            "key": key,
+            "stage": "Sold Card",
+            "name": card_title,
+            "person": person,
+            "paid": paid,
+            "paid_at": paid_at if paid else "",
+            "row_count": 1,
+            "received_count": 1,
+            "purchase_total": purchase,
+            "estimated_payout_total": sale,
+            "estimated_profit": round(sale - purchase, 2),
+            "realized_profit_total": round(profit, 2),
+            "expense_total": 0.0,
+            "net_profit_total": round(profit, 2),
+            "payout_balance": payout_balance,
+            "payout_basis": payout_basis,
+            "payable": True,
+            "status": "Paid" if paid else "Sold",
+            "source_sheet": source_sheet,
+            "ledger_key": str(record.get("ledger_key") or ""),
+        }
+
+    def _team_expense_payout_item(self, record: dict[str, object], seller_names: set[str]) -> dict[str, object] | None:
+        person = str(record.get("assigned_person") or "").strip() or "Unassigned"
+        source_sheet = Path(str(record.get("source_sheet") or "")).name.strip() or "Expenses"
+        profit = self._money_value(record.get("profit"))
+        if not person or profit is None or profit == 0:
+            return None
+        if source_sheet.lower() != "expenses" and self._source_sheet_is_seller_payout(source_sheet, person, seller_names):
+            return None
+        key = self._expense_payout_key(person, record)
+        related_type = str(record.get("related_type") or "").strip()
+        legacy_paid_source = "Expense Adjustments" if source_sheet.lower() == "expenses" or related_type == "General" else source_sheet
+        paid, paid_at = self._team_record_paid_state(key, person, legacy_paid_source, record)
+        balance_share = self._team_balance_share_for_person(person)
+        payout_balance = min(0.0, round(float(profit) * balance_share, 2))
+        expense_amount = abs(float(profit))
+        name = str(record.get("card_title") or record.get("notes") or record.get("expense_type") or "Expense").strip()
+        return {
+            "key": key,
+            "stage": "Expense",
+            "name": name,
+            "person": person,
+            "paid": paid,
+            "paid_at": paid_at if paid else "",
+            "row_count": 0,
+            "received_count": 0,
+            "purchase_total": 0.0,
+            "estimated_payout_total": 0.0,
+            "estimated_profit": round(float(profit), 2),
+            "realized_profit_total": round(float(profit), 2),
+            "expense_total": round(expense_amount, 2),
+            "net_profit_total": round(float(profit), 2),
+            "payout_balance": payout_balance,
+            "payout_basis": f"Expense adjustment to team net profit at {balance_share:.0%}",
+            "payable": True,
+            "status": "Paid" if paid else "Expenses",
+            "source_sheet": source_sheet,
+            "ledger_key": str(record.get("ledger_key") or ""),
+        }
 
     def _realized_profit_totals_by_person_sheet(self) -> dict[tuple[str, str], float]:
         return {
@@ -14104,7 +14185,7 @@ class CardPipelineApp(tk.Tk):
             if not item["paid"] and item.get("payable", True) and (item["person"] or "Unassigned") == person
         ]
         if not matching_items:
-            self.payout_status_var.set(f"No unpaid sheets found for {person}.")
+            self.payout_status_var.set(f"No unpaid payout rows found for {person}.")
             return
         total_balance = sum(float(item["payout_balance"]) for item in matching_items)
         total_cards = sum(int(item["row_count"]) for item in matching_items)
@@ -14129,7 +14210,7 @@ class CardPipelineApp(tk.Tk):
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text="Mark Payout Paid", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
         ttk.Label(frame, text=person, style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
-        ttk.Label(frame, text="Sheets", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 18), pady=(0, 8))
+        ttk.Label(frame, text="Payout Rows", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 18), pady=(0, 8))
         ttk.Label(frame, text=str(len(matching_items)), style="Panel.TLabel").grid(row=2, column=1, sticky="w", pady=(0, 8))
         ttk.Label(frame, text="Cards", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 18), pady=(0, 8))
         ttk.Label(frame, text=str(total_cards), style="Panel.TLabel").grid(row=3, column=1, sticky="w", pady=(0, 8))
@@ -14186,7 +14267,7 @@ class CardPipelineApp(tk.Tk):
         self.refresh_home()
         if popup is not None:
             popup.destroy()
-        self.status_var.set(f"Marked {len(matching_items)} sheet(s) paid for {person}: {format_money(total_balance)}.")
+        self.status_var.set(f"Marked {len(matching_items)} payout row(s) paid for {person}: {format_money(total_balance)}.")
 
     def open_payout_marker_editor(self, event=None) -> None:
         if event is not None:
@@ -14201,16 +14282,20 @@ class CardPipelineApp(tk.Tk):
         kind, name = self._split_home_sheet_key(key)
         marker = self.home_sheet_markers.get(key, {})
         summary = self.home_sheet_summaries.get(key, {})
+        payout_item = self._payout_item_for_key(key)
         if kind == "Sold":
             key_person, source_sheet = self._split_sold_payout_name(name)
             person = str(marker.get("assigned_person") or key_person).strip()
             display_name = source_sheet
             realized_profit_total = self._realized_profit_totals_by_person_sheet().get((person.lower(), Path(source_sheet).name.lower()), 0.0)
+        elif kind in {"SoldCard", "SoldExpense"} and payout_item:
+            person = str(marker.get("assigned_person") or payout_item.get("person") or "").strip()
+            display_name = str(payout_item.get("name") or name).strip()
+            realized_profit_total = float(payout_item.get("net_profit_total") or 0.0)
         else:
             person = str(marker.get("assigned_person") or "").strip()
             display_name = name
             realized_profit_total = self._realized_profit_totals_by_person_sheet().get((person.lower(), Path(name).name.lower()), 0.0)
-        payout_item = self._payout_item_for_key(key)
         payable = bool(payout_item.get("payable", True)) if payout_item else True
         if payout_item:
             balance = float(payout_item.get("payout_balance") or 0.0)
@@ -14224,11 +14309,11 @@ class CardPipelineApp(tk.Tk):
                 realized_profit_total=realized_profit_total,
             )
             status = ""
-        paid_var = tk.BooleanVar(value=bool(marker.get("paid")))
-        person_var = tk.StringVar(value=str(marker.get("assigned_person") or "").strip())
+        paid_var = tk.BooleanVar(value=bool(marker.get("paid", payout_item.get("paid") if payout_item else False)))
+        person_var = tk.StringVar(value=str(marker.get("assigned_person") or person).strip())
 
         popup = tk.Toplevel(self)
-        popup.title("Payout Sheet")
+        popup.title("Payout Row")
         popup.configure(bg="#1f1f1f")
         popup.transient(self)
         popup.grab_set()
@@ -14244,7 +14329,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(frame, text="Assigned Person", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 10))
         person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
         person_combo.grid(row=2, column=1, sticky="ew", pady=(0, 10))
-        self._bind_person_autocomplete(person_combo, allow_blank=True)
+        self._bind_person_autocomplete(person_combo)
         paid_state = tk.NORMAL if payable or bool(marker.get("paid")) else tk.DISABLED
         ttk.Checkbutton(frame, text="Paid", variable=paid_var, state=paid_state, style="Panel.TCheckbutton").grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 14))
         buttons = ttk.Frame(frame, style="Panel.TFrame")
