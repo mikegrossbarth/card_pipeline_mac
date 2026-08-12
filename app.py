@@ -16575,14 +16575,8 @@ class CardPipelineApp(tk.Tk):
             matches: list[dict[str, object]] = []
             if raw_input.upper().startswith("RAW-"):
                 matches = self._incoming_raw_matches({"item_id": raw_input})
-                if not matches:
-                    self.refresh_incoming_index()
-                    matches = self._incoming_raw_matches({"item_id": raw_input})
             elif raw_input:
                 matches = self._incoming_title_matches(raw_input)
-                if not matches:
-                    self.refresh_incoming_index()
-                    matches = self._incoming_title_matches(raw_input)
             if matches:
                 rows = [self._receive_match_to_review_payload(match, "Receive Search") for match in matches]
                 self._append_review_rows(rows)
@@ -16591,7 +16585,7 @@ class CardPipelineApp(tk.Tk):
                 self.review_status.set(f"Matched {len(matches)} incoming row(s) for {label}. Ready for next scan.")
                 self._arm_review_scanner()
                 return
-            self.review_status.set("No cert, raw ID, or matching incoming card found. Scan or type again.")
+            self.review_status.set("No cert, raw ID, or matching incoming card found in the current index. Click Refresh Incoming Index if you expected a match.")
             self._arm_review_scanner()
             return
         self._append_review_rows([
@@ -16695,7 +16689,7 @@ class CardPipelineApp(tk.Tk):
                 and not str(match.get("best_company") or "").strip()
                 and match.get("estimated_payout") is None
             )
-            if cert and (not match or stale_assignment_match) and not refreshed_incoming_index:
+            if cert and stale_assignment_match and not refreshed_incoming_index:
                 self.refresh_incoming_index()
                 refreshed_incoming_index = True
                 match = self._incoming_match(cert)

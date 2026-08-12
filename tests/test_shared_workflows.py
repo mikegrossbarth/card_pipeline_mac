@@ -3455,6 +3455,44 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.review_sheet_sources[2], "gunnar.xlsx")
         self.assertIn("Matched 1 incoming row", dummy.review_status.value)
 
+    def test_receive_text_search_miss_does_not_refresh_incoming_index(self) -> None:
+        class FieldVar:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            add_review_scanned_row = app.CardPipelineApp.add_review_scanned_row
+            _incoming_raw_matches = app.CardPipelineApp._incoming_raw_matches
+            _incoming_index_candidates = app.CardPipelineApp._incoming_index_candidates
+            _normalize_receive_search_text = app.CardPipelineApp._normalize_receive_search_text
+            _incoming_title_matches = app.CardPipelineApp._incoming_title_matches
+
+            def refresh_incoming_index(self):
+                self.refresh_count += 1
+
+            def _arm_review_scanner(self):
+                self.armed = True
+
+        dummy = Dummy()
+        dummy.review_scanning_active = True
+        dummy.review_scan_cert = FieldVar("not in sheets")
+        dummy.review_status = FieldVar()
+        dummy.refresh_count = 0
+        dummy.armed = False
+        dummy.incoming_cert_index = {}
+
+        dummy.add_review_scanned_row()
+
+        self.assertEqual(dummy.refresh_count, 0)
+        self.assertTrue(dummy.armed)
+        self.assertIn("current index", dummy.review_status.value)
+
     def test_receive_autocomplete_labels_and_resolves_selected_match(self) -> None:
         class Dummy:
             _incoming_index_candidates = app.CardPipelineApp._incoming_index_candidates
@@ -3524,6 +3562,39 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(row.estimated_payout, 380)
         self.assertEqual(dummy.review_sheet_sources[2], "gunnar.xlsx")
         self.assertEqual(getattr(row, "_receive_workbook_row"), 2)
+
+    def test_receive_missing_cert_does_not_refresh_incoming_index(self) -> None:
+        class Dummy:
+            _append_review_rows = app.CardPipelineApp._append_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+
+            def refresh_incoming_index(self):
+                self.refresh_count += 1
+
+            def _refresh_table(self, schedule_recommendations=False):
+                self.refreshed = True
+
+        dummy = Dummy()
+        dummy.assignment_engine = types.SimpleNamespace(
+            recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("", None, None)
+        )
+        dummy.incoming_cert_index = {}
+        dummy.review_rows = []
+        dummy.review_sources = {}
+        dummy.review_sheet_sources = {}
+        dummy.refresh_count = 0
+        dummy.refreshed = False
+
+        dummy._append_review_rows([{"cert_number": "99999999", "source": "Receive Barcode", "notes": "Received"}])
+
+        self.assertEqual(dummy.refresh_count, 0)
+        self.assertTrue(dummy.refreshed)
+        self.assertEqual(dummy.review_rows[0].status, "Received - no incoming match")
+        self.assertEqual(dummy.review_sheet_sources[2], "NO SHEET FOUND")
 
     def test_receive_barcode_refreshes_stale_match_without_assignment_values(self) -> None:
         class Dummy:
