@@ -3080,6 +3080,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         class Dummy:
             refresh_incoming_index = app.CardPipelineApp.refresh_incoming_index
+            _incoming_index_paths = app.CardPipelineApp._incoming_index_paths
+            _build_incoming_index_from_paths = app.CardPipelineApp._build_incoming_index_from_paths
             _incoming_match = app.CardPipelineApp._incoming_match
             _match_all_review_rows = app.CardPipelineApp._match_all_review_rows
             _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
@@ -3117,6 +3119,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             app.WORKING_SHEETS_DIR = working_dir
             dummy = Dummy()
             dummy.incoming_cert_index = {}
+            dummy.assignment_engine = types.SimpleNamespace(
+                recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("Fanatics", 88.0, 100.0)
+            )
             dummy.review_rows = [WorkbookRow(excel_row=2, cert_number="12345678", card_title="", grader="")]
             dummy.review_sheet_sources = {}
             dummy.review_status = FieldVar()
@@ -3164,6 +3169,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         class Dummy:
             refresh_incoming_index = app.CardPipelineApp.refresh_incoming_index
+            _incoming_index_paths = app.CardPipelineApp._incoming_index_paths
+            _build_incoming_index_from_paths = app.CardPipelineApp._build_incoming_index_from_paths
             _append_review_rows = app.CardPipelineApp._append_review_rows
             _incoming_match = app.CardPipelineApp._incoming_match
             _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
@@ -3233,6 +3240,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         class Dummy:
             refresh_incoming_index = app.CardPipelineApp.refresh_incoming_index
+            _incoming_index_paths = app.CardPipelineApp._incoming_index_paths
+            _build_incoming_index_from_paths = app.CardPipelineApp._build_incoming_index_from_paths
             _append_review_rows = app.CardPipelineApp._append_review_rows
             _incoming_match = app.CardPipelineApp._incoming_match
             _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
@@ -3593,8 +3602,57 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(dummy.refresh_count, 0)
         self.assertTrue(dummy.refreshed)
-        self.assertEqual(dummy.review_rows[0].status, "Received - no incoming match")
-        self.assertEqual(dummy.review_sheet_sources[2], "NO SHEET FOUND")
+        self.assertEqual(dummy.review_rows[0].status, "Checking incoming index")
+        self.assertEqual(dummy.review_sheet_sources[2], "CHECKING INDEX")
+
+    def test_receive_index_retry_resolves_missing_row_after_background_refresh(self) -> None:
+        class Dummy:
+            _apply_incoming_index_retry = app.CardPipelineApp._apply_incoming_index_retry
+            _match_all_review_rows = app.CardPipelineApp._match_all_review_rows
+            _incoming_match = app.CardPipelineApp._incoming_match
+            _incoming_raw_match = app.CardPipelineApp._incoming_raw_match
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _ensure_receive_row_assignment = app.CardPipelineApp._ensure_receive_row_assignment
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+
+            def _refresh_table(self, schedule_recommendations=False):
+                self.refreshed = True
+
+        dummy = Dummy()
+        dummy.assignment_engine = types.SimpleNamespace(
+            recommend=lambda row, person="": assignment_engine.AssignmentRecommendation("FANATICS", 90.0, 100.0)
+        )
+        row = WorkbookRow(excel_row=2, cert_number="88504251", grader="", card_title="", status="Checking incoming index")
+        setattr(row, "_needs_receive_index_retry", True)
+        dummy.review_rows = [row]
+        dummy.review_sheet_sources = {2: "CHECKING INDEX"}
+        dummy.incoming_cert_index = {}
+        dummy.review_status = types.SimpleNamespace(set=lambda value: setattr(dummy, "status", value))
+        dummy.refreshed = False
+
+        dummy._apply_incoming_index_retry(
+            {
+                "index": {
+                    "88504251": {
+                        "sheet": "Incoming Lot.xlsx",
+                        "workbook_sheet": "Cards",
+                        "workbook_row": 7,
+                        "cert_number": "88504251",
+                        "card_title": "Matched Card PSA 10",
+                        "grader": "PSA",
+                        "best_company": "FANATICS",
+                        "estimated_payout": 90.0,
+                    }
+                },
+                "path_count": 1,
+            }
+        )
+
+        self.assertTrue(dummy.refreshed)
+        self.assertEqual(dummy.review_sheet_sources[2], "Incoming Lot.xlsx")
+        self.assertEqual(dummy.review_rows[0].status, "Received")
+        self.assertEqual(dummy.review_rows[0].card_title, "Matched Card PSA 10")
+        self.assertFalse(getattr(dummy.review_rows[0], "_needs_receive_index_retry", False))
 
     def test_receive_barcode_refreshes_stale_match_without_assignment_values(self) -> None:
         class Dummy:

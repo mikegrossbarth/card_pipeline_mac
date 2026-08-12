@@ -16399,20 +16399,15 @@ class CardPipelineApp(tk.Tk):
                 record_performance_event("inventory.photos.errors", started, " | ".join(errors[:5]), force=True)
             record_performance_event("inventory.photos.scan", started, f"skipped={skipped} scanned={scanned} linked={linked} errors={len(errors)}")
 
-    def refresh_incoming_index(self) -> None:
-        try:
-            INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
-            WORKING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
-            paths = sorted(
-                [*INCOMING_SHEETS_DIR.glob("*.xlsx"), *WORKING_SHEETS_DIR.glob("*.xlsx")],
-                key=lambda path: (path.parent.name.lower(), path.name.lower()),
-            )
-            ensure_raw_ids = getattr(self, "_ensure_raw_item_ids_in_sheet_paths", None)
-            raw_id_result = ensure_raw_ids(paths) if callable(ensure_raw_ids) else {"ids_added": 0}
-        except Exception as error:
-            self.incoming_cert_index = {}
-            self.review_status.set(f"Incoming sheets unavailable: {error}")
-            return
+    def _incoming_index_paths(self) -> list[Path]:
+        INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+        WORKING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+        return sorted(
+            [*INCOMING_SHEETS_DIR.glob("*.xlsx"), *WORKING_SHEETS_DIR.glob("*.xlsx")],
+            key=lambda path: (path.parent.name.lower(), path.name.lower()),
+        )
+
+    def _build_incoming_index_from_paths(self, paths: list[Path]) -> dict[str, dict[str, object]]:
         index: dict[str, dict[str, object]] = {}
         for path in paths:
             try:
@@ -16455,6 +16450,58 @@ class CardPipelineApp(tk.Tk):
                             existing[key] = value
                     continue
                 index[cert] = candidate
+        return index
+
+    def _start_receive_index_retry(self) -> None:
+        if getattr(self, "_receive_index_retry_running", False):
+            return
+        self._receive_index_retry_running = True
+        self.review_status.set("Checking latest incoming index for unmatched receive row(s)...")
+
+        def worker() -> None:
+            try:
+                paths = self._incoming_index_paths()
+                index = self._build_incoming_index_from_paths(paths)
+                self.events.put(("incoming_index_retry_done", {"index": index, "path_count": len(paths)}))
+            except Exception as error:
+                self.events.put(("incoming_index_retry_error", {"error": str(error)}))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_incoming_index_retry(self, payload: dict[str, object]) -> None:
+        self._receive_index_retry_running = False
+        self.incoming_cert_index = dict(payload.get("index") or {})
+        before = {row.excel_row: self.review_sheet_sources.get(row.excel_row, "") for row in self.review_rows}
+        self._match_all_review_rows()
+        resolved = 0
+        for row in self.review_rows:
+            if getattr(row, "_needs_receive_index_retry", False):
+                setattr(row, "_needs_receive_index_retry", False)
+                if self.review_sheet_sources.get(row.excel_row, "") not in {"", "CHECKING INDEX", "NO SHEET FOUND"}:
+                    resolved += 1
+        if resolved:
+            self.review_status.set(f"Matched {resolved} receive row(s) after refreshing incoming index.")
+        else:
+            for row in self.review_rows:
+                if before.get(row.excel_row) == "CHECKING INDEX" and self.review_sheet_sources.get(row.excel_row) == "NO SHEET FOUND":
+                    row.status = "Received - no incoming match"
+            self.review_status.set("No matching incoming sheet rows found after refreshing index.")
+        self._refresh_table()
+
+    def _handle_incoming_index_retry_error(self, payload: dict[str, object]) -> None:
+        self._receive_index_retry_running = False
+        self.review_status.set(f"Incoming index retry failed: {payload.get('error')}")
+
+    def refresh_incoming_index(self) -> None:
+        try:
+            paths = self._incoming_index_paths()
+            ensure_raw_ids = getattr(self, "_ensure_raw_item_ids_in_sheet_paths", None)
+            raw_id_result = ensure_raw_ids(paths) if callable(ensure_raw_ids) else {"ids_added": 0}
+        except Exception as error:
+            self.incoming_cert_index = {}
+            self.review_status.set(f"Incoming sheets unavailable: {error}")
+            return
+        index = self._build_incoming_index_from_paths(paths)
         self.incoming_cert_index = index
         self._match_all_review_rows()
         self._refresh_table()
@@ -16704,8 +16751,17 @@ class CardPipelineApp(tk.Tk):
             comp_details = str(row.get("card_ladder_comps") or match.get("card_ladder_comps") or "")
             best_company = str(row.get("best_company") or match.get("best_company") or "").strip()
             estimated_payout = row.get("estimated_payout") if row.get("estimated_payout") is not None else match.get("estimated_payout")
-            sheet_source = str(row.get("sheet_source") or match.get("sheet") or ("NO SHEET FOUND" if not match else ""))
-            status = str(row.get("status") or ("Received" if match else ("Needs raw match" if not cert else "Received - no incoming match")))
+            missing_index_retry = False
+            if match:
+                sheet_source = str(row.get("sheet_source") or match.get("sheet") or "")
+                status = str(row.get("status") or "Received")
+            elif cert or str(row.get("item_id") or "").strip():
+                sheet_source = str(row.get("sheet_source") or "CHECKING INDEX")
+                status = str(row.get("status") or "Checking incoming index")
+                missing_index_retry = True
+            else:
+                sheet_source = str(row.get("sheet_source") or "NO SHEET FOUND")
+                status = str(row.get("status") or "Needs raw match")
             excel_row = start + offset
             workbook_row = WorkbookRow(
                 excel_row=excel_row,
@@ -16733,8 +16789,13 @@ class CardPipelineApp(tk.Tk):
             self.review_sources[excel_row] = str(row.get("source") or "")
             self.review_sheet_sources[excel_row] = sheet_source
             added_excel_rows.append(excel_row)
+            if missing_index_retry:
+                setattr(workbook_row, "_needs_receive_index_retry", True)
         self.review_rows = existing
         self._refresh_table(schedule_recommendations=schedule_recommendations)
+        retry = getattr(self, "_start_receive_index_retry", None)
+        if callable(retry) and any(getattr(row, "_needs_receive_index_retry", False) for row in self.review_rows):
+            retry()
         return added_excel_rows
 
     def _incoming_match(self, cert: str) -> dict[str, object]:
@@ -19210,6 +19271,10 @@ class CardPipelineApp(tk.Tk):
                         self.refresh_inventory_tab(enrich=True)
                         if payload:
                             self.status_var.set(str(payload))
+                    elif kind == "incoming_index_retry_done":
+                        self._apply_incoming_index_retry(payload)
+                    elif kind == "incoming_index_retry_error":
+                        self._handle_incoming_index_retry_error(payload)
                     elif kind == "profit_refresh":
                         self.refresh_profit_tab()
                         self.refresh_payouts_tab()
