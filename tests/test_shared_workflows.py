@@ -10123,6 +10123,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(overall_days, days)
         self.assertEqual(overall_values, [20, 20.0, 20.0, 20.0, 50.0])
 
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Generated Profit")
+        self.assertEqual(dummy._profit_graph_label(), "Generated Profit")
+        self.assertEqual(dummy._profit_chart_title(), "Generated Profit (5 Days)")
+        generated_days, generated_values = dummy._profit_chart_series(filtered)
+        self.assertEqual(generated_days, days)
+        self.assertEqual(generated_values, daily_values)
+
         ytd_rows = [
             {"assigned_person": "Lucas", "date_added": "2026-01-05", "profit": 40},
             {"assigned_person": "Lucas", "date_added": "2026-06-17", "profit": 30},
@@ -10160,6 +10167,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(month_values[1], 0.0)
         self.assertEqual(month_values[2], 30.0)
         self.assertEqual(dummy._profit_chart_title(), "Daily Trend (Year by Month)")
+
+        dummy.profit_graph_var = types.SimpleNamespace(get=lambda: "Generated Profit")
+        generated_month_labels, generated_month_values = dummy._profit_chart_series(year_ratio_rows)
+        self.assertEqual(generated_month_labels, month_labels)
+        self.assertEqual(generated_month_values[0], 75.0)
+        self.assertEqual(generated_month_values[2], 30.0)
+        self.assertEqual(dummy._profit_chart_title(), "Generated Profit (Year by Month)")
 
         dummy.profit_breakdown_var = types.SimpleNamespace(get=lambda: "Day")
         day_labels, day_values = dummy._profit_chart_series(year_ratio_rows)
