@@ -6677,6 +6677,36 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_inventory_refresh_event_can_skip_enrichment(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            _poll_events = app.CardPipelineApp._poll_events
+
+            def __init__(self):
+                self.events = queue.Queue()
+                self.status_var = FieldVar()
+                self.calls = []
+
+            def refresh_inventory_tab(self, enrich=False):
+                self.calls.append(enrich)
+
+            def after(self, *_args):
+                return "after-id"
+
+        dummy = Dummy()
+        dummy.events.put(("inventory_refresh", {"enrich": False, "message": "Photos linked."}))
+
+        dummy._poll_events()
+
+        self.assertEqual(dummy.calls, [False])
+        self.assertEqual(dummy.status_var.value, "Photos linked.")
+
     def test_comp_assignment_update_actions_refresh_all_or_selected_rows(self) -> None:
         class FieldVar:
             def __init__(self):

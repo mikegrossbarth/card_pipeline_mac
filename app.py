@@ -16390,7 +16390,7 @@ class CardPipelineApp(tk.Tk):
             grouped_text = f", grouped {grouped}" if grouped else ""
             self.events.put(("inventory_photo_status", f"Inventory photo scan complete: {len(images)} file(s), skipped {skipped}, OCR scanned {scanned}, linked {linked}{grouped_text}."))
             if linked:
-                self.events.put(("inventory_refresh", None))
+                self.events.put(("inventory_refresh", {"enrich": False}))
         except Exception as error:
             errors.append(str(error))
             self.events.put(("inventory_photo_status", f"Inventory photo scan failed: {error}"))
@@ -19268,9 +19268,16 @@ class CardPipelineApp(tk.Tk):
                     elif kind == "profit_recovery_error":
                         self._handle_profit_recovery_error(payload)
                     elif kind == "inventory_refresh":
-                        self.refresh_inventory_tab(enrich=True)
-                        if payload:
-                            self.status_var.set(str(payload))
+                        enrich = True
+                        message = ""
+                        if isinstance(payload, dict):
+                            enrich = bool(payload.get("enrich", True))
+                            message = str(payload.get("message") or "")
+                        elif payload:
+                            message = str(payload)
+                        self.refresh_inventory_tab(enrich=enrich)
+                        if message:
+                            self.status_var.set(message)
                     elif kind == "incoming_index_retry_done":
                         self._apply_incoming_index_retry(payload)
                     elif kind == "incoming_index_retry_error":
