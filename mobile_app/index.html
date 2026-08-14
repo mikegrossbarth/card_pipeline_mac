@@ -34,6 +34,7 @@
         <nav class="tabs" aria-label="Inventory actions">
           <button class="tab active" data-view="search" type="button">Inventory</button>
           <button class="tab" data-view="add" type="button">Add</button>
+          <button class="tab" data-view="photos" type="button">Photos</button>
           <button class="tab" data-view="trade" type="button">Trade</button>
           <button class="tab" data-view="expense" type="button">Expense</button>
           <button class="tab" data-view="profit" type="button">Profit</button>
@@ -108,6 +109,26 @@
           <button id="addInventory" class="primary" type="button">Add Inventory</button>
           <button id="updateDuplicate" class="secondary hidden" type="button">Update Existing</button>
           <div id="addStatus" class="status"></div>
+        </section>
+
+        <section id="photosView" class="view hidden">
+          <section class="panel inlinePanel">
+            <h2>Attach Photos</h2>
+            <div class="grid">
+              <label class="personControl">Person<select id="photoUploadPerson"></select></label>
+              <label>Cert number<input id="photoUploadCert" inputmode="numeric" placeholder="Optional"></label>
+              <label>Item ID<input id="photoUploadItemId" placeholder="Optional raw ID"></label>
+              <label>Card hint<input id="photoUploadHint" placeholder="Optional title or player"></label>
+            </div>
+            <div class="buttonRow">
+              <label class="fileButton" for="photoUploadInput">Take Photos</label>
+              <label class="fileButton" for="photoUploadGalleryInput">Choose Photos</label>
+            </div>
+            <input id="photoUploadInput" class="fileInput" type="file" accept="image/*" capture="environment">
+            <input id="photoUploadGalleryInput" class="fileInput" type="file" accept="image/*" multiple>
+            <div id="photoUploadStatus" class="status"></div>
+          </section>
+          <div id="photoUploadList" class="results compact"></div>
         </section>
 
         <section id="expenseView" class="view hidden">

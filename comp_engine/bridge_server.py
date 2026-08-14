@@ -129,6 +129,7 @@ class BridgeState:
         self.mobile_inventory_mark_sold: Callable[[dict], dict] | None = None
         self.mobile_inventory_trade: Callable[[dict], dict] | None = None
         self.mobile_card_identify: Callable[[dict], dict] | None = None
+        self.mobile_photo_upload: Callable[[dict], dict] | None = None
         self.mobile_profit_summary: Callable[[dict], dict] | None = None
         self.mobile_profit_refund: Callable[[dict], dict] | None = None
         self.mobile_expense_add: Callable[[dict], dict] | None = None
@@ -207,6 +208,7 @@ class BridgeState:
             "service": "lucas-mobile",
             "requiresPin": bool(self.mobile_pin_provider),
             "photoSearch": True,
+            "photoUpload": True,
             "inventorySold": True,
             "profit": True,
             "expenses": True,
@@ -247,6 +249,13 @@ class BridgeState:
         if not self.mobile_card_identify:
             return {"ok": False, "error": "Photo card search is not available."}
         return self.mobile_card_identify(payload)
+
+    def upload_mobile_photos(self, payload: dict) -> dict:
+        if not self.mobile_auth_ok(payload):
+            return {"ok": False, "error": "Invalid mobile PIN."}
+        if not self.mobile_photo_upload:
+            return {"ok": False, "error": "Photo upload is not available."}
+        return self.mobile_photo_upload(payload)
 
     def get_mobile_profit_summary(self, payload: dict) -> dict:
         if not self.mobile_auth_ok(payload):
@@ -1429,6 +1438,9 @@ class BridgeServer:
                     return
                 if mobile_api_path.startswith("/mobile/api/card/identify"):
                     self._send_json(state.identify_mobile_card(payload))
+                    return
+                if mobile_api_path.startswith("/mobile/api/photos/upload"):
+                    self._send_json(state.upload_mobile_photos(payload))
                     return
                 if mobile_api_path.startswith("/mobile/api/profit/summary"):
                     self._send_json(state.get_mobile_profit_summary(payload))

@@ -13,6 +13,7 @@ const state = {
   tradeOutgoing: [],
   tradeIncomingSeq: 0,
   profitItems: [],
+  uploadedPhotos: [],
   lastFailedQueueIds: new Set(),
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
@@ -198,7 +199,7 @@ function updatePeople(people) {
     state.people = people.filter(Boolean);
   }
   ["personFilter", "profitPerson", "payoutPerson"].forEach((id) => fillSelect($(id), state.people));
-  ["assignedPerson", "expensePerson", "tradePerson"].forEach((id) => fillSelect($(id), state.people, { allLabel: "Choose person" }));
+  ["assignedPerson", "expensePerson", "tradePerson", "photoUploadPerson"].forEach((id) => fillSelect($(id), state.people, { allLabel: "Choose person" }));
 }
 
 function cachedInventoryWrapper() {
@@ -399,12 +400,14 @@ function syncPersonInputs(person) {
     $("assignedPerson").value = PERSONAL_DEFAULT_PERSON;
     $("expensePerson").value = PERSONAL_DEFAULT_PERSON;
     $("tradePerson").value = PERSONAL_DEFAULT_PERSON;
+    $("photoUploadPerson").value = PERSONAL_DEFAULT_PERSON;
     return;
   }
   const value = person || $("personFilter").value || $("profitPerson").value || $("payoutPerson").value || "";
   if (value && !$("assignedPerson").value) $("assignedPerson").value = value;
   if (value && !$("expensePerson").value) $("expensePerson").value = value;
   if (value && !$("tradePerson").value) $("tradePerson").value = value;
+  if (value && !$("photoUploadPerson").value) $("photoUploadPerson").value = value;
 }
 
 function personalPersonValue(value = "") {
@@ -1389,6 +1392,65 @@ function bindPhotoInput(inputId, targetId) {
   });
 }
 
+function renderUploadedPhotos() {
+  const list = $("photoUploadList");
+  if (!list) return;
+  list.innerHTML = state.uploadedPhotos.length ? state.uploadedPhotos.slice(0, 20).map((item) => `
+    <article class="result">
+      <h2>${escapeHtml(item.name || "Mobile photo")}</h2>
+      <div class="meta">
+        <div><strong>Status</strong>${escapeHtml(item.status || "")}</div>
+        <div><strong>Linked</strong>${escapeHtml(String(item.linked || 0))}</div>
+      </div>
+    </article>
+  `).join("") : '<div class="hint">No mobile photo uploads yet.</div>';
+}
+
+async function uploadInventoryPhotos(inputId) {
+  const input = $(inputId);
+  const files = Array.from((input && input.files) || []);
+  if (input) input.value = "";
+  if (!files.length) return;
+  const status = $("photoUploadStatus");
+  status.textContent = `Preparing ${files.length} photo(s)...`;
+  try {
+    const images = [];
+    for (let index = 0; index < files.length; index += 1) {
+      status.textContent = `Preparing photo ${index + 1}/${files.length}...`;
+      images.push({
+        name: files[index].name || `mobile-photo-${index + 1}.jpg`,
+        type: files[index].type || "image/jpeg",
+        image: await imageFileToCompressedDataUrl(files[index]),
+      });
+    }
+    status.textContent = "Uploading photos to LUCAS...";
+    const result = await api("/photos/upload", {
+      images,
+      client_id: state.clientId,
+      assigned_person: personalPersonValue($("photoUploadPerson").value),
+      cert_number: $("photoUploadCert").value,
+      item_id: $("photoUploadItemId").value,
+      hint: $("photoUploadHint").value,
+    }, { timeoutMs: 90000 });
+    if (!result.ok) {
+      status.textContent = result.error || "Photo upload failed.";
+      return;
+    }
+    status.textContent = result.message || `Uploaded ${result.saved || files.length} photo(s).`;
+    (result.files || []).forEach((name) => {
+      state.uploadedPhotos.unshift({ name, status: result.status || "saved", linked: result.linked || 0 });
+    });
+    renderUploadedPhotos();
+    if (result.linked) {
+      await refreshInventorySnapshot(true);
+      searchInventory();
+    }
+  } catch (error) {
+    setConnectionStatus(false);
+    status.textContent = `Photo upload needs desktop LUCAS online. ${error.message || error}`;
+  }
+}
+
 function bind() {
   loadQueue();
   hydratePendingInventoryFromQueue();
@@ -1418,9 +1480,10 @@ function bind() {
     button.addEventListener("click", () => {
       document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
-      ["search", "add", "trade", "expense", "profit", "payout", "sync"].forEach((view) => {
+      ["search", "add", "photos", "trade", "expense", "profit", "payout", "sync"].forEach((view) => {
         $(`${view}View`).classList.toggle("hidden", button.dataset.view !== view);
       });
+      if (button.dataset.view === "photos") renderUploadedPhotos();
       if (button.dataset.view === "trade" && !$("tradeIncomingRows").children.length) addTradeIncomingRow();
       if (button.dataset.view === "profit") loadProfit();
       if (button.dataset.view === "payout") loadPayouts();
@@ -1491,6 +1554,8 @@ function bind() {
   window.addEventListener("offline", () => setConnectionStatus(false));
   bindPhotoInput("photoSearchInput", "searchInput");
   bindPhotoInput("photoAddInput", "certNumber");
+  $("photoUploadInput").addEventListener("change", () => uploadInventoryPhotos("photoUploadInput"));
+  $("photoUploadGalleryInput").addEventListener("change", () => uploadInventoryPhotos("photoUploadGalleryInput"));
   $("addInventory").addEventListener("click", () => addInventory(false));
   $("updateDuplicate").addEventListener("click", () => addInventory(true));
   $("addExpense").addEventListener("click", () => addExpense());
