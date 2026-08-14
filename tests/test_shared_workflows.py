@@ -9597,7 +9597,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
-    def test_inventory_sold_archives_unshared_photo_file_for_two_weeks(self) -> None:
+    def test_inventory_sold_preserves_photo_file_and_marks_state_sold(self) -> None:
         class PhotoSoldDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -9605,14 +9605,17 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
             _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
-            _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
-            _unique_deleted_archive_path = app.CardPipelineApp._unique_deleted_archive_path
-            _archive_deleted_file = app.CardPipelineApp._archive_deleted_file
-            _purge_expired_deleted_archive = app.CardPipelineApp._purge_expired_deleted_archive
+            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
-            _delete_inventory_photo_files_for_removed_records = app.CardPipelineApp._delete_inventory_photo_files_for_removed_records
+            _mark_inventory_photo_files_for_sold_records = app.CardPipelineApp._mark_inventory_photo_files_for_sold_records
             _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
             _append_activity = lambda self, action, summary, details=None: None
 
@@ -9639,15 +9642,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy._save_inventory_ledger([record])
             try:
                 self.assertEqual(dummy._mark_inventory_record_sold(str(record["inventory_key"]), "Arena Club", 10), 1)
-                self.assertFalse(photo.exists())
-                archived = list(app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card.jpg"))
-                self.assertEqual(len(archived), 1)
-                metadata_path = archived[0].with_name("card.jpg.archive.json")
-                self.assertTrue(metadata_path.exists())
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                self.assertEqual(metadata["original_path"], str(photo))
-                self.assertEqual(metadata["reason"], "inventory_photo_removed")
-                self.assertEqual(metadata["retention_days"], 14)
+                self.assertTrue(photo.exists())
+                self.assertEqual(list(app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card.jpg")), [])
+                state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
+                state_record = next(iter(state["photos"].values()))
+                self.assertEqual(state_record["status"], "sold_inventory")
+                self.assertEqual(state_record["sale_context"], "inventory_sold")
+                self.assertEqual(state_record["linked_keys"], [record["inventory_key"]])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
@@ -9684,7 +9685,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             self.assertEqual(exported[0].read_bytes(), b"front")
             self.assertEqual(exported[1].read_bytes(), b"back")
 
-    def test_inventory_sold_archives_matching_source_and_shared_photo_files(self) -> None:
+    def test_inventory_delete_archives_matching_source_and_shared_photo_files(self) -> None:
         class PhotoSoldDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -9694,6 +9695,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
             _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
@@ -9704,7 +9706,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
             _delete_inventory_photo_files_for_removed_records = app.CardPipelineApp._delete_inventory_photo_files_for_removed_records
-            _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
             _append_activity = lambda self, action, summary, details=None: None
 
         with TemporaryDirectory() as tmp:
@@ -9731,9 +9732,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
             dummy.app_settings = {"inventory_photo_folder": str(source_dir)}
             record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "123", "card_title": "Test", "status": "Active", "photo_paths": [str(shared_photo)]})
-            dummy._save_inventory_ledger([record])
             try:
-                self.assertEqual(dummy._mark_inventory_record_sold(str(record["inventory_key"]), "Arena Club", 10), 1)
+                self.assertEqual(dummy._delete_inventory_photo_files_for_removed_records([record], []), 2)
                 self.assertFalse(shared_photo.exists())
                 self.assertFalse(source_photo.exists())
                 archived = sorted(path.name for path in app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card*.jpg"))
@@ -9778,6 +9778,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
             _restore_inventory_photo_files_for_records = app.CardPipelineApp._restore_inventory_photo_files_for_records
@@ -9825,6 +9826,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
             _restore_inventory_photo_files_for_records = app.CardPipelineApp._restore_inventory_photo_files_for_records
@@ -9876,6 +9878,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state

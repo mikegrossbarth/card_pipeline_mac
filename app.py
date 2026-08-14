@@ -6759,9 +6759,9 @@ class CardPipelineApp(tk.Tk):
         kept = [record for record in ledger if str(record.get("inventory_key") or "") not in moved_keys]
         if len(kept) != len(ledger):
             self._save_inventory_ledger(kept)
-            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
-            if callable(cleanup):
-                cleanup(removed, kept)
+            mark_sold_photos = getattr(self, "_mark_inventory_photo_files_for_sold_records", None)
+            if callable(mark_sold_photos):
+                mark_sold_photos(removed, "company_sheet_move")
 
     def _safe_inventory_photo_path(self, path_value: object) -> Path | None:
         safe_candidates = getattr(self, "_inventory_photo_safe_candidates", None)
@@ -6888,6 +6888,65 @@ class CardPipelineApp(tk.Tk):
             except OSError:
                 pass
         return purged
+
+    def _mark_inventory_photo_files_for_sold_records(
+        self,
+        sold_records: list[dict[str, object]],
+        sale_context: str = "inventory_sold",
+    ) -> int:
+        if not sold_records:
+            return 0
+        safe_candidates = getattr(self, "_inventory_photo_safe_candidates", None)
+
+        def photo_safe_candidates(value: object) -> list[Path]:
+            if callable(safe_candidates):
+                return safe_candidates(value)
+            path = self._safe_inventory_photo_path(value)
+            return [path] if path else []
+
+        state = self._load_inventory_photo_state()
+        photos = state.setdefault("photos", {})
+        sold_at = datetime.now().isoformat(timespec="seconds")
+        changed = 0
+        for record in sold_records:
+            inventory_key = str(record.get("inventory_key") or "").strip()
+            cert = scan_to_cert(record.get("cert_number"))
+            for path_value in record.get("photo_paths") or []:
+                for path in photo_safe_candidates(path_value):
+                    if not path.exists() or not path.is_file():
+                        continue
+                    try:
+                        stat = path.stat()
+                        sha = self._inventory_photo_file_hash(path)
+                    except Exception:
+                        continue
+                    existing = photos.get(sha) if isinstance(photos.get(sha), dict) else {}
+                    linked_keys = {str(key).strip() for key in (existing.get("linked_keys") or []) if str(key).strip()}
+                    if inventory_key:
+                        linked_keys.add(inventory_key)
+                    certs = {scan_to_cert(value) for value in (existing.get("certs") or []) if scan_to_cert(value)}
+                    if cert:
+                        certs.add(cert)
+                    relative = self._inventory_photo_storage_value(path)
+                    photos[sha] = {
+                        **existing,
+                        "path": str(path),
+                        "relative_path": relative,
+                        "filename": path.name,
+                        "size": stat.st_size,
+                        "modified": int(stat.st_mtime),
+                        "sha256": sha,
+                        "certs": sorted(certs),
+                        "linked_keys": sorted(linked_keys),
+                        "status": "sold_inventory",
+                        "sold_at": sold_at,
+                        "sale_context": sale_context,
+                        "last_seen": sold_at,
+                    }
+                    changed += 1
+        if changed:
+            self._save_inventory_photo_state(state)
+        return changed
 
     def _delete_inventory_photo_files_for_removed_records(
         self,
@@ -7085,9 +7144,9 @@ class CardPipelineApp(tk.Tk):
         changed = len(ledger) - len(kept)
         if changed:
             self._save_inventory_ledger(kept)
-            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
-            if callable(cleanup):
-                cleanup(removed, kept)
+            mark_sold_photos = getattr(self, "_mark_inventory_photo_files_for_sold_records", None)
+            if callable(mark_sold_photos):
+                mark_sold_photos(removed, "inventory_sold")
         return changed
 
     def _general_sold_sheet_name(self, person: str) -> str:
@@ -16237,6 +16296,8 @@ class CardPipelineApp(tk.Tk):
             return False
         status = str(existing.get("status") or "").strip()
         linked_keys = [str(key).strip() for key in (existing.get("linked_keys") or []) if str(key).strip()]
+        if status == "sold_inventory":
+            return True
         if status not in {"linked", "missing_from_album", "archived_from_album"} or not linked_keys:
             return False
         for key in linked_keys:
