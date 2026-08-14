@@ -168,8 +168,7 @@ Keep this Mac-only unless the user explicitly requests Windows CourtYard support
 ## Mac Port Setup Pieces
 
 - `install_dependencies.sh`
-- `run_card_pipeline.sh`
-- double-click launcher: `Run Card Pipeline.command`
+- double-click launchers: `Run Team LUCAS.command`, `Run Michael LUCAS.command`
 - optional Finder launcher builder: `create_macos_app.sh`
 - macOS Google Drive path examples in docs/config examples
 - Card Ladder extension docs use POSIX-style paths

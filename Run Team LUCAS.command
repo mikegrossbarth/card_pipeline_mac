@@ -6,4 +6,14 @@ cd "$(dirname "$0")"
 export LUCAS_SETTINGS_PATH="$PWD/lucas_settings.json"
 export LUCAS_ASSIGNMENT_CONFIG_PATH="$PWD/assignment_companies.json"
 
-exec ./run_card_pipeline.sh
+if [[ -x ".venv/bin/python" ]]; then
+  exec ".venv/bin/python" app.py
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 app.py
+fi
+
+echo "L.U.C.A.S could not find Python."
+echo "Run ./install_dependencies.sh after installing Python 3.11 or newer."
+exit 1

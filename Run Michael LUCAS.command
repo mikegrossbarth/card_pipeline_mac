@@ -3,6 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+export LUCAS_SETTINGS_PATH="$PWD/lucas_settings.michael.json"
+export LUCAS_ASSIGNMENT_CONFIG_PATH="$PWD/assignment_companies.michael.json"
+
 if [[ -x ".venv/bin/python" ]]; then
   exec ".venv/bin/python" app.py
 fi

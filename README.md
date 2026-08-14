@@ -17,7 +17,7 @@ For a full operating manual with workflow pictures, see [docs/LUCAS_USER_GUIDE.m
 3. Run:
 
 ```bash
-chmod +x install_dependencies.sh run_card_pipeline.sh "Run Card Pipeline.command" create_macos_app.sh install_macos_shortcut.sh
+chmod +x install_dependencies.sh "Run Team LUCAS.command" "Run Michael LUCAS.command" create_macos_app.sh install_macos_shortcut.sh
 ./install_dependencies.sh
 ```
 
@@ -29,10 +29,10 @@ The installer is meant for a brand-new Mac. It installs Homebrew when missing, i
 7. Launch with:
 
 ```bash
-./run_card_pipeline.sh
+./"Run Team LUCAS.command"
 ```
 
-You can also double-click `Run Card Pipeline.command` after the file has execute permission. To create a Finder-friendly launcher, run:
+For Personal/Michael LUCAS, run or double-click `Run Michael LUCAS.command`. To create a Finder-friendly launcher, run:
 
 ```bash
 ./install_macos_shortcut.sh
@@ -184,7 +184,7 @@ outputs/
 
 ## Troubleshooting
 
-If the app does not open, run `./run_card_pipeline.sh` from Terminal so macOS keeps the error visible.
+If the app does not open, run `./"Run Team LUCAS.command"` or `./"Run Michael LUCAS.command"` from Terminal so macOS keeps the error visible.
 
 If `import tkinter` fails, install a Python build with Tkinter. The python.org macOS installer is usually the simplest fix. With Homebrew Python, install the matching Tk package, such as `python-tk@3.13`.
 

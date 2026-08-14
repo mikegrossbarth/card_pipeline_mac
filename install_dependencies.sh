@@ -165,7 +165,7 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
 
-chmod +x run_card_pipeline.sh "Run Card Pipeline.command" create_macos_app.sh install_macos_shortcut.sh 2>/dev/null || true
+chmod +x "Run Team LUCAS.command" "Run Michael LUCAS.command" create_macos_app.sh install_macos_shortcut.sh 2>/dev/null || true
 chmod +x scripts/macos/cgscroll 2>/dev/null || true
 
 echo
@@ -174,4 +174,5 @@ echo "Installed/verified: Homebrew, Python/Tkinter, cliclick, tesseract, and the
 echo "Chrome and Google Drive were installed when Homebrew cask installation was available."
 echo "CourtYard/CYCardScanner must still be installed, opened, logged in, and granted macOS permissions."
 echo "Open .env and add GOOGLE_API_KEY, Google Sheets OAuth credentials, and your WORKING SHEETS path."
-echo "Launch with: ./run_card_pipeline.sh"
+echo "Launch Team with: ./Run\\ Team\\ LUCAS.command"
+echo "Launch Personal/Michael with: ./Run\\ Michael\\ LUCAS.command"

@@ -62,8 +62,8 @@ The folder should contain:
 ```text
 app.py
 install_dependencies.sh
-run_card_pipeline.sh
-Run Card Pipeline.command
+Run Team LUCAS.command
+Run Michael LUCAS.command
 README.md
 cardladder-autocomp
 ```
@@ -102,7 +102,7 @@ brew install python-tk@3.13
 Open Terminal in the project folder and run:
 
 ```bash
-chmod +x install_dependencies.sh run_card_pipeline.sh "Run Card Pipeline.command" create_macos_app.sh install_macos_shortcut.sh
+chmod +x install_dependencies.sh "Run Team LUCAS.command" "Run Michael LUCAS.command" create_macos_app.sh install_macos_shortcut.sh
 ./install_dependencies.sh
 ```
 
@@ -155,13 +155,13 @@ assignment_player_overrides.json
 From Terminal:
 
 ```bash
-./run_card_pipeline.sh
+./"Run Team LUCAS.command"
 ```
 
-After permissions are set, you can also double-click:
+For Personal/Michael LUCAS, run or double-click:
 
 ```text
-Run Card Pipeline.command
+Run Michael LUCAS.command
 ```
 
 To create a Finder app launcher:
