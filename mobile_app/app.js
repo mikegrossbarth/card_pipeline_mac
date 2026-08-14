@@ -1428,9 +1428,6 @@ async function uploadInventoryPhotos(inputId) {
       images,
       client_id: state.clientId,
       assigned_person: personalPersonValue($("photoUploadPerson").value),
-      cert_number: $("photoUploadCert").value,
-      item_id: $("photoUploadItemId").value,
-      hint: $("photoUploadHint").value,
     }, { timeoutMs: 90000 });
     if (!result.ok) {
       status.textContent = result.error || "Photo upload failed.";
@@ -1441,10 +1438,6 @@ async function uploadInventoryPhotos(inputId) {
       state.uploadedPhotos.unshift({ name, status: result.status || "saved", linked: result.linked || 0 });
     });
     renderUploadedPhotos();
-    if (result.linked) {
-      await refreshInventorySnapshot(true);
-      searchInventory();
-    }
   } catch (error) {
     setConnectionStatus(false);
     status.textContent = `Photo upload needs desktop LUCAS online. ${error.message || error}`;

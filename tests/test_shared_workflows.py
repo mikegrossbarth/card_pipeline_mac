@@ -11104,7 +11104,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(state.upload_mobile_photos({"pin": "123456"})["saved"], 1)
         self.assertFalse(state.upload_mobile_photos({"pin": "bad"})["ok"])
 
-    def test_mobile_photo_upload_saves_under_person_and_links_inventory(self) -> None:
+    def test_mobile_photo_upload_saves_under_person_for_desktop_scan(self) -> None:
         class MobileUploadDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -11121,16 +11121,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
-            _link_inventory_photo_to_keys = app.CardPipelineApp._link_inventory_photo_to_keys
-            _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
-            _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
-            _match_text_tokens = app.CardPipelineApp._match_text_tokens
-            _compact_match_text = app.CardPipelineApp._compact_match_text
             _mobile_image_parts = app.CardPipelineApp._mobile_image_parts
             _mobile_photo_upload_images = app.CardPipelineApp._mobile_photo_upload_images
             _mobile_photo_upload_owner = app.CardPipelineApp._mobile_photo_upload_owner
             _mobile_photo_upload_folder = app.CardPipelineApp._mobile_photo_upload_folder
-            _mobile_photo_upload_match_keys = app.CardPipelineApp._mobile_photo_upload_match_keys
             _record_mobile_photo_upload_state = app.CardPipelineApp._record_mobile_photo_upload_state
             mobile_photo_upload = app.CardPipelineApp.mobile_photo_upload
 
@@ -11142,9 +11136,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
             def _canonical_person_choice(self, person):
                 return str(person or "").strip()
-
-            def _queue_mobile_photo_scan(self):
-                raise AssertionError("direct cert matches should not need OCR scan")
 
         with TemporaryDirectory() as tmp:
             old_inventory = app.INVENTORY_LEDGER_PATH
@@ -11170,25 +11161,24 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                     {
                         "client_id": "phone-one",
                         "assigned_person": "Kevin Hambone",
-                        "cert_number": "12345678",
                         "images": [{"name": "front.jpg", "image": "data:image/jpeg;base64,anBnLWJ5dGVz"}],
                     }
                 )
 
                 self.assertTrue(result["ok"])
                 self.assertEqual(result["saved"], 1)
-                self.assertEqual(result["linked"], 1)
+                self.assertEqual(result["linked"], 0)
                 saved = list((app.INVENTORY_PHOTOS_DIR / "mobile" / "team" / "kevin-hambone").rglob("*.jpg"))
                 self.assertEqual(len(saved), 1)
                 ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
                 kevin_after = next(record for record in ledger if record["assigned_person"] == "Kevin Hambone")
                 tyler_after = next(record for record in ledger if record["assigned_person"] == "Tyler Hamlin")
-                self.assertEqual(kevin_after["photo_paths"], [saved[0].relative_to(app.INVENTORY_PHOTOS_DIR).as_posix()])
+                self.assertEqual(kevin_after["photo_paths"], [])
                 self.assertEqual(tyler_after["photo_paths"], [])
                 state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
                 state_record = next(iter(state["photos"].values()))
-                self.assertEqual(state_record["status"], "linked")
-                self.assertEqual(state_record["linked_keys"], [kevin_record["inventory_key"]])
+                self.assertEqual(state_record["status"], "pending_scan")
+                self.assertEqual(state_record["linked_keys"], [])
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
