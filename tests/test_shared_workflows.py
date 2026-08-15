@@ -2725,6 +2725,41 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         with patch.dict(app.os.environ, {"LUCAS_MOBILE_PORT": "8777"}):
             self.assertEqual(app.mobile_bridge_port({}, Path("lucas_settings.json")), 8777)
 
+    def test_mobile_bridge_config_reports_server_profile(self) -> None:
+        state = app.BridgeState()
+        state.mobile_profile = "personal"
+
+        self.assertEqual(state.mobile_config()["profile"], "personal")
+
+    def test_mobile_bridge_rejects_mismatched_profile_url(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+
+        state = app.BridgeState()
+        state.mobile_profile = "team"
+        state.mobile_pin_provider = lambda: "123456"
+        state.mobile_inventory_search = lambda payload: {"ok": True, "items": ["should-not-run"]}
+        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
+        bridge.start()
+        self.assertTrue(bridge.started, bridge.error)
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/mobile/personal/api/inventory/search",
+                data=b'{"pin":"123456"}',
+                headers={"content-type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(request, timeout=5)
+            self.assertEqual(caught.exception.code, 409)
+            payload = json.loads(caught.exception.read().decode("utf-8"))
+            self.assertEqual(payload["profile"], "team")
+            self.assertEqual(payload["requestedProfile"], "personal")
+            self.assertIn("not personal", payload["error"])
+        finally:
+            bridge.stop()
+
     def test_mobile_public_app_url_requires_https_and_appends_profile(self) -> None:
         self.assertEqual(
             app.mobile_public_app_url("personal", {"mobile_public_url": "https://lucas.example.com"}),

@@ -124,6 +124,7 @@ class BridgeState:
         self.updated_row_ids: set[int] = set()
         self.on_update: Callable[[], None] | None = None
         self.mobile_pin_provider: Callable[[], str] | None = None
+        self.mobile_profile = ""
         self.mobile_inventory_search: Callable[[dict], dict] | None = None
         self.mobile_inventory_add: Callable[[dict], dict] | None = None
         self.mobile_inventory_mark_sold: Callable[[dict], dict] | None = None
@@ -206,6 +207,7 @@ class BridgeState:
         return {
             "ok": True,
             "service": "lucas-mobile",
+            "profile": self.mobile_profile,
             "requiresPin": bool(self.mobile_pin_provider),
             "photoSearch": True,
             "photoUpload": True,
@@ -1312,6 +1314,22 @@ class BridgeServer:
         state = self.state
 
         class Handler(BaseHTTPRequestHandler):
+            def _profile_mismatch(self, requested_profile: str) -> bool:
+                expected = str(state.mobile_profile or "").strip().lower()
+                return bool(expected and requested_profile and requested_profile != expected)
+
+            def _send_profile_mismatch(self, requested_profile: str) -> None:
+                expected = str(state.mobile_profile or "").strip().lower()
+                self._send_json(
+                    {
+                        "ok": False,
+                        "error": f"This LUCAS server is running {expected or 'unknown'} mode, not {requested_profile}. Restart the matching mobile server/tunnel.",
+                        "profile": expected,
+                        "requestedProfile": requested_profile,
+                    },
+                    status=409,
+                )
+
             def do_OPTIONS(self):
                 if not self._origin_allowed():
                     self._send_json({"ok": False, "error": "origin not allowed"}, status=403)
@@ -1344,6 +1362,9 @@ class BridgeServer:
                     return
                 mobile_profile = self._mobile_profile(parsed.path)
                 if mobile_profile:
+                    if self._profile_mismatch(mobile_profile):
+                        self._send_profile_mismatch(mobile_profile)
+                        return
                     profile_prefix = f"/mobile/{mobile_profile}"
                     if parsed.path in {profile_prefix, f"{profile_prefix}/"}:
                         self._send_mobile_index(mobile_profile)
@@ -1423,6 +1444,10 @@ class BridgeServer:
                     self._send_json({"ok": False, "error": "local bridge access only"}, status=403)
                     return
                 payload = self._read_json()
+                mobile_profile = self._mobile_profile(parsed.path)
+                if mobile_profile and self._profile_mismatch(mobile_profile):
+                    self._send_profile_mismatch(mobile_profile)
+                    return
                 mobile_api_path = self._mobile_api_path(parsed.path)
                 if mobile_api_path.startswith("/mobile/api/inventory/search"):
                     self._send_json(state.search_mobile_inventory(payload))
