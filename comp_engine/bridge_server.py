@@ -1385,7 +1385,7 @@ class BridgeServer:
                     self._send_static(MOBILE_APP_DIR / relative)
                     return
                 if parsed.path in {"/mobile", "/mobile/"}:
-                    self._send_static(MOBILE_APP_DIR / "index.html")
+                    self._redirect_to_mobile_profile()
                     return
                 if parsed.path.startswith("/mobile/"):
                     relative = parsed.path.removeprefix("/mobile/") or "index.html"
@@ -1558,10 +1558,22 @@ class BridgeServer:
                     return
                 html = html.replace('content="LUCAS"', f'content="{label}"')
                 html = html.replace("<title>LUCAS Mobile</title>", f"<title>{label} Mobile</title>")
+                html = html.replace("<h1>Inventory</h1>", f"<h1>{label}</h1>")
                 html = html.replace('href="/mobile/manifest.webmanifest"', f'href="{base}/manifest.webmanifest"')
                 html = html.replace('href="/mobile/styles.css"', f'href="{base}/styles.css"')
                 html = html.replace('src="/mobile/app.js"', f'src="{base}/app.js"')
-                self._send_bytes(html.encode("utf-8"), "text/html; charset=utf-8")
+                self._send_bytes(html.encode("utf-8"), "text/html; charset=utf-8", cache_control="no-store")
+
+            def _redirect_to_mobile_profile(self) -> None:
+                profile = str(state.mobile_profile or "").strip().lower()
+                if profile in {"team", "personal"}:
+                    self.send_response(302)
+                    self.send_header("location", f"/mobile/{profile}")
+                    self.send_header("cache-control", "no-store")
+                    self.send_header("content-length", "0")
+                    self.end_headers()
+                    return
+                self._send_static(MOBILE_APP_DIR / "index.html")
 
             def _send_mobile_manifest(self, profile: str) -> None:
                 label = MOBILE_PROFILE_LABELS.get(profile, "LUCAS")
@@ -1601,7 +1613,8 @@ class BridgeServer:
                     self._send_json({"ok": False, "error": "not found"}, status=404)
                     return
                 content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
-                self._send_bytes(body, content_type)
+                cache_control = "no-store" if resolved.parent == MOBILE_APP_DIR else "no-cache"
+                self._send_bytes(body, content_type, cache_control=cache_control)
 
             def log_message(self, format, *args):
                 return

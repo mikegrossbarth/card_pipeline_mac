@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import os
 import queue
@@ -2775,6 +2776,50 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             self.assertEqual(payload["profile"], "team")
             self.assertEqual(payload["requestedProfile"], "personal")
             self.assertIn("not personal", payload["error"])
+        finally:
+            bridge.stop()
+
+    def test_mobile_bridge_redirects_unprofiled_mobile_path_to_server_profile(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+
+        state = app.BridgeState()
+        state.mobile_profile = "personal"
+        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
+        bridge.start()
+        self.assertTrue(bridge.started, bridge.error)
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            connection.request("GET", "/mobile")
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual(response.status, 302)
+            self.assertEqual(response.getheader("location"), "/mobile/personal")
+            self.assertEqual(response.getheader("cache-control"), "no-store")
+            connection.close()
+        finally:
+            bridge.stop()
+
+    def test_mobile_bridge_serves_profile_shell_without_browser_cache(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+
+        state = app.BridgeState()
+        state.mobile_profile = "personal"
+        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
+        bridge.start()
+        self.assertTrue(bridge.started, bridge.error)
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/mobile/personal", timeout=5) as response:
+                body = response.read().decode("utf-8")
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("cache-control"), "no-store")
+                self.assertIn("<h1>LUCAS Personal</h1>", body)
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/mobile/personal/app.js", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("cache-control"), "no-store")
         finally:
             bridge.stop()
 
