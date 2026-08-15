@@ -1489,6 +1489,7 @@ class BridgeServer:
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(status)
                 self.send_header("content-type", "application/json")
+                self.send_header("cache-control", "no-store")
                 origin = self.headers.get("origin", "")
                 if origin and self._origin_allowed():
                     self.send_header("access-control-allow-origin", origin)

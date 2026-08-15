@@ -11561,6 +11561,76 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(urls, ["https://example.test/front.jpg", "https://example.test/back.jpg"])
 
+    def test_instagram_inventory_sync_refreshes_stale_preview_photo_url(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+            _instagram_inventory_photo_id = app.CardPipelineApp._instagram_inventory_photo_id
+            _inventory_photo_encoded_id = app.CardPipelineApp._inventory_photo_encoded_id
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.events = queue.Queue()
+                self.activities = []
+                self.image_urls = []
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {"inventory_key": "card-key", "status": "Active", "card_title": "Current Card", "item_id": "RAW-CURRENT"}
+                ]
+
+            def _inventory_photo_paths_for_record(self, record):
+                return [Path("/tmp/current-front.jpg")]
+
+            def _inventory_photo_storage_value(self, path):
+                return path.name
+
+            def _instagram_inventory_photo_url(self, path, config):
+                return f"https://example.test/instagram/media/current-token/{path.name}"
+
+            def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                if method == "POST" and params and params.get("image_url"):
+                    self.image_urls.append(params["image_url"])
+                    return {"id": "creation-current"}
+                if endpoint == "media-current":
+                    return {"permalink": "https://instagram.test/p/current"}
+                return {}
+
+            def _instagram_publish_media_with_retry(self, user_id, creation_id, caption):
+                return {"id": "media-current"}
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+        dummy = InstagramDummy()
+        dummy._instagram_inventory_sync_worker(
+            {
+                "config": {"user_id": "178"},
+                "to_post": [
+                    {
+                        "inventory_key": "card-key",
+                        "record": {"inventory_key": "card-key", "status": "Active", "card_title": "Current Card", "item_id": "RAW-CURRENT"},
+                        "caption": "Current Card",
+                        "photo_path": "/tmp/stale-front.jpg",
+                        "photo_url": "https://example.test/instagram/media/stale-token/stale-front.jpg",
+                    }
+                ],
+                "to_remove": [],
+            }
+        )
+
+        self.assertEqual(dummy.image_urls, ["https://example.test/instagram/media/current-token/current-front.jpg"])
+        self.assertEqual(dummy.state["posts"]["card-key"]["photo_url"], "https://example.test/instagram/media/current-token/current-front.jpg")
+        self.assertIn("posted 1", dummy.activities[-1][1])
+
     def test_instagram_inventory_sync_continues_after_single_post_error(self) -> None:
         class InstagramDummy:
             _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker

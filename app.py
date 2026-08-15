@@ -6631,6 +6631,23 @@ class CardPipelineApp(tk.Tk):
                     photo_paths = item.get("photo_paths") if isinstance(item.get("photo_paths"), list) else []
                     if not photo_paths:
                         photo_paths = [item.get("photo_path")]
+                    current_photo_paths: list[Path] = []
+                    current_photo_path_source = getattr(self, "_inventory_photo_paths_for_record", None)
+                    if callable(current_photo_path_source):
+                        current_photo_paths = instagram_inventory_photo_order(current_photo_path_source(current_record))
+                    if current_photo_paths and hasattr(self, "_instagram_inventory_photo_is_postable"):
+                        current_photo_paths = [
+                            path for path in current_photo_paths if self._instagram_inventory_photo_is_postable(path)
+                        ]
+                    if current_photo_paths:
+                        refreshed_urls = [
+                            self._instagram_inventory_photo_url(path, plan["config"])
+                            for path in current_photo_paths[:10]
+                        ]
+                        refreshed_urls = instagram_ready_photo_urls({"photo_urls": refreshed_urls})
+                        if refreshed_urls:
+                            photo_paths = current_photo_paths[: len(refreshed_urls)]
+                            photo_urls = refreshed_urls
                     photo_ids = [
                         self._instagram_inventory_photo_id(Path(str(path or "")))
                         for path in photo_paths[: len(photo_urls)]
