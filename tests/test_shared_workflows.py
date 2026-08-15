@@ -2688,6 +2688,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertIn("async function verifyMobileProfile()", script)
         self.assertIn('const PROFILE_STORAGE_KEY = "lucasMobileProfile";', script)
+        self.assertIn("function payloadMatchesProfile(payload)", script)
+        self.assertIn("localStorage.removeItem(key);", script)
+        self.assertIn("payload: { ...payload, profile: APP_PROFILE }", script)
         self.assertIn("clearProfileCaches();", script)
         startup = script[script.index("if (state.pin) {", script.index("function bind()")) :]
         self.assertLess(
@@ -2747,8 +2750,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_mobile_bridge_config_reports_server_profile(self) -> None:
         state = app.BridgeState()
         state.mobile_profile = "personal"
+        state.mobile_data_root = "/tmp/LUCAS_PERSONAL"
+        state.mobile_settings_path = "/tmp/lucas_settings.michael.json"
 
-        self.assertEqual(state.mobile_config()["profile"], "personal")
+        config = state.mobile_config()
+        self.assertEqual(config["profile"], "personal")
+        self.assertEqual(config["dataRoot"], "/tmp/LUCAS_PERSONAL")
+        self.assertEqual(config["settingsPath"], "/tmp/lucas_settings.michael.json")
 
     def test_mobile_bridge_rejects_mismatched_profile_url(self) -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

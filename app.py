@@ -861,6 +861,8 @@ class CardPipelineApp(tk.Tk):
         self.mobile_pin = ensure_mobile_pin(self.app_settings)
         self.state = BridgeState()
         self.state.mobile_profile = "personal" if is_personal_lucas_profile(self.app_settings, SETTINGS_PATH) else "team"
+        self.state.mobile_data_root = str(CARD_PIPELINE_DIR)
+        self.state.mobile_settings_path = str(SETTINGS_PATH)
         self.state.on_update = lambda: self.events.put("comp_refresh")
         self.state.mobile_pin_provider = lambda: self.mobile_pin
         self.state.mobile_inventory_search = self.mobile_inventory_search
@@ -3436,7 +3438,16 @@ class CardPipelineApp(tk.Tk):
             matched.append((record, index))
         matched.sort(key=lambda item: self._mobile_inventory_added_sort_key(item[0], item[1]), reverse=True)
         results = [self._mobile_inventory_json_record(record) for record, _index in matched[:limit]]
-        return {"ok": True, "count": len(results), "items": results, "people": self._known_people()}
+        profile = "personal" if self._is_personal_lucas() else "team"
+        return {
+            "ok": True,
+            "profile": profile,
+            "dataRoot": str(CARD_PIPELINE_DIR),
+            "settingsPath": str(SETTINGS_PATH),
+            "count": len(results),
+            "items": results,
+            "people": self._known_people(),
+        }
 
     def _mobile_inventory_sport_filters(self, payload: dict) -> set[str]:
         raw = payload.get("sport") or payload.get("category") or ""

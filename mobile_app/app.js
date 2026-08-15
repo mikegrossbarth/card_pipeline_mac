@@ -55,7 +55,11 @@ function setConnectionStatus(connected, message = "") {
 
 function cacheSet(key, payload) {
   try {
-    localStorage.setItem(key, JSON.stringify({ saved_at: new Date().toISOString(), payload }));
+    if (!payloadMatchesProfile(payload)) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify({ saved_at: new Date().toISOString(), payload: { ...payload, profile: APP_PROFILE } }));
   } catch (_error) {
     // Local storage can be full or disabled; offline queue still handles writes separately.
   }
@@ -64,10 +68,31 @@ function cacheSet(key, payload) {
 function cacheGet(key) {
   try {
     const wrapper = JSON.parse(localStorage.getItem(key) || "null");
-    return wrapper && wrapper.payload ? wrapper : null;
+    if (!wrapper || !wrapper.payload) return null;
+    if (!payloadMatchesProfile(wrapper.payload)) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return wrapper;
   } catch (_error) {
     return null;
   }
+}
+
+function payloadMatchesProfile(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  const payloadProfile = String(payload.profile || "").toLowerCase();
+  if (payloadProfile && APP_PROFILE && payloadProfile !== APP_PROFILE) return false;
+  if (!payloadProfile && APP_PROFILE && Array.isArray(payload.items)) return false;
+  if (IS_PERSONAL_PROFILE && Array.isArray(payload.items)) {
+    const allowedPeople = new Set([PERSONAL_DEFAULT_PERSON.toLowerCase(), "danny"]);
+    const teamRows = payload.items.filter((item) => {
+      const person = String(item?.assigned_person || item?.person || "").trim().toLowerCase();
+      return person && !allowedPeople.has(person);
+    });
+    return teamRows.length === 0;
+  }
+  return true;
 }
 
 function cacheAgeText(savedAt) {
