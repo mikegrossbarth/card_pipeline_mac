@@ -127,6 +127,7 @@ class BridgeState:
         self.mobile_profile = ""
         self.mobile_data_root = ""
         self.mobile_settings_path = ""
+        self.mobile_profile_error = ""
         self.mobile_inventory_search: Callable[[dict], dict] | None = None
         self.mobile_inventory_add: Callable[[dict], dict] | None = None
         self.mobile_inventory_mark_sold: Callable[[dict], dict] | None = None
@@ -212,6 +213,7 @@ class BridgeState:
             "profile": self.mobile_profile,
             "dataRoot": self.mobile_data_root,
             "settingsPath": self.mobile_settings_path,
+            "profileError": self.mobile_profile_error,
             "requiresPin": bool(self.mobile_pin_provider),
             "photoSearch": True,
             "photoUpload": True,

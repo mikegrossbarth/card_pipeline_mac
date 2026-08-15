@@ -2752,11 +2752,23 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         state.mobile_profile = "personal"
         state.mobile_data_root = "/tmp/LUCAS_PERSONAL"
         state.mobile_settings_path = "/tmp/lucas_settings.michael.json"
+        state.mobile_profile_error = ""
 
         config = state.mobile_config()
         self.assertEqual(config["profile"], "personal")
         self.assertEqual(config["dataRoot"], "/tmp/LUCAS_PERSONAL")
         self.assertEqual(config["settingsPath"], "/tmp/lucas_settings.michael.json")
+        self.assertEqual(config["profileError"], "")
+
+    def test_personal_mobile_rejects_team_data_root(self) -> None:
+        error = app.mobile_profile_data_root_error(
+            "personal",
+            Path("C:/Users/user/Documents/card_pipeline/CARD_PIPELINE"),
+            Path("C:/Users/user/Documents/card_pipeline/lucas_settings.michael.json"),
+        )
+
+        self.assertIn("wrong data root", error)
+        self.assertIn("LUCAS_PERSONAL", error)
 
     def test_mobile_bridge_rejects_mismatched_profile_url(self) -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
