@@ -3159,6 +3159,59 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 saved.close()
 
+    def test_mark_received_row_ref_reports_cert_found_in_workbook_row(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Mixed Lot.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Cert #", "Grader", "Card", "Purchase"])
+            sheet.append(["63710659", "PSA", "1996 Topps 138 Kobe Bryant PSA 10", 2200])
+            workbook.save(path)
+
+            result = mark_received_in_workbooks([path], set(), {("Mixed Lot.xlsx", "Cards", 2)})
+
+            self.assertEqual(result["rows_marked"], 1)
+            self.assertEqual(result["certs_marked"], {"63710659"})
+            self.assertEqual(result["row_refs_marked"], {("mixed lot.xlsx", "cards", 2)})
+            self.assertEqual(result["row_ref_certs"], {("mixed lot.xlsx", "cards", 2): "63710659"})
+
+    def test_receive_row_ref_hydration_prevents_certed_row_from_becoming_raw_inventory(self) -> None:
+        class Dummy:
+            _receive_row_ref = app.CardPipelineApp._receive_row_ref
+            _hydrate_marked_receive_rows_from_cert_refs = app.CardPipelineApp._hydrate_marked_receive_rows_from_cert_refs
+            _inventory_record_from_row = app.CardPipelineApp._inventory_record_from_row
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _money_value = app.CardPipelineApp._money_value
+
+        dummy = Dummy()
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="",
+            item_id="RAW-MIKEY-20260814-0003",
+            grader="PSA",
+            card_title="1996 Topps 138 Kobe Bryant PSA 10",
+            existing_value=2200,
+        )
+        setattr(row, "_receive_sheet", "Mixed Lot.xlsx")
+        setattr(row, "_receive_workbook_sheet", "Cards")
+        setattr(row, "_receive_workbook_row", 2)
+
+        hydrated = dummy._hydrate_marked_receive_rows_from_cert_refs(
+            [row],
+            {("mixed lot.xlsx", "cards", 2): "63710659"},
+        )
+        record = dummy._inventory_record_from_row(row, "Mikey", source_sheet="Mixed Lot.xlsx", source="Manual")
+
+        self.assertEqual(hydrated, 1)
+        self.assertEqual(row.cert_number, "63710659")
+        self.assertEqual(row.item_id, "")
+        self.assertEqual(record["item_type"], "Graded")
+        self.assertEqual(record["cert_number"], "63710659")
+        self.assertEqual(record["item_id"], "")
+
     def test_receive_index_matches_raw_rows_by_unique_title_and_keeps_row_ref(self) -> None:
         class FieldVar:
             def __init__(self):

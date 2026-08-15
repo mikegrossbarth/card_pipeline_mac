@@ -17180,6 +17180,36 @@ class CardPipelineApp(tk.Tk):
         normalized_ref = (row_ref[0].strip().lower(), row_ref[1].strip().lower(), int(row_ref[2]))
         return normalized_ref in marked_row_refs
 
+    def _hydrate_marked_receive_rows_from_cert_refs(
+        self,
+        rows: list[WorkbookRow],
+        row_ref_certs: dict[tuple[str, str, int], str],
+    ) -> int:
+        if not rows or not row_ref_certs:
+            return 0
+        normalized_certs = {
+            (str(sheet_file).strip().lower(), str(sheet_name).strip().lower(), int(row_index)): scan_to_cert(cert)
+            for (sheet_file, sheet_name, row_index), cert in row_ref_certs.items()
+            if scan_to_cert(cert)
+        }
+        hydrated = 0
+        for row in rows:
+            if scan_to_cert(row.cert_number):
+                continue
+            row_ref = self._receive_row_ref(row)
+            if not row_ref:
+                continue
+            cert = normalized_certs.get((row_ref[0].strip().lower(), row_ref[1].strip().lower(), int(row_ref[2])))
+            if not cert:
+                continue
+            row.cert_number = cert
+            row.item_id = ""
+            row.status = "Received"
+            if row.notes in {"Missing cert", "Missing cert or grader"}:
+                row.notes = ""
+            hydrated += 1
+        return hydrated
+
     def _match_all_review_rows(self) -> None:
         for row in self.review_rows:
             match = self._incoming_match(row.cert_number) if scan_to_cert(row.cert_number) else self._incoming_raw_match(
@@ -17319,6 +17349,8 @@ class CardPipelineApp(tk.Tk):
                 files_updated = int(result.get("files_updated") or 0)
                 marked_certs = set(result.get("certs_marked") or set())
                 marked_row_refs = set(result.get("row_refs_marked") or set())
+                row_ref_certs = dict(result.get("row_ref_certs") or {})
+                hydrated_receive_certs = self._hydrate_marked_receive_rows_from_cert_refs(self.review_rows, row_ref_certs)
                 certs_marked = len(marked_certs)
                 raw_rows_marked = len(marked_row_refs)
                 company_rows_added = 0
@@ -17392,6 +17424,8 @@ class CardPipelineApp(tk.Tk):
             f"Updated sheet files: {files_updated}",
             f"Matched certs: {certs_marked}/{len(certs)}",
         ]
+        if hydrated_receive_certs:
+            summary_lines.append(f"Recovered certs from row refs: {hydrated_receive_certs}")
         if row_refs:
             summary_lines.append(f"Matched raw rows: {raw_rows_marked}/{len(row_refs)}")
         if moved_received:
@@ -17414,6 +17448,7 @@ class CardPipelineApp(tk.Tk):
                 "total_certs": len(certs),
                 "raw_rows_marked": raw_rows_marked,
                 "total_raw_rows": len(row_refs),
+                "hydrated_receive_certs": hydrated_receive_certs,
                 "company_rows_added": company_rows_added,
                 "inventory_rows_added": inventory_rows_added,
                 "receive_rows_cleared": cleared_receive_rows,
