@@ -17,6 +17,7 @@ const state = {
   lastFailedQueueIds: new Set(),
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
+const APP_PROFILE = profileMatch ? profileMatch[1] : "";
 const IS_PERSONAL_PROFILE = Boolean(profileMatch && profileMatch[1] === "personal");
 const PERSONAL_DEFAULT_PERSON = "Mikey";
 const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
@@ -35,6 +36,7 @@ const CACHE_KEYS = {
   profit: `${CACHE_PREFIX}lucasMobileLastProfit`,
   payouts: `${CACHE_PREFIX}lucasMobileLastPayouts`,
 };
+const PROFILE_STORAGE_KEY = "lucasMobileProfile";
 const INVENTORY_SNAPSHOT_LIMIT = 1000;
 const INVENTORY_SNAPSHOT_REFRESH_MS = 5 * 60 * 1000;
 
@@ -87,6 +89,52 @@ function cacheIsFresh(wrapper, maxAgeMs) {
 function setUnlocked(unlocked) {
   $("authPanel").classList.toggle("hidden", unlocked);
   $("appPanel").classList.toggle("hidden", !unlocked);
+}
+
+function clearProfileCaches() {
+  const baseKeys = [
+    "lucasMobileLastSearch",
+    "lucasMobileInventorySnapshot",
+    "lucasMobileLastProfit",
+    "lucasMobileLastPayouts",
+  ];
+  ["", "default:", "team:", "personal:"].forEach((prefix) => {
+    baseKeys.forEach((key) => localStorage.removeItem(`${prefix}${key}`));
+  });
+}
+
+async function verifyMobileProfile() {
+  if (!APP_PROFILE || navigator.onLine === false) return true;
+  let result = {};
+  try {
+    const response = await fetch(`${API_BASE}/config`, { cache: "no-store" });
+    result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.error || `Config failed with ${response.status}`);
+    }
+  } catch (error) {
+    const serverProfile = String(result.profile || "").toLowerCase();
+    if (serverProfile && serverProfile !== APP_PROFILE) {
+      clearProfileCaches();
+      setUnlocked(false);
+      setConnectionStatus(false, result.error || `This URL is ${APP_PROFILE}, but desktop LUCAS is serving ${serverProfile}.`);
+      return false;
+    }
+    return true;
+  }
+  const serverProfile = String(result.profile || "").toLowerCase();
+  if (serverProfile && serverProfile !== APP_PROFILE) {
+    clearProfileCaches();
+    setUnlocked(false);
+    setConnectionStatus(false, `This URL is ${APP_PROFILE}, but desktop LUCAS is serving ${serverProfile}. Restart the matching mobile stack.`);
+    return false;
+  }
+  const priorProfile = localStorage.getItem(PROFILE_STORAGE_KEY);
+  if (priorProfile && priorProfile !== APP_PROFILE) {
+    clearProfileCaches();
+  }
+  localStorage.setItem(PROFILE_STORAGE_KEY, APP_PROFILE);
+  return true;
 }
 
 async function api(path, body, options = {}) {
@@ -1463,10 +1511,11 @@ function bind() {
   syncPersonInputs(PERSONAL_DEFAULT_PERSON);
   renderQueue();
   setUnlocked(Boolean(state.pin));
-  $("savePin").addEventListener("click", () => {
+  $("savePin").addEventListener("click", async () => {
     state.pin = $("pin").value.trim();
     localStorage.setItem("lucasMobilePin", state.pin);
     setUnlocked(Boolean(state.pin));
+    if (!(await verifyMobileProfile())) return;
     searchInventory();
   });
   document.querySelectorAll(".tab").forEach((button) => {
@@ -1558,16 +1607,19 @@ function bind() {
     navigator.serviceWorker.register(`${APP_BASE}/sw.js`, { scope: `${APP_BASE}/` }).catch(() => {});
   }
   if (state.pin) {
-    const cached = cachedInventoryWrapper();
-    if (cached && cached.payload) {
-      renderCachedInventory(cached, `Showing last synced inventory (${cacheAgeText(cached.saved_at)}). Refreshing if desktop LUCAS is reachable.`);
-    }
-    if (navigator.onLine === false) {
-      setConnectionStatus(false, "Offline mode: showing last synced inventory from this phone.");
-      if (!cached || !cached.payload) renderCachedSearch(null, "Phone is offline.");
-    } else {
-      refreshInventorySnapshot(true).then(() => searchInventory()).catch(() => searchInventory());
-    }
+    verifyMobileProfile().then((profileOk) => {
+      if (!profileOk) return;
+      const cached = cachedInventoryWrapper();
+      if (cached && cached.payload) {
+        renderCachedInventory(cached, `Showing last synced inventory (${cacheAgeText(cached.saved_at)}). Refreshing if desktop LUCAS is reachable.`);
+      }
+      if (navigator.onLine === false) {
+        setConnectionStatus(false, "Offline mode: showing last synced inventory from this phone.");
+        if (!cached || !cached.payload) renderCachedSearch(null, "Phone is offline.");
+      } else {
+        refreshInventorySnapshot(true).then(() => searchInventory()).catch(() => searchInventory());
+      }
+    });
   }
 }
 

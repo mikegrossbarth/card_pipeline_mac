@@ -2682,6 +2682,24 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn('$("profitPeriod").value = "Month";', script)
         self.assertIn('$("profitGraph").value = "Overall Profit";', script)
 
+    def test_mobile_app_verifies_profile_before_showing_cached_inventory(self) -> None:
+        script = (ROOT / "mobile_app" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("async function verifyMobileProfile()", script)
+        self.assertIn('const PROFILE_STORAGE_KEY = "lucasMobileProfile";', script)
+        self.assertIn("clearProfileCaches();", script)
+        startup = script[script.index("if (state.pin) {", script.index("function bind()")) :]
+        self.assertLess(
+            startup.index("verifyMobileProfile().then((profileOk)"),
+            startup.index("const cached = cachedInventoryWrapper();"),
+        )
+
+    def test_mobile_service_worker_cache_is_profile_scoped(self) -> None:
+        script = (ROOT / "mobile_app" / "sw.js").read_text(encoding="utf-8")
+
+        self.assertIn("lucas-mobile-shell-v25-", script)
+        self.assertIn('${profileMatch ? profileMatch[1] : "default"}', script)
+
     def test_bridge_keeps_default_mobile_port_stable(self) -> None:
         bridge = app.BridgeServer(app.BridgeState())
 
