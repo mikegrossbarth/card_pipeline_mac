@@ -11,6 +11,7 @@ import threading
 import time
 import types
 import unittest
+import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -2730,6 +2731,28 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(response.headers.get("content-type"), "image/jpeg")
                 self.assertEqual(response.headers.get("content-length"), str(len(b"jpg-bytes")))
                 self.assertEqual(response.read(), b"")
+        finally:
+            bridge.stop()
+
+    def test_instagram_media_head_miss_is_not_cacheable(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+
+        state = app.BridgeState()
+        state.instagram_media_resolver = lambda photo_id: None
+        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
+        bridge.start()
+        self.assertTrue(bridge.started, bridge.error)
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}{state.instagram_media_path('missing', 'front.jpg')}",
+                method="HEAD",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(request, timeout=5)
+            self.assertEqual(raised.exception.code, 404)
+            self.assertEqual(raised.exception.headers.get("cache-control"), "no-store")
         finally:
             bridge.stop()
 

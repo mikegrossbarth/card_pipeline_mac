@@ -1427,7 +1427,7 @@ class BridgeServer:
                 if media_match:
                     media = state.get_instagram_media(media_match.group(1), media_match.group(2))
                     if media is None:
-                        self._send_headers("application/json", 0, status=404)
+                        self._send_headers("application/json", 0, status=404, cache_control="no-store")
                         return
                     body, content_type = media
                     self._send_headers(content_type, len(body), cache_control="public, max-age=3600")
