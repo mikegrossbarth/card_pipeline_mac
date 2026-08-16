@@ -146,8 +146,9 @@ class SharedStateTests(unittest.TestCase):
             },
         )
         self.assertEqual(row.card_title, "")
-        self.assertIsNone(row.card_ladder_value)
-        self.assertEqual(row.status, "Card Ladder review")
+        self.assertEqual(row.card_ladder_value, 60)
+        self.assertEqual(row.card_ladder_comps_average, 60)
+        self.assertEqual(row.status, "Card Ladder title review")
         self.assertIn("overly broad profile title", row.notes)
 
     def test_google_ssl_context_uses_certifi_when_no_cert_env_is_set(self) -> None:

@@ -603,11 +603,11 @@ class BridgeState:
             return
         if generic_profile_reason:
             row.card_title = ""
-            row.card_ladder_value = None
-            row.card_ladder_comps_average = None
-            row.card_ladder_comps = ""
+            row.card_ladder_value = value
+            row.card_ladder_comps_average = comp_price(comps, self.comp_strategy, self.comp_low_outlier_pct)
+            row.card_ladder_comps = format_comps(comps, self.comp_strategy, self.comp_low_outlier_pct)
             row.card_ladder_screenshot = str(ocr.get("debugImage") or "")
-            row.status = "Card Ladder review"
+            row.status = "Card Ladder title review"
             row.notes = generic_profile_reason
             return
         if profile_title:
