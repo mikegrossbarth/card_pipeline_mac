@@ -23,7 +23,7 @@ from workbook_io import WorkbookRow
 import assignment_engine
 
 BRIDGE_VERSION = "2026-07-21-cardladder-visible-cert-partial-v25"
-EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-07-21-visible-cert-partial-v25"
+EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-08-15-generic-title-settle-v26"
 EXPECTED_CARDLADDER_MANIFEST_VERSION = "0.1.7"
 DEBUG_DIR = Path(__file__).resolve().parent.parent / "work" / "cardladder-bridge"
 DEBUG_LOG = DEBUG_DIR / "bridge.log"

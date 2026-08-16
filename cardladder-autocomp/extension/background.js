@@ -4,9 +4,10 @@ const BRIDGE_URLS = BRIDGE_PORTS.map((port) => `http://127.0.0.1:${port}`);
 const BRIDGE_ALARM_NAME = "cardladder-bridge-poll";
 const BRIDGE_POLL_MS = 1000;
 const BETWEEN_ROWS_MS = 1200;
+const GENERIC_PROFILE_SETTLE_MS = 1100;
 const OCR_SETTLE_MS = 600;
 const OCR_RETRY_MS = 800;
-const CARDLADDER_BACKGROUND_VERSION = "2026-07-21-visible-cert-partial-v25";
+const CARDLADDER_BACKGROUND_VERSION = "2026-08-15-generic-title-settle-v26";
 const KEEP_SYNC_TAB_CLOSE_MS = 30000;
 const KEEP_SYNC_RETRY_MS = 60000;
 
@@ -413,7 +414,7 @@ async function lookupRowWithRetries(tabId, row) {
 
   const domResult = await captureValueFromDom(tabId, row, pageResult);
   if (["invalid_cert", "no_results"].includes(domResult?.status)) return domResult;
-  if (domResultLooksComplete(domResult)) return domResult;
+  if (domResultLooksComplete(domResult)) return settleGenericProfileTitle(tabId, row, pageResult, domResult);
   const expectedResultCount = Number(domResult?.ocr?.resultCount);
 
   let lastResult = null;
@@ -425,6 +426,25 @@ async function lookupRowWithRetries(tabId, row) {
     await delay(OCR_RETRY_MS);
   }
   return markPartialCapture(mergeCaptureResults(lastResult, domResult), expectedResultCount);
+}
+
+async function settleGenericProfileTitle(tabId, row, pageResult, result) {
+  if (!resultHasGenericProfileTitle(result)) return result;
+  await delay(GENERIC_PROFILE_SETTLE_MS);
+  const settled = await captureValueFromDom(tabId, row, pageResult);
+  if (["invalid_cert", "no_results"].includes(settled?.status)) return result;
+  if (domResultLooksComplete(settled) && !resultHasGenericProfileTitle(settled)) {
+    return {
+      ...settled,
+      genericProfileSettle: "resolved",
+      genericProfileSettleFrom: result?.ocr?.profileTitle || "",
+    };
+  }
+  return {
+    ...result,
+    genericProfileSettle: "still-generic",
+    genericProfileSettleRetriedAt: new Date().toISOString(),
+  };
 }
 
 function isStalePreviousResultSubmit(result) {
@@ -470,6 +490,29 @@ function captureResultLooksComplete(result, expectedResultCount = null) {
   if (comps.length >= 3) return true;
   if (!Number.isFinite(resultCount) || resultCount <= 0) return comps.length >= 2;
   return comps.length >= Math.min(2, resultCount);
+}
+
+function resultHasGenericProfileTitle(result) {
+  const ocr = result?.ocr || {};
+  return isGenericCardLadderProfileTitle(ocr.profileTitle || ocr.profile_title || "", ocr.profileGrader || ocr.profile_grader || "", ocr.profileGrade || ocr.profile_grade || "");
+}
+
+function isGenericCardLadderProfileTitle(title, grader = "", grade = "") {
+  let cleaned = String(title || "").replace(/\s+/g, " ").trim();
+  const cleanGrader = String(grader || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const cleanGrade = String(grade || "").replace(/\b(?:gem|mint|mt)\b/ig, "").trim();
+  if (!cleaned) return false;
+  if (cleanGrader) cleaned = cleaned.replace(new RegExp(`\\b${escapeRegExp(cleanGrader)}\\b`, "ig"), " ");
+  if (cleanGrade) cleaned = cleaned.replace(new RegExp(`(?<!\\d)${escapeRegExp(cleanGrade)}(?!\\d)`, "ig"), " ");
+  cleaned = cleaned.replace(/\b(?:psa|bgs|sgc|cgc|gem|mint|mt)\b/ig, " ");
+  const words = [...cleaned.matchAll(/[A-Za-z0-9#'-]+/g)].map((match) => match[0]).filter(Boolean);
+  if (words.length <= 2 && words.some((word) => /^(?:19|20)\d{2}$/.test(word))) return true;
+  const hasPlayerOrNumber = words.some((word) => /#|[A-Za-z]{2,}\d|\d+[A-Za-z]/.test(word));
+  return !(words.length >= 4 || hasPlayerOrNumber);
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function mergeCaptureResults(primary, fallback) {
