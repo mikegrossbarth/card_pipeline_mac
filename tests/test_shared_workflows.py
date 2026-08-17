@@ -2905,9 +2905,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(info["remaining"], 0.0)
         self.assertEqual(info["unallocated_absorbed"], 3000.0)
 
-    def test_comp_total_row_sums_value_columns(self) -> None:
+    def test_value_total_row_sums_create_and_comp_value_columns(self) -> None:
         class Dummy:
-            _comp_purchase_total_row_values = app.CardPipelineApp._comp_purchase_total_row_values
+            _value_total_row_values = app.CardPipelineApp._value_total_row_values
 
         rows = [
             WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="One", existing_value=10, card_ladder_value=15, card_ladder_comps_average=12, cy_value=11, estimated_payout=9),
@@ -2915,7 +2915,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             WorkbookRow(excel_row=4, cert_number="3", grader="PSA", card_title="Three", existing_value=None),
         ]
 
-        values = Dummy()._comp_purchase_total_row_values(
+        values = Dummy()._value_total_row_values(
             ("excel_row", "card_title", "purchase_price", "card_ladder_value", "card_ladder_comps_average", "cy_value", "estimated_payout"),
             rows,
         )
