@@ -4732,13 +4732,9 @@ class CardPipelineApp(tk.Tk):
                 source_sheet = Path(str(source_value or "")).name.strip().lower()
                 if source_sheet and cert:
                     keys.add((source_sheet, cert))
-                if cert:
-                    keys.add(("", cert))
                 item_id = str(record.get("item_id") or "").strip().lower()
                 if source_sheet and item_id:
                     keys.add((source_sheet, f"item:{item_id}"))
-                if item_id:
-                    keys.add(("", f"item:{item_id}"))
                 title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
                 if source_sheet and not cert and title_identity:
                     keys.add((source_sheet, f"title:{title_identity}"))
@@ -4764,6 +4760,12 @@ class CardPipelineApp(tk.Tk):
         company_keys = company_keys if company_keys is not None else self._company_sheet_source_cert_keys()
         accounted_loader = getattr(self, "_received_inventory_accounted_source_cert_keys", None)
         accounted_keys = accounted_keys if accounted_keys is not None else accounted_loader() if callable(accounted_loader) else set()
+        prior_profit_titles_by_cert: dict[str, str] = {}
+        for profit_record in [self._normalize_profit_record(row) for row in self._load_profit_ledger()]:
+            profit_cert = scan_to_cert(profit_record.get("cert_number"))
+            profit_title = str(profit_record.get("card_title") or "").strip()
+            if profit_cert and profit_title and profit_cert not in prior_profit_titles_by_cert:
+                prior_profit_titles_by_cert[profit_cert] = profit_title
         candidates: list[dict[str, object]] = []
         for row in rows:
             cert = scan_to_cert(row.get("cert_number"))
@@ -4782,7 +4784,9 @@ class CardPipelineApp(tk.Tk):
                 continue
             if ("", row_identity) in accounted_keys:
                 continue
-            card_title = str(row.get("card_title") or "")
+            card_title = str(row.get("card_title") or "").strip()
+            if not card_title and cert:
+                card_title = prior_profit_titles_by_cert.get(cert, "")
             title_identity = CardPipelineApp._received_inventory_title_identity(self, card_title)
             if not cert and title_identity and (path.name.lower(), f"title:{title_identity}") in accounted_keys:
                 continue

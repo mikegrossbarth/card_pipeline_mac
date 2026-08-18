@@ -7702,6 +7702,69 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INCOMING_SHEETS_DIR = old_incoming
                 app.WORKING_SHEETS_DIR = old_working
 
+    def test_received_inventory_reconcile_allows_buyback_from_new_source_after_sale(self) -> None:
+        class ReconcileDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _company_sheet_source_cert_keys = lambda self: set()
+            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _inventory_deleted_source_cert_keys = lambda self: set()
+            _is_personal_lucas = lambda self: False
+            _personal_default_person = app.CardPipelineApp._personal_default_person
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _load_profit_ledger(self):
+                return [
+                    {
+                        "record_type": "sale",
+                        "source_sheet": "Mikey General Sold",
+                        "original_source_sheet": "Original Buy.xlsx",
+                        "cert_number": "0012219217",
+                        "card_title": "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5",
+                        "purchase_price": 10150,
+                        "sale_price": 13000,
+                    }
+                ]
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            received_dir = root / "RECEIVED SHEETS"
+            received_dir.mkdir()
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Source"])
+            sheet.append(["0012219217", "BGS", "", 11200, "Manual"])
+            workbook.save(received_dir / "Buyback.xlsx")
+
+            old_received = app.RECEIVED_SHEETS_DIR
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            app.RECEIVED_SHEETS_DIR = received_dir
+            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
+            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
+            dummy = ReconcileDummy()
+            dummy.home_sheet_markers = {"Received|Buyback.xlsx": {"assigned_person": "Mikey"}}
+            try:
+                records = dummy._received_inventory_candidate_records()
+                self.assertEqual([record["cert_number"] for record in records], ["0012219217"])
+                self.assertEqual(records[0]["card_title"], "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5")
+                self.assertEqual(records[0]["purchase_price"], 11200.0)
+            finally:
+                app.RECEIVED_SHEETS_DIR = old_received
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+
     def test_received_inventory_reconcile_skips_deleted_tombstone_rows(self) -> None:
         class ReconcileDummy:
             _money_value = app.CardPipelineApp._money_value
