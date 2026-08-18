@@ -5153,6 +5153,10 @@ class CardPipelineApp(tk.Tk):
         return str(person or "").strip() or "Unassigned"
 
     def _personal_instagram_sync_enabled(self) -> bool:
+        if not self._is_personal_lucas():
+            return False
+        if mobile_profile_data_root_error("personal", CARD_PIPELINE_DIR, SETTINGS_PATH):
+            return False
         return str(os.environ.get("LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC") or "").strip().lower() in {"1", "true", "yes", "on"}
 
     def _instagram_background_tunnel_enabled(self) -> bool:
