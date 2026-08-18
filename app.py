@@ -2874,6 +2874,12 @@ class CardPipelineApp(tk.Tk):
             return set()
         return self._inventory_identity_keys(record)
 
+    def _source_specific_inventory_identity_keys(self, record: dict[str, object], source_field: str = "source_sheet") -> set[str]:
+        source_sheet = Path(str(record.get(source_field) or "")).name.strip().lower()
+        if not source_sheet:
+            return set()
+        return {f"{key}|source:{source_sheet}" for key in self._inventory_identity_keys(record)}
+
     def _active_inventory_rows_excluding_sold_profit(
         self,
         rows: list[dict[str, object]],
@@ -2881,17 +2887,27 @@ class CardPipelineApp(tk.Tk):
         profit_loader = getattr(self, "_load_profit_ledger", None)
         if not callable(profit_loader):
             return rows, []
-        sold_keys: set[str] = set()
+        sold_global_keys: set[str] = set()
+        sold_source_keys: set[str] = set()
         for raw_record in profit_loader():
-            if isinstance(raw_record, dict):
-                sold_keys.update(self._sold_inventory_identity_keys(raw_record))
-        if not sold_keys:
+            if not isinstance(raw_record, dict):
+                continue
+            keys = self._sold_inventory_identity_keys(raw_record)
+            if not keys:
+                continue
+            original_source_keys = self._source_specific_inventory_identity_keys(raw_record, "original_source_sheet")
+            if original_source_keys:
+                sold_source_keys.update(original_source_keys)
+            else:
+                sold_global_keys.update(keys)
+        if not sold_global_keys and not sold_source_keys:
             return rows, []
         kept: list[dict[str, object]] = []
         removed: list[dict[str, object]] = []
         for record in rows:
             keys = self._inventory_identity_keys(record)
-            if keys and keys & sold_keys:
+            source_keys = self._source_specific_inventory_identity_keys(record)
+            if keys and (keys & sold_global_keys or source_keys & sold_source_keys):
                 removed.append(record)
             else:
                 kept.append(record)

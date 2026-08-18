@@ -6575,6 +6575,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _inventory_identity_keys = app.CardPipelineApp._inventory_identity_keys
             _sold_inventory_identity_keys = app.CardPipelineApp._sold_inventory_identity_keys
+            _source_specific_inventory_identity_keys = app.CardPipelineApp._source_specific_inventory_identity_keys
             _active_inventory_rows_excluding_sold_profit = app.CardPipelineApp._active_inventory_rows_excluding_sold_profit
             _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
@@ -6607,6 +6608,55 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
                 ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
                 self.assertEqual([row.get("cert_number") or row.get("item_id") for row in ledger], ["111", "333"])
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
+
+    def test_inventory_refresh_keeps_buyback_from_new_source_after_prior_sale(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _inventory_identity_keys = app.CardPipelineApp._inventory_identity_keys
+            _sold_inventory_identity_keys = app.CardPipelineApp._sold_inventory_identity_keys
+            _source_specific_inventory_identity_keys = app.CardPipelineApp._source_specific_inventory_identity_keys
+            _active_inventory_rows_excluding_sold_profit = app.CardPipelineApp._active_inventory_rows_excluding_sold_profit
+            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
+            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
+            _inventory_cl_comp_delta = app.CardPipelineApp._inventory_cl_comp_delta
+            _format_inventory_cl_comp_delta = app.CardPipelineApp._format_inventory_cl_comp_delta
+            refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
+
+            def __init__(self):
+                self.inventory_filter_after_id = None
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                dummy._save_inventory_ledger([
+                    dummy._normalize_inventory_record({"assigned_person": "Mikey", "cert_number": "0012219217", "grader": "BGS", "card_title": "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5", "source_sheet": "phillip_works_8_17_26.xlsx", "status": "Active"}),
+                ])
+                dummy._save_profit_ledger([
+                    dummy._normalize_profit_record({"assigned_person": "Mikey", "cert_number": "0012219217", "grader": "BGS", "card_title": "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5", "company": "Mikey General Sold", "source_sheet": "Mikey General Sold", "original_source_sheet": "national_day_1_graded_entry.xlsx", "purchase_price": 10150, "sale_price": 13000, "date_added": "2026-07-30", "status": "Sold from inventory"}),
+                ])
+
+                dummy.refresh_inventory_tab()
+
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual([row.get("cert_number") for row in ledger], ["0012219217"])
+                self.assertEqual(ledger[0].get("source_sheet"), "phillip_works_8_17_26.xlsx")
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.PROFIT_LEDGER_PATH = old_profit
