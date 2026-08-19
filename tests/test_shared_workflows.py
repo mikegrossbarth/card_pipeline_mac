@@ -9164,6 +9164,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
             _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
@@ -9416,6 +9418,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
             _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
             _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
@@ -9832,6 +9835,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
             _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
@@ -9845,6 +9850,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
             _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
             _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
@@ -9904,7 +9910,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
-    def test_inventory_sold_preserves_photo_file_and_marks_state_sold(self) -> None:
+    def test_inventory_sold_archives_photo_file_and_marks_state_archived(self) -> None:
         class PhotoSoldDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -9920,6 +9926,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
             _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
             _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
+            _unique_deleted_archive_path = app.CardPipelineApp._unique_deleted_archive_path
+            _archive_deleted_file = app.CardPipelineApp._archive_deleted_file
+            _purge_expired_deleted_archive = app.CardPipelineApp._purge_expired_deleted_archive
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
             _mark_inventory_photo_files_for_sold_records = app.CardPipelineApp._mark_inventory_photo_files_for_sold_records
@@ -9949,13 +9959,15 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy._save_inventory_ledger([record])
             try:
                 self.assertEqual(dummy._mark_inventory_record_sold(str(record["inventory_key"]), "Arena Club", 10), 1)
-                self.assertTrue(photo.exists())
-                self.assertEqual(list(app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card.jpg")), [])
+                self.assertFalse(photo.exists())
+                archived = list(app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card.jpg"))
+                self.assertEqual(len(archived), 1)
                 state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
                 state_record = next(iter(state["photos"].values()))
-                self.assertEqual(state_record["status"], "sold_inventory")
+                self.assertEqual(state_record["status"], "archived_from_album")
                 self.assertEqual(state_record["sale_context"], "inventory_sold")
                 self.assertEqual(state_record["linked_keys"], [record["inventory_key"]])
+                self.assertEqual(state_record["archive_path"], str(archived[0]))
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory

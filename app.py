@@ -6983,6 +6983,18 @@ class CardPipelineApp(tk.Tk):
         photos = state.setdefault("photos", {})
         sold_at = datetime.now().isoformat(timespec="seconds")
         changed = 0
+        archived_paths: list[str] = []
+        remaining_records = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        still_used: set[str] = set()
+        for remaining in remaining_records:
+            for remaining_path_value in remaining.get("photo_paths") or []:
+                still_used.add(str(remaining_path_value))
+                for candidate in photo_safe_candidates(remaining_path_value):
+                    still_used.add(str(candidate))
+                    try:
+                        still_used.add(str(candidate.resolve()))
+                    except Exception:
+                        pass
         for record in sold_records:
             inventory_key = str(record.get("inventory_key") or "").strip()
             cert = scan_to_cert(record.get("cert_number"))
@@ -6991,8 +7003,32 @@ class CardPipelineApp(tk.Tk):
                     if not path.exists() or not path.is_file():
                         continue
                     try:
+                        resolved_path = str(path.resolve())
+                    except Exception:
+                        resolved_path = str(path)
+                    if str(path_value) in still_used or str(path) in still_used or resolved_path in still_used:
+                        continue
+                    try:
                         stat = path.stat()
                         sha = self._inventory_photo_file_hash(path)
+                    except Exception:
+                        continue
+                    archive_path_text = ""
+                    try:
+                        archive_path = self._archive_deleted_file(
+                            path,
+                            DELETED_INVENTORY_PHOTOS_DIR,
+                            "inventory_photo_sold",
+                            {
+                                "inventory_key": inventory_key,
+                                "cert_number": cert,
+                                "card_title": record.get("card_title") or "",
+                                "source_sheet": record.get("source_sheet") or "",
+                                "sale_context": sale_context,
+                            },
+                        )
+                        archive_path_text = str(archive_path)
+                        archived_paths.append(archive_path_text)
                     except Exception:
                         continue
                     existing = photos.get(sha) if isinstance(photos.get(sha), dict) else {}
@@ -7013,14 +7049,18 @@ class CardPipelineApp(tk.Tk):
                         "sha256": sha,
                         "certs": sorted(certs),
                         "linked_keys": sorted(linked_keys),
-                        "status": "sold_inventory",
+                        "status": "archived_from_album",
                         "sold_at": sold_at,
                         "sale_context": sale_context,
+                        "archived_at": sold_at,
+                        "archive_path": archive_path_text,
                         "last_seen": sold_at,
                     }
                     changed += 1
         if changed:
             self._save_inventory_photo_state(state)
+        if archived_paths:
+            self._append_activity("Inventory Photo Archive", f"Archived {len(archived_paths)} sold inventory photo file(s) for {DELETED_ARCHIVE_RETENTION_DAYS} days.", {"paths": archived_paths[:20]})
         return changed
 
     def _delete_inventory_photo_files_for_removed_records(
