@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import ipaddress
 import mimetypes
@@ -1347,6 +1348,15 @@ class BridgeServer:
                 if not self._request_allowed(parsed.path):
                     self._send_json({"ok": False, "error": "local bridge access only"}, status=403)
                     return
+                if parsed.path == "/privacy":
+                    self._send_privacy_page()
+                    return
+                if parsed.path == "/ebay/oauth/callback":
+                    self._send_ebay_oauth_callback(parsed)
+                    return
+                if parsed.path == "/ebay/oauth/declined":
+                    self._send_ebay_oauth_declined(parsed)
+                    return
                 media_match = re.match(r"^/instagram/media/([^/]+)/([^/]+)(?:/[^/]*)?$", parsed.path)
                 if media_match:
                     media = state.get_instagram_media(media_match.group(1), media_match.group(2))
@@ -1595,6 +1605,118 @@ class BridgeServer:
                     "icons": [],
                 }
                 self._send_json(payload)
+
+            def _send_page(self, title: str, body_html: str, status: int = 200) -> None:
+                page = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{html.escape(title)}</title>
+  <style>
+    body {{
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #101820;
+      color: #f4f7f8;
+      line-height: 1.5;
+    }}
+    main {{
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 48px 22px;
+    }}
+    h1 {{
+      font-size: 34px;
+      margin: 0 0 16px;
+    }}
+    p, li {{
+      color: #d2dde1;
+      font-size: 17px;
+    }}
+    code {{
+      display: block;
+      overflow-wrap: anywhere;
+      padding: 14px;
+      border: 1px solid #2c4854;
+      border-radius: 6px;
+      background: #0b1217;
+      color: #8cf4d2;
+    }}
+    a {{ color: #8cf4d2; }}
+  </style>
+</head>
+<body><main>{body_html}</main></body>
+</html>"""
+                body = page.encode("utf-8")
+                self.send_response(status)
+                self.send_header("content-type", "text/html; charset=utf-8")
+                self.send_header("cache-control", "no-store")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _send_privacy_page(self) -> None:
+                self._send_page(
+                    "LUCAS Privacy",
+                    """
+<h1>LUCAS Privacy</h1>
+<p>LUCAS is a private inventory and listing management tool for the app owner's own trading card business.</p>
+<p>The app stores local inventory records, listing identifiers, listing URLs, photos, expenses, and payout records that the owner enters or imports. It does not sell personal data.</p>
+<p>eBay account access is used only when the owner explicitly connects their own seller account and asks LUCAS to create or manage listings.</p>
+<p>Questions can be handled directly by the LUCAS owner.</p>
+""",
+                )
+
+            def _send_ebay_oauth_callback(self, parsed) -> None:
+                query = parse_qs(parsed.query)
+                error = str(query.get("error", [""])[0] or "").strip()
+                error_description = str(query.get("error_description", [""])[0] or "").strip()
+                code = str(query.get("code", [""])[0] or "").strip()
+                state_value = str(query.get("state", [""])[0] or "").strip()
+                if error:
+                    self._send_page(
+                        "eBay Authorization Failed",
+                        f"""
+<h1>eBay Authorization Failed</h1>
+<p>{html.escape(error_description or error)}</p>
+<p>You can close this tab and try the eBay sign-in again.</p>
+""",
+                        status=400,
+                    )
+                    return
+                if not code:
+                    self._send_page(
+                        "Missing eBay Authorization Code",
+                        """
+<h1>Missing eBay Authorization Code</h1>
+<p>eBay reached LUCAS, but did not include an authorization code. Start the OAuth sign-in again from the eBay developer page.</p>
+""",
+                        status=400,
+                    )
+                    return
+                self._send_page(
+                    "eBay Authorization Received",
+                    f"""
+<h1>eBay Authorization Received</h1>
+<p>LUCAS received the one-time eBay authorization code. Keep this page open until LUCAS exchanges it for a refresh token.</p>
+<code>{html.escape(code)}</code>
+{f'<p>State: {html.escape(state_value)}</p>' if state_value else ''}
+""",
+                )
+
+            def _send_ebay_oauth_declined(self, parsed) -> None:
+                query = parse_qs(parsed.query)
+                reason = str(query.get("error_description", [""])[0] or query.get("error", [""])[0] or "").strip()
+                detail = f"<p>{html.escape(reason)}</p>" if reason else ""
+                self._send_page(
+                    "eBay Authorization Declined",
+                    f"""
+<h1>eBay Authorization Declined</h1>
+{detail}
+<p>No eBay access was granted. You can close this tab.</p>
+""",
+                )
 
             def _send_bytes(self, body: bytes, content_type: str, cache_control: str = "no-cache") -> None:
                 self._send_headers(content_type, len(body), cache_control=cache_control)

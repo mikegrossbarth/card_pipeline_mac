@@ -2866,6 +2866,31 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         finally:
             bridge.stop()
 
+    def test_bridge_serves_ebay_oauth_and_privacy_pages(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+
+        state = app.BridgeState()
+        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
+        bridge.start()
+        self.assertTrue(bridge.started, bridge.error)
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/privacy", timeout=5) as response:
+                body = response.read().decode("utf-8")
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("cache-control"), "no-store")
+                self.assertIn("LUCAS Privacy", body)
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/ebay/oauth/callback?code=test-code&state=test-state", timeout=5) as response:
+                body = response.read().decode("utf-8")
+                self.assertEqual(response.status, 200)
+                self.assertIn("eBay Authorization Received", body)
+                self.assertIn("test-code", body)
+                self.assertIn("test-state", body)
+        finally:
+            bridge.stop()
+
     def test_mobile_public_app_url_requires_https_and_appends_profile(self) -> None:
         self.assertEqual(
             app.mobile_public_app_url("personal", {"mobile_public_url": "https://lucas.example.com"}),
