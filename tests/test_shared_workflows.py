@@ -34,6 +34,7 @@ import bridge_server
 import cardladder_ocr
 import google_sheets_import
 import lucas_diagnostics
+import ebay_api
 from comp_engine.workbook_io import WorkbookRow
 from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, normalize_cert, parse_money as intake_parse_money, scan_to_cert, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
@@ -186,6 +187,49 @@ class SharedStateTests(unittest.TestCase):
                     os.environ["REQUESTS_CA_BUNDLE"] = old_requests_bundle
                 else:
                     os.environ.pop("REQUESTS_CA_BUNDLE", None)
+
+    def test_ebay_refresh_token_request_uses_production_oauth_endpoint(self) -> None:
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"access_token":"access-123","expires_in":7200}'
+
+        config = ebay_api.EbayConfig(
+            env="production",
+            client_id="client",
+            client_secret="secret",
+            runame="RuName",
+            scopes=("https://api.ebay.com/oauth/api_scope/sell.inventory",),
+        )
+        with patch("ebay_api.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+            result = ebay_api.refresh_access_token(config, "refresh-123")
+
+        self.assertEqual(result["access_token"], "access-123")
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, ebay_api.PRODUCTION_TOKEN_URL)
+        self.assertEqual(request.headers["Authorization"], "Basic Y2xpZW50OnNlY3JldA==")
+        body = urllib.parse.parse_qs(request.data.decode("utf-8"))
+        self.assertEqual(body["grant_type"], ["refresh_token"])
+        self.assertEqual(body["refresh_token"], ["refresh-123"])
+        self.assertEqual(body["scope"], ["https://api.ebay.com/oauth/api_scope/sell.inventory"])
+
+    def test_ebay_env_update_replaces_existing_token_without_printing_secret(self) -> None:
+        with TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text("EBAY_REFRESH_TOKEN=old\nOTHER=value\n", encoding="utf-8")
+
+            ebay_api.update_env_values(env_path, {"EBAY_REFRESH_TOKEN": "new-token", "EBAY_ACCESS_TOKEN": "access-token"})
+
+            text = env_path.read_text(encoding="utf-8")
+        self.assertIn("EBAY_REFRESH_TOKEN=new-token", text)
+        self.assertIn("EBAY_ACCESS_TOKEN=access-token", text)
+        self.assertIn("OTHER=value", text)
+        self.assertNotIn("EBAY_REFRESH_TOKEN=old", text)
 
     def test_shared_lock_serializes_concurrent_writers(self) -> None:
         with TemporaryDirectory() as tmp:
