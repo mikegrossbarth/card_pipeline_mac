@@ -19047,17 +19047,17 @@ class CardPipelineApp(tk.Tk):
                 tags=("add_review_row",),
                 values=tuple(add_values),
             )
-        if tree is self.comp_tree:
+        if tree is self.intake_tree or tree is self.comp_tree:
             tree.insert(
                 "",
                 tk.END,
                 iid=COMP_TOTAL_ROW_IID,
                 tags=("total_row",),
-                values=tuple(self._comp_purchase_total_row_values(columns, rows)),
+                values=tuple(self._value_total_row_values(columns, rows)),
             )
         self._restore_column_widths(tree)
 
-    def _comp_purchase_total_row_values(self, columns: tuple[str, ...], rows: list[WorkbookRow]) -> list[object]:
+    def _value_total_row_values(self, columns: tuple[str, ...], rows: list[WorkbookRow]) -> list[object]:
         total_fields = {
             "purchase_price": "existing_value",
             "card_ladder_value": "card_ladder_value",

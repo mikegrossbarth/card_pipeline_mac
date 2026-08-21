@@ -1,4 +1,4 @@
-const CARDLADDER_CONTENT_VERSION = "2026-07-21-visible-cert-partial-v25";
+const CARDLADDER_CONTENT_VERSION = "2026-08-15-generic-title-settle-v26";
 const COMP_SOURCE_LABELS = [
   "eBay",
   "Goldin",
