@@ -231,6 +231,42 @@ class SharedStateTests(unittest.TestCase):
         self.assertIn("OTHER=value", text)
         self.assertNotIn("EBAY_REFRESH_TOKEN=old", text)
 
+    def test_ebay_connect_state_and_token_store_are_per_account(self) -> None:
+        with TemporaryDirectory() as tmp:
+            config = ebay_api.EbayConfig(
+                env="production",
+                client_id="client",
+                client_secret="secret",
+                runame="RuName",
+                scopes=("https://api.ebay.com/oauth/api_scope/sell.inventory",),
+            )
+            state_value = ebay_api.encode_connect_state("mikey", "personal")
+            parsed_state = ebay_api.decode_connect_state(state_value)
+            self.assertEqual(parsed_state["account"], "mikey")
+            self.assertEqual(parsed_state["profile"], "personal")
+
+            url = ebay_api.build_authorization_url(config, state_value)
+            parsed = urllib.parse.urlparse(url)
+            query = urllib.parse.parse_qs(parsed.query)
+            self.assertEqual(parsed.geturl().split("?", 1)[0], ebay_api.PRODUCTION_AUTHORIZE_URL)
+            self.assertEqual(query["client_id"], ["client"])
+            self.assertEqual(query["redirect_uri"], ["RuName"])
+            self.assertEqual(query["response_type"], ["code"])
+            self.assertEqual(query["state"], [state_value])
+
+            store_path = Path(tmp) / "ebay_accounts.json"
+            ebay_api.save_ebay_account_token(
+                store_path,
+                "mikey",
+                config,
+                {"refresh_token": "refresh-secret", "access_token": "access-secret", "expires_in": 7200},
+            )
+            saved = json.loads(store_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["accounts"]["mikey"]["refresh_token"], "refresh-secret")
+            status = ebay_api.ebay_account_status(store_path)
+            self.assertEqual(status["accounts"][0]["account"], "mikey")
+            self.assertNotEqual(status["accounts"][0]["refresh_token"], "refresh-secret")
+
     def test_shared_lock_serializes_concurrent_writers(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2961,6 +2997,17 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.mobile_public_app_url("team", {"mobile_public_url": "https://team.example.com"}),
                 "https://team-env.example.com/mobile/team",
             )
+
+    def test_ebay_connect_url_uses_public_server_base_without_mobile_suffix(self) -> None:
+        dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
+        dummy.app_settings = {"mobile_public_url": "https://lucas.mikeyscards.com/mobile/personal"}
+        dummy.bridge = type("Bridge", (), {"port": 8765})()
+        dummy._is_personal_lucas = lambda: True
+
+        self.assertEqual(
+            app.CardPipelineApp._ebay_connect_url(dummy, "mikey"),
+            "https://lucas.mikeyscards.com/ebay/connect?profile=personal&account=mikey",
+        )
 
     def test_bridge_rejects_untrusted_browser_origin(self) -> None:
         self.assertFalse(bridge_server.request_origin_allowed("https://example.com", "127.0.0.1:8765"))

@@ -22,6 +22,17 @@ from cardladder_ocr import extract_cl_value_from_data_url
 from cy_automation.cy_macos import CYMacOSAdapter
 from workbook_io import WorkbookRow
 import assignment_engine
+from ebay_api import (
+    EbayConfig,
+    EbayOAuthError,
+    build_authorization_url,
+    decode_connect_state,
+    ebay_account_status,
+    ebay_token_store_path,
+    encode_connect_state,
+    exchange_authorization_code,
+    save_ebay_account_token,
+)
 
 BRIDGE_VERSION = "2026-07-21-cardladder-visible-cert-partial-v25"
 EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-07-21-visible-cert-partial-v25"
@@ -141,6 +152,7 @@ class BridgeState:
         self.mobile_payouts: Callable[[dict], dict] | None = None
         self.mobile_queue_sync: Callable[[dict], dict] | None = None
         self.mobile_inventory_photo_resolver: Callable[[str], tuple[bytes, str] | None] | None = None
+        self.ebay_token_store_path = ""
         self.instagram_media_token = uuid.uuid4().hex
         self.instagram_media_resolver: Callable[[str], tuple[bytes, str] | None] | None = None
         self.keep_note_sources: list[dict[str, str]] = []
@@ -222,7 +234,13 @@ class BridgeState:
             "profit": True,
             "expenses": True,
             "payouts": True,
+            "ebay": ebay_account_status(self.ebay_store_path()),
         }
+
+    def ebay_store_path(self) -> Path:
+        if self.ebay_token_store_path:
+            return Path(self.ebay_token_store_path).expanduser()
+        return ebay_token_store_path(self.mobile_data_root)
 
     def search_mobile_inventory(self, payload: dict) -> dict:
         if not self.mobile_auth_ok(payload):
@@ -1357,6 +1375,12 @@ class BridgeServer:
                 if parsed.path == "/ebay/oauth/declined":
                     self._send_ebay_oauth_declined(parsed)
                     return
+                if parsed.path == "/ebay/connect":
+                    self._send_ebay_connect(parsed)
+                    return
+                if parsed.path == "/ebay/status":
+                    self._send_json(ebay_account_status(state.ebay_store_path()))
+                    return
                 media_match = re.match(r"^/instagram/media/([^/]+)/([^/]+)(?:/[^/]*)?$", parsed.path)
                 if media_match:
                     media = state.get_instagram_media(media_match.group(1), media_match.group(2))
@@ -1668,6 +1692,31 @@ class BridgeServer:
 """,
                 )
 
+            def _send_ebay_connect(self, parsed) -> None:
+                query = parse_qs(parsed.query)
+                account = str(query.get("account", ["default"])[0] or "default").strip() or "default"
+                profile = str(query.get("profile", [state.mobile_profile or ""])[0] or "").strip().lower()
+                try:
+                    config = EbayConfig.from_env()
+                    connect_state = encode_connect_state(account=account, profile=profile)
+                    target = build_authorization_url(config, connect_state)
+                except EbayOAuthError as error:
+                    self._send_page(
+                        "eBay Connect Not Ready",
+                        f"""
+<h1>eBay Connect Not Ready</h1>
+<p>{html.escape(str(error))}</p>
+<p>Add the shared LUCAS eBay developer app credentials to the server environment, then try Connect eBay again.</p>
+""",
+                        status=400,
+                    )
+                    return
+                self.send_response(302)
+                self.send_header("location", target)
+                self.send_header("cache-control", "no-store")
+                self.send_header("content-length", "0")
+                self.end_headers()
+
             def _send_ebay_oauth_callback(self, parsed) -> None:
                 query = parse_qs(parsed.query)
                 error = str(query.get("error", [""])[0] or "").strip()
@@ -1693,6 +1742,33 @@ class BridgeServer:
 <p>eBay reached LUCAS, but did not include an authorization code. Start the OAuth sign-in again from the eBay developer page.</p>
 """,
                         status=400,
+                    )
+                    return
+                connect_state = decode_connect_state(state_value)
+                if connect_state:
+                    account = str(connect_state.get("account") or "default").strip() or "default"
+                    try:
+                        config = EbayConfig.from_env()
+                        token_result = exchange_authorization_code(config, code)
+                        save_ebay_account_token(state.ebay_store_path(), account, config, token_result)
+                    except EbayOAuthError as error:
+                        self._send_page(
+                            "eBay Connection Failed",
+                            f"""
+<h1>eBay Connection Failed</h1>
+<p>{html.escape(str(error))}</p>
+<p>You can close this tab and try Connect eBay again.</p>
+""",
+                            status=400,
+                        )
+                        return
+                    self._send_page(
+                        "eBay Connected",
+                        f"""
+<h1>eBay Connected</h1>
+<p>LUCAS connected eBay account <strong>{html.escape(account)}</strong>.</p>
+<p>You can close this tab and return to LUCAS.</p>
+""",
                     )
                     return
                 self._send_page(

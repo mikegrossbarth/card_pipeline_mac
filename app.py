@@ -3278,6 +3278,23 @@ class CardPipelineApp(tk.Tk):
         profile = "personal" if self._is_personal_lucas() else "team"
         return f"http://{host}:{self.bridge.port}/mobile/{profile}"
 
+    def _ebay_connect_url(self, account: str = "default") -> str:
+        profile = "personal" if self._is_personal_lucas() else "team"
+        public_url = mobile_public_app_url(profile, getattr(self, "app_settings", {}))
+        if public_url:
+            parsed = urllib.parse.urlparse(public_url)
+            base_path = re.sub(r"/mobile/(?:team|personal)/?$", "", parsed.path.rstrip("/"))
+            base = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, base_path, "", "", "")).rstrip("/")
+        else:
+            host = mobile_app_host(getattr(self, "app_settings", {}))
+            base = f"http://{host}:{self.bridge.port}"
+        return f"{base}/ebay/connect?{urllib.parse.urlencode({'profile': profile, 'account': account})}"
+
+    def open_ebay_connection_helper(self) -> None:
+        url = self._ebay_connect_url()
+        webbrowser.open(url)
+        self.events.put(("status", "Opened eBay Connect in browser. Sign in once to link this seller account to LUCAS."))
+
     def open_mobile_connection_helper(self) -> None:
         url = self._mobile_app_url()
         local_url = self._mobile_local_app_url()
@@ -12329,6 +12346,7 @@ class CardPipelineApp(tk.Tk):
             menu.add_separator()
             menu.add_command(label="Instagram Inventory Sync", command=self.open_instagram_inventory_sync)
         menu.add_separator()
+        menu.add_command(label="Connect eBay", command=self.open_ebay_connection_helper)
         menu.add_command(label="Mobile Help", command=self.open_mobile_connection_helper)
         try:
             menu.tk_popup(anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height())
