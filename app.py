@@ -9061,7 +9061,7 @@ class CardPipelineApp(tk.Tk):
         used_names: set[str] = set()
         used_paths: set[str] = set()
         used_hashes: set[str] = set()
-        used_statuses = {"linked", "missing_from_album", "archived_from_album"}
+        used_statuses = {"linked", "missing_from_album", "archived_from_album", "sold_inventory"}
         for sha, record in photos.items():
             if not isinstance(record, dict):
                 continue

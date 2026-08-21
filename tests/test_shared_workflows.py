@@ -9345,6 +9345,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _profit_record_date = app.CardPipelineApp._profit_record_date
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
@@ -9573,6 +9575,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_record_key = app.CardPipelineApp._profit_record_key
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _profit_record_date = app.CardPipelineApp._profit_record_date
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
@@ -9910,6 +9914,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
             _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _inventory_record_references_photo = app.CardPipelineApp._inventory_record_references_photo
             _inventory_photo_scan_can_skip = app.CardPipelineApp._inventory_photo_scan_can_skip
@@ -10016,6 +10021,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _profit_record_date = app.CardPipelineApp._profit_record_date
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
@@ -10051,8 +10058,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
             photo = app.INVENTORY_PHOTOS_DIR / "[20260708-0246]-Card[10]-[1]-[].jpg"
             sold_path_photo = app.INVENTORY_PHOTOS_DIR / "sold-path.jpg"
+            sold_state_photo = app.INVENTORY_PHOTOS_DIR / "already-marked-sold.jpg"
             photo.write_bytes(b"fake image")
             sold_path_photo.write_bytes(b"sold path image")
+            sold_state_photo.write_bytes(b"already marked sold image")
             dummy = PhotoPickerDummy()
             dummy.app_settings = {}
             dummy._save_inventory_ledger([])
@@ -10061,6 +10070,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 {"cert_number": "44444444", "card_title": "Sold Path Card", "sale_price": 25, "photo_paths": [str(sold_path_photo)]},
             ])
             sha = dummy._inventory_photo_file_hash(photo)
+            sold_state_sha = dummy._inventory_photo_file_hash(sold_state_photo)
             app.INVENTORY_PHOTO_STATE_PATH.write_text(
                 json.dumps(
                     {
@@ -10072,6 +10082,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                                 "certs": ["65774395"],
                                 "linked_keys": [],
                                 "status": "no_matching_inventory",
+                            },
+                            sold_state_sha: {
+                                "path": str(sold_state_photo),
+                                "filename": sold_state_photo.name,
+                                "certs": [],
+                                "linked_keys": [],
+                                "status": "sold_inventory",
                             }
                         },
                     }
