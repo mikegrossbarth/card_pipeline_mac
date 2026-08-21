@@ -347,6 +347,8 @@ def mobile_public_app_url(profile: str, settings: dict[str, object] | None = Non
 
 def is_personal_lucas_profile(settings: dict[str, object] | None = None, settings_path: Path | None = None) -> bool:
     settings = settings or {}
+    if str(settings.get("profile") or "").strip().lower() == "personal":
+        return True
     path = settings_path or SETTINGS_PATH
     path_text = str(path).lower()
     pipeline_text = str(settings.get("pipeline_root") or CARD_PIPELINE_DIR).lower()
@@ -884,7 +886,7 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_queue_sync = self.mobile_queue_sync
         self.state.mobile_inventory_photo_resolver = self.mobile_inventory_photo_response
         self.state.instagram_media_resolver = self.instagram_inventory_media_response
-        self.bridge = BridgeServer(self.state, port=mobile_bridge_port(self.app_settings, SETTINGS_PATH))
+        self.bridge = BridgeServer(self.state, port=mobile_bridge_port(self.app_settings, SETTINGS_PATH), allow_port_fallback=True)
         self.bridge.start()
         self._refresh_keep_source_registry()
         app_debug_log(f"bridge_started started={self.bridge.started} port={self.bridge.port} error={self.bridge.error}")
@@ -7099,6 +7101,7 @@ class CardPipelineApp(tk.Tk):
                 "source": normalized.get("source") or "Inventory",
                 "item_type": normalized.get("item_type") or "",
                 "item_id": normalized.get("item_id") or "",
+                "inventory_key": normalized.get("inventory_key") or "",
                 "cert_number": normalized.get("cert_number") or "",
                 "grader": normalized.get("grader") or "",
                 "card_title": normalized.get("card_title") or "",
@@ -10432,14 +10435,38 @@ class CardPipelineApp(tk.Tk):
         keys = {primary} if primary else set()
         if str(normalized.get("record_type") or "").strip().lower() == "expense":
             return keys
-        company = str(normalized.get("company") or normalized.get("best_company") or "").strip().lower()
-        source_sheet = Path(str(normalized.get("source_sheet") or "")).name.strip().lower()
-        cert = scan_to_cert(normalized.get("cert_number"))
-        item_id = str(normalized.get("item_id") or "").strip().lower()
+        inventory_key = str(normalized.get("inventory_key") or "").strip().lower()
+        if inventory_key and str(normalized.get("status") or "").strip().lower() == "sold from inventory":
+            return {f"sold-inventory-card|{inventory_key}"}
+        weak_key = CardPipelineApp._profit_weak_sold_card_key(self, normalized)
+        if weak_key:
+            keys.add(weak_key)
+        return keys
+
+    def _profit_weak_sold_card_key(self, record: dict[str, object]) -> str:
+        company = str(record.get("company") or record.get("best_company") or "").strip().lower()
+        source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+        cert = scan_to_cert(record.get("cert_number"))
+        item_id = str(record.get("item_id") or "").strip().lower()
         stable_id = cert or item_id
         if company and source_sheet and stable_id:
-            keys.add(f"sold-card|{company}|{source_sheet}|{stable_id}")
-        return keys
+            return f"sold-card|{company}|{source_sheet}|{stable_id}"
+        return ""
+
+    def _profit_recovery_duplicate_index(self, ledger: list[dict[str, object]], incoming: dict[str, object]) -> int | None:
+        if str(incoming.get("status") or "").strip().lower() == "sold from inventory":
+            return None
+        incoming_key = CardPipelineApp._profit_weak_sold_card_key(self, incoming)
+        if not incoming_key:
+            return None
+        for index, existing in enumerate(ledger):
+            if str(existing.get("record_type") or "").strip().lower() == "expense":
+                continue
+            if str(existing.get("status") or "").strip().lower() != "sold from inventory":
+                continue
+            if CardPipelineApp._profit_weak_sold_card_key(self, existing) == incoming_key:
+                return index
+        return None
 
     def _dedupe_profit_records(self, rows: list[dict[str, object]]) -> tuple[list[dict[str, object]], int]:
         kept: list[dict[str, object]] = []
@@ -11050,6 +11077,9 @@ class CardPipelineApp(tk.Tk):
                         existing_keys = set(existing_key_map)
                         added += 1
                     continue
+                recovery_index = CardPipelineApp._profit_recovery_duplicate_index(self, ledger, normalized)
+                if recovery_index is not None:
+                    continue
                 if not str(normalized.get("ledger_added_at") or "").strip():
                     normalized["ledger_added_at"] = datetime.now().isoformat(timespec="microseconds")
                 normalized["recorded_by"] = self.lucas_identity.get("display_name", "")
@@ -11079,6 +11109,11 @@ class CardPipelineApp(tk.Tk):
             return False
         if str(existing.get("status") or "") != "Sold from inventory" or str(incoming.get("status") or "") != "Sold from inventory":
             return False
+        existing_inventory_key = str(existing.get("inventory_key") or "").strip().lower()
+        incoming_inventory_key = str(incoming.get("inventory_key") or "").strip().lower()
+        if existing_inventory_key or incoming_inventory_key:
+            if not existing_inventory_key or existing_inventory_key != incoming_inventory_key:
+                return False
         existing_stable_id = scan_to_cert(existing.get("cert_number")) or str(existing.get("item_id") or "").strip().lower()
         incoming_stable_id = scan_to_cert(incoming.get("cert_number")) or str(incoming.get("item_id") or "").strip().lower()
         if not existing_stable_id or existing_stable_id != incoming_stable_id:
@@ -14351,6 +14386,7 @@ class CardPipelineApp(tk.Tk):
         ]
         paid_batches: dict[str, dict[str, object]] = {}
         open_items: list[dict[str, object]] = []
+        source_keys = {str(item.get("key") or "") for item in source_items}
         for item in source_items:
             if not item.get("paid"):
                 open_items.append(item)
@@ -14384,6 +14420,43 @@ class CardPipelineApp(tk.Tk):
                 batch[field] = int(batch.get(field) or 0) + int(item.get(field) or 0)
             for field in ("purchase_total", "estimated_payout_total", "estimated_profit", "realized_profit_total", "expense_total", "net_profit_total", "payout_balance"):
                 batch[field] = round(float(batch.get(field) or 0.0) + float(item.get(field) or 0.0), 2)
+        for key, marker in self.home_sheet_markers.items():
+            if key in source_keys:
+                continue
+            if not marker.get("manual_paid_adjustment") or not marker.get("paid"):
+                continue
+            if str(marker.get("assigned_person") or "").strip().lower() != person_key:
+                continue
+            try:
+                amount = float(marker.get("manual_paid_amount") or 0.0)
+            except (TypeError, ValueError):
+                amount = 0.0
+            if not amount:
+                continue
+            paid_at = str(marker.get("paid_at") or "Paid").strip() or "Paid"
+            batch = paid_batches.setdefault(
+                paid_at,
+                {
+                    "key": f"paid-batch:{paid_at}",
+                    "stage": "Paid",
+                    "name": f"Total paid at {paid_at}",
+                    "person": person,
+                    "paid": True,
+                    "paid_at": paid_at if paid_at != "Paid" else "",
+                    "row_count": 0,
+                    "received_count": 0,
+                    "purchase_total": 0.0,
+                    "estimated_payout_total": 0.0,
+                    "estimated_profit": 0.0,
+                    "realized_profit_total": 0.0,
+                    "expense_total": 0.0,
+                    "net_profit_total": 0.0,
+                    "payout_balance": 0.0,
+                    "payout_basis": "Total paid balance",
+                    "status": "Paid",
+                },
+            )
+            batch["payout_balance"] = round(float(batch.get("payout_balance") or 0.0) + amount, 2)
         return [
             *sorted(paid_batches.values(), key=lambda item: str(item.get("paid_at") or item.get("name") or ""), reverse=True),
             *sorted(open_items, key=lambda item: (str(item.get("stage") or ""), str(item.get("name") or "").lower())),
