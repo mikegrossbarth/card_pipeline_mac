@@ -11581,6 +11581,26 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         ):
             self.assertFalse(InstagramDummy({"pipeline_root": "/Users/test/Drive/LUCAS_PERSONAL"})._personal_instagram_sync_enabled())
 
+    def test_instagram_media_preflight_blocks_unfetchable_bridge_url(self) -> None:
+        class InstagramDummy:
+            _instagram_media_url_fetch_error = app.CardPipelineApp._instagram_media_url_fetch_error
+            _instagram_media_preflight_errors = app.CardPipelineApp._instagram_media_preflight_errors
+
+        dummy = InstagramDummy()
+        with patch.object(app.urllib.request, "urlopen", side_effect=OSError("tunnel down")):
+            errors = dummy._instagram_media_preflight_errors(
+                [
+                    {
+                        "caption": "Bridge Test Card",
+                        "photo_url": "https://dead-example.trycloudflare.com/instagram/media/token/photo/photo.jpg",
+                    }
+                ]
+            )
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("Bridge Test Card", errors[0])
+        self.assertIn("could not be fetched", errors[0])
+
     def test_instagram_bridge_media_requires_token(self) -> None:
         state = app.BridgeState()
         state.instagram_media_resolver = lambda photo_id: (b"jpg-bytes", "image/jpeg") if photo_id == "abc" else None
