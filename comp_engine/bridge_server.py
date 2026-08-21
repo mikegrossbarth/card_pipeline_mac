@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import ipaddress
 import mimetypes
@@ -21,6 +22,17 @@ from cardladder_ocr import extract_cl_value_from_data_url
 from cy_automation.cy_macos import CYMacOSAdapter
 from workbook_io import WorkbookRow
 import assignment_engine
+from ebay_api import (
+    EbayConfig,
+    EbayOAuthError,
+    build_authorization_url,
+    decode_connect_state,
+    ebay_account_status,
+    ebay_token_store_path,
+    encode_connect_state,
+    exchange_authorization_code,
+    save_ebay_account_token,
+)
 
 BRIDGE_VERSION = "2026-07-21-cardladder-visible-cert-partial-v25"
 EXPECTED_CARDLADDER_EXTENSION_VERSION = "2026-08-15-generic-title-settle-v26"
@@ -124,17 +136,23 @@ class BridgeState:
         self.updated_row_ids: set[int] = set()
         self.on_update: Callable[[], None] | None = None
         self.mobile_pin_provider: Callable[[], str] | None = None
+        self.mobile_profile = ""
+        self.mobile_data_root = ""
+        self.mobile_settings_path = ""
+        self.mobile_profile_error = ""
         self.mobile_inventory_search: Callable[[dict], dict] | None = None
         self.mobile_inventory_add: Callable[[dict], dict] | None = None
         self.mobile_inventory_mark_sold: Callable[[dict], dict] | None = None
         self.mobile_inventory_trade: Callable[[dict], dict] | None = None
         self.mobile_card_identify: Callable[[dict], dict] | None = None
+        self.mobile_photo_upload: Callable[[dict], dict] | None = None
         self.mobile_profit_summary: Callable[[dict], dict] | None = None
         self.mobile_profit_refund: Callable[[dict], dict] | None = None
         self.mobile_expense_add: Callable[[dict], dict] | None = None
         self.mobile_payouts: Callable[[dict], dict] | None = None
         self.mobile_queue_sync: Callable[[dict], dict] | None = None
         self.mobile_inventory_photo_resolver: Callable[[str], tuple[bytes, str] | None] | None = None
+        self.ebay_token_store_path = ""
         self.instagram_media_token = uuid.uuid4().hex
         self.instagram_media_resolver: Callable[[str], tuple[bytes, str] | None] | None = None
         self.keep_note_sources: list[dict[str, str]] = []
@@ -205,13 +223,24 @@ class BridgeState:
         return {
             "ok": True,
             "service": "lucas-mobile",
+            "profile": self.mobile_profile,
+            "dataRoot": self.mobile_data_root,
+            "settingsPath": self.mobile_settings_path,
+            "profileError": self.mobile_profile_error,
             "requiresPin": bool(self.mobile_pin_provider),
             "photoSearch": True,
+            "photoUpload": True,
             "inventorySold": True,
             "profit": True,
             "expenses": True,
             "payouts": True,
+            "ebay": ebay_account_status(self.ebay_store_path()),
         }
+
+    def ebay_store_path(self) -> Path:
+        if self.ebay_token_store_path:
+            return Path(self.ebay_token_store_path).expanduser()
+        return ebay_token_store_path(self.mobile_data_root)
 
     def search_mobile_inventory(self, payload: dict) -> dict:
         if not self.mobile_auth_ok(payload):
@@ -247,6 +276,13 @@ class BridgeState:
         if not self.mobile_card_identify:
             return {"ok": False, "error": "Photo card search is not available."}
         return self.mobile_card_identify(payload)
+
+    def upload_mobile_photos(self, payload: dict) -> dict:
+        if not self.mobile_auth_ok(payload):
+            return {"ok": False, "error": "Invalid mobile PIN."}
+        if not self.mobile_photo_upload:
+            return {"ok": False, "error": "Photo upload is not available."}
+        return self.mobile_photo_upload(payload)
 
     def get_mobile_profit_summary(self, payload: dict) -> dict:
         if not self.mobile_auth_ok(payload):
@@ -1303,6 +1339,22 @@ class BridgeServer:
         state = self.state
 
         class Handler(BaseHTTPRequestHandler):
+            def _profile_mismatch(self, requested_profile: str) -> bool:
+                expected = str(state.mobile_profile or "").strip().lower()
+                return bool(expected and requested_profile and requested_profile != expected)
+
+            def _send_profile_mismatch(self, requested_profile: str) -> None:
+                expected = str(state.mobile_profile or "").strip().lower()
+                self._send_json(
+                    {
+                        "ok": False,
+                        "error": f"This LUCAS server is running {expected or 'unknown'} mode, not {requested_profile}. Restart the matching mobile server/tunnel.",
+                        "profile": expected,
+                        "requestedProfile": requested_profile,
+                    },
+                    status=409,
+                )
+
             def do_OPTIONS(self):
                 if not self._origin_allowed():
                     self._send_json({"ok": False, "error": "origin not allowed"}, status=403)
@@ -1313,6 +1365,21 @@ class BridgeServer:
                 parsed = urlparse(self.path)
                 if not self._request_allowed(parsed.path):
                     self._send_json({"ok": False, "error": "local bridge access only"}, status=403)
+                    return
+                if parsed.path == "/privacy":
+                    self._send_privacy_page()
+                    return
+                if parsed.path == "/ebay/oauth/callback":
+                    self._send_ebay_oauth_callback(parsed)
+                    return
+                if parsed.path == "/ebay/oauth/declined":
+                    self._send_ebay_oauth_declined(parsed)
+                    return
+                if parsed.path == "/ebay/connect":
+                    self._send_ebay_connect(parsed)
+                    return
+                if parsed.path == "/ebay/status":
+                    self._send_json(ebay_account_status(state.ebay_store_path()))
                     return
                 media_match = re.match(r"^/instagram/media/([^/]+)/([^/]+)(?:/[^/]*)?$", parsed.path)
                 if media_match:
@@ -1335,6 +1402,9 @@ class BridgeServer:
                     return
                 mobile_profile = self._mobile_profile(parsed.path)
                 if mobile_profile:
+                    if self._profile_mismatch(mobile_profile):
+                        self._send_profile_mismatch(mobile_profile)
+                        return
                     profile_prefix = f"/mobile/{mobile_profile}"
                     if parsed.path in {profile_prefix, f"{profile_prefix}/"}:
                         self._send_mobile_index(mobile_profile)
@@ -1355,7 +1425,7 @@ class BridgeServer:
                     self._send_static(MOBILE_APP_DIR / relative)
                     return
                 if parsed.path in {"/mobile", "/mobile/"}:
-                    self._send_static(MOBILE_APP_DIR / "index.html")
+                    self._redirect_to_mobile_profile()
                     return
                 if parsed.path.startswith("/mobile/"):
                     relative = parsed.path.removeprefix("/mobile/") or "index.html"
@@ -1391,7 +1461,7 @@ class BridgeServer:
                 if media_match:
                     media = state.get_instagram_media(media_match.group(1), media_match.group(2))
                     if media is None:
-                        self._send_headers("application/json", 0, status=404)
+                        self._send_headers("application/json", 0, status=404, cache_control="no-store")
                         return
                     body, content_type = media
                     self._send_headers(content_type, len(body), cache_control="public, max-age=3600")
@@ -1414,6 +1484,10 @@ class BridgeServer:
                     self._send_json({"ok": False, "error": "local bridge access only"}, status=403)
                     return
                 payload = self._read_json()
+                mobile_profile = self._mobile_profile(parsed.path)
+                if mobile_profile and self._profile_mismatch(mobile_profile):
+                    self._send_profile_mismatch(mobile_profile)
+                    return
                 mobile_api_path = self._mobile_api_path(parsed.path)
                 if mobile_api_path.startswith("/mobile/api/inventory/search"):
                     self._send_json(state.search_mobile_inventory(payload))
@@ -1429,6 +1503,9 @@ class BridgeServer:
                     return
                 if mobile_api_path.startswith("/mobile/api/card/identify"):
                     self._send_json(state.identify_mobile_card(payload))
+                    return
+                if mobile_api_path.startswith("/mobile/api/photos/upload"):
+                    self._send_json(state.upload_mobile_photos(payload))
                     return
                 if mobile_api_path.startswith("/mobile/api/profit/summary"):
                     self._send_json(state.get_mobile_profit_summary(payload))
@@ -1477,6 +1554,7 @@ class BridgeServer:
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(status)
                 self.send_header("content-type", "application/json")
+                self.send_header("cache-control", "no-store")
                 origin = self.headers.get("origin", "")
                 if origin and self._origin_allowed():
                     self.send_header("access-control-allow-origin", origin)
@@ -1520,10 +1598,22 @@ class BridgeServer:
                     return
                 html = html.replace('content="LUCAS"', f'content="{label}"')
                 html = html.replace("<title>LUCAS Mobile</title>", f"<title>{label} Mobile</title>")
+                html = html.replace("<h1>Inventory</h1>", f"<h1>{label}</h1>")
                 html = html.replace('href="/mobile/manifest.webmanifest"', f'href="{base}/manifest.webmanifest"')
                 html = html.replace('href="/mobile/styles.css"', f'href="{base}/styles.css"')
                 html = html.replace('src="/mobile/app.js"', f'src="{base}/app.js"')
-                self._send_bytes(html.encode("utf-8"), "text/html; charset=utf-8")
+                self._send_bytes(html.encode("utf-8"), "text/html; charset=utf-8", cache_control="no-store")
+
+            def _redirect_to_mobile_profile(self) -> None:
+                profile = str(state.mobile_profile or "").strip().lower()
+                if profile in {"team", "personal"}:
+                    self.send_response(302)
+                    self.send_header("location", f"/mobile/{profile}")
+                    self.send_header("cache-control", "no-store")
+                    self.send_header("content-length", "0")
+                    self.end_headers()
+                    return
+                self._send_static(MOBILE_APP_DIR / "index.html")
 
             def _send_mobile_manifest(self, profile: str) -> None:
                 label = MOBILE_PROFILE_LABELS.get(profile, "LUCAS")
@@ -1539,6 +1629,170 @@ class BridgeServer:
                     "icons": [],
                 }
                 self._send_json(payload)
+
+            def _send_page(self, title: str, body_html: str, status: int = 200) -> None:
+                page = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{html.escape(title)}</title>
+  <style>
+    body {{
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #101820;
+      color: #f4f7f8;
+      line-height: 1.5;
+    }}
+    main {{
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 48px 22px;
+    }}
+    h1 {{
+      font-size: 34px;
+      margin: 0 0 16px;
+    }}
+    p, li {{
+      color: #d2dde1;
+      font-size: 17px;
+    }}
+    code {{
+      display: block;
+      overflow-wrap: anywhere;
+      padding: 14px;
+      border: 1px solid #2c4854;
+      border-radius: 6px;
+      background: #0b1217;
+      color: #8cf4d2;
+    }}
+    a {{ color: #8cf4d2; }}
+  </style>
+</head>
+<body><main>{body_html}</main></body>
+</html>"""
+                body = page.encode("utf-8")
+                self.send_response(status)
+                self.send_header("content-type", "text/html; charset=utf-8")
+                self.send_header("cache-control", "no-store")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _send_privacy_page(self) -> None:
+                self._send_page(
+                    "LUCAS Privacy",
+                    """
+<h1>LUCAS Privacy</h1>
+<p>LUCAS is a private inventory and listing management tool for the app owner's own trading card business.</p>
+<p>The app stores local inventory records, listing identifiers, listing URLs, photos, expenses, and payout records that the owner enters or imports. It does not sell personal data.</p>
+<p>eBay account access is used only when the owner explicitly connects their own seller account and asks LUCAS to create or manage listings.</p>
+<p>Questions can be handled directly by the LUCAS owner.</p>
+""",
+                )
+
+            def _send_ebay_connect(self, parsed) -> None:
+                query = parse_qs(parsed.query)
+                account = str(query.get("account", ["default"])[0] or "default").strip() or "default"
+                profile = str(query.get("profile", [state.mobile_profile or ""])[0] or "").strip().lower()
+                try:
+                    config = EbayConfig.from_env()
+                    connect_state = encode_connect_state(account=account, profile=profile)
+                    target = build_authorization_url(config, connect_state)
+                except EbayOAuthError as error:
+                    self._send_page(
+                        "eBay Connect Not Ready",
+                        f"""
+<h1>eBay Connect Not Ready</h1>
+<p>{html.escape(str(error))}</p>
+<p>Add the shared LUCAS eBay developer app credentials to the server environment, then try Connect eBay again.</p>
+""",
+                        status=400,
+                    )
+                    return
+                self.send_response(302)
+                self.send_header("location", target)
+                self.send_header("cache-control", "no-store")
+                self.send_header("content-length", "0")
+                self.end_headers()
+
+            def _send_ebay_oauth_callback(self, parsed) -> None:
+                query = parse_qs(parsed.query)
+                error = str(query.get("error", [""])[0] or "").strip()
+                error_description = str(query.get("error_description", [""])[0] or "").strip()
+                code = str(query.get("code", [""])[0] or "").strip()
+                state_value = str(query.get("state", [""])[0] or "").strip()
+                if error:
+                    self._send_page(
+                        "eBay Authorization Failed",
+                        f"""
+<h1>eBay Authorization Failed</h1>
+<p>{html.escape(error_description or error)}</p>
+<p>You can close this tab and try the eBay sign-in again.</p>
+""",
+                        status=400,
+                    )
+                    return
+                if not code:
+                    self._send_page(
+                        "Missing eBay Authorization Code",
+                        """
+<h1>Missing eBay Authorization Code</h1>
+<p>eBay reached LUCAS, but did not include an authorization code. Start the OAuth sign-in again from the eBay developer page.</p>
+""",
+                        status=400,
+                    )
+                    return
+                connect_state = decode_connect_state(state_value)
+                if connect_state:
+                    account = str(connect_state.get("account") or "default").strip() or "default"
+                    try:
+                        config = EbayConfig.from_env()
+                        token_result = exchange_authorization_code(config, code)
+                        save_ebay_account_token(state.ebay_store_path(), account, config, token_result)
+                    except EbayOAuthError as error:
+                        self._send_page(
+                            "eBay Connection Failed",
+                            f"""
+<h1>eBay Connection Failed</h1>
+<p>{html.escape(str(error))}</p>
+<p>You can close this tab and try Connect eBay again.</p>
+""",
+                            status=400,
+                        )
+                        return
+                    self._send_page(
+                        "eBay Connected",
+                        f"""
+<h1>eBay Connected</h1>
+<p>LUCAS connected eBay account <strong>{html.escape(account)}</strong>.</p>
+<p>You can close this tab and return to LUCAS.</p>
+""",
+                    )
+                    return
+                self._send_page(
+                    "eBay Authorization Received",
+                    f"""
+<h1>eBay Authorization Received</h1>
+<p>LUCAS received the one-time eBay authorization code. Keep this page open until LUCAS exchanges it for a refresh token.</p>
+<code>{html.escape(code)}</code>
+{f'<p>State: {html.escape(state_value)}</p>' if state_value else ''}
+""",
+                )
+
+            def _send_ebay_oauth_declined(self, parsed) -> None:
+                query = parse_qs(parsed.query)
+                reason = str(query.get("error_description", [""])[0] or query.get("error", [""])[0] or "").strip()
+                detail = f"<p>{html.escape(reason)}</p>" if reason else ""
+                self._send_page(
+                    "eBay Authorization Declined",
+                    f"""
+<h1>eBay Authorization Declined</h1>
+{detail}
+<p>No eBay access was granted. You can close this tab.</p>
+""",
+                )
 
             def _send_bytes(self, body: bytes, content_type: str, cache_control: str = "no-cache") -> None:
                 self._send_headers(content_type, len(body), cache_control=cache_control)
@@ -1563,7 +1817,8 @@ class BridgeServer:
                     self._send_json({"ok": False, "error": "not found"}, status=404)
                     return
                 content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
-                self._send_bytes(body, content_type)
+                cache_control = "no-store" if resolved.parent == MOBILE_APP_DIR else "no-cache"
+                self._send_bytes(body, content_type, cache_control=cache_control)
 
             def log_message(self, format, *args):
                 return

@@ -370,6 +370,15 @@ def mobile_bridge_port(settings: dict[str, object] | None = None, settings_path:
     return 8766 if is_personal_lucas_profile(settings, settings_path) else 8765
 
 
+def mobile_profile_data_root_error(profile: str, data_root: Path, settings_path: Path) -> str:
+    profile = str(profile or "").strip().lower()
+    root_text = str(data_root or "").strip().lower()
+    settings_text = str(settings_path or "").strip()
+    if profile == "personal" and not any(marker in root_text for marker in ("lucas_personal", "personal lucas")):
+        return f"Personal mobile is using the wrong data root: {data_root}. Fix {settings_text} so pipeline_root points to LUCAS_PERSONAL."
+    return ""
+
+
 def make_photo_ocr_client(api_key: str):
     if genai is None:
         return None
@@ -860,6 +869,10 @@ class CardPipelineApp(tk.Tk):
         self.app_settings = load_app_settings()
         self.mobile_pin = ensure_mobile_pin(self.app_settings)
         self.state = BridgeState()
+        self.state.mobile_profile = "personal" if is_personal_lucas_profile(self.app_settings, SETTINGS_PATH) else "team"
+        self.state.mobile_data_root = str(CARD_PIPELINE_DIR)
+        self.state.mobile_settings_path = str(SETTINGS_PATH)
+        self.state.mobile_profile_error = mobile_profile_data_root_error(self.state.mobile_profile, CARD_PIPELINE_DIR, SETTINGS_PATH)
         self.state.on_update = lambda: self.events.put("comp_refresh")
         self.state.mobile_pin_provider = lambda: self.mobile_pin
         self.state.mobile_inventory_search = self.mobile_inventory_search
@@ -867,6 +880,7 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_inventory_mark_sold = self.mobile_inventory_mark_sold
         self.state.mobile_inventory_trade = self.mobile_inventory_trade
         self.state.mobile_card_identify = self.mobile_card_identify
+        self.state.mobile_photo_upload = self.mobile_photo_upload
         self.state.mobile_profit_summary = self.mobile_profit_summary
         self.state.mobile_profit_refund = self.mobile_profit_refund
         self.state.mobile_expense_add = self.mobile_expense_add
@@ -2860,6 +2874,12 @@ class CardPipelineApp(tk.Tk):
             return set()
         return self._inventory_identity_keys(record)
 
+    def _source_specific_inventory_identity_keys(self, record: dict[str, object], source_field: str = "source_sheet") -> set[str]:
+        source_sheet = Path(str(record.get(source_field) or "")).name.strip().lower()
+        if not source_sheet:
+            return set()
+        return {f"{key}|source:{source_sheet}" for key in self._inventory_identity_keys(record)}
+
     def _active_inventory_rows_excluding_sold_profit(
         self,
         rows: list[dict[str, object]],
@@ -2867,17 +2887,27 @@ class CardPipelineApp(tk.Tk):
         profit_loader = getattr(self, "_load_profit_ledger", None)
         if not callable(profit_loader):
             return rows, []
-        sold_keys: set[str] = set()
+        sold_global_keys: set[str] = set()
+        sold_source_keys: set[str] = set()
         for raw_record in profit_loader():
-            if isinstance(raw_record, dict):
-                sold_keys.update(self._sold_inventory_identity_keys(raw_record))
-        if not sold_keys:
+            if not isinstance(raw_record, dict):
+                continue
+            keys = self._sold_inventory_identity_keys(raw_record)
+            if not keys:
+                continue
+            original_source_keys = self._source_specific_inventory_identity_keys(raw_record, "original_source_sheet")
+            if original_source_keys:
+                sold_source_keys.update(original_source_keys)
+            else:
+                sold_global_keys.update(keys)
+        if not sold_global_keys and not sold_source_keys:
             return rows, []
         kept: list[dict[str, object]] = []
         removed: list[dict[str, object]] = []
         for record in rows:
             keys = self._inventory_identity_keys(record)
-            if keys and keys & sold_keys:
+            source_keys = self._source_specific_inventory_identity_keys(record)
+            if keys and (keys & sold_global_keys or source_keys & sold_source_keys):
                 removed.append(record)
             else:
                 kept.append(record)
@@ -3248,6 +3278,23 @@ class CardPipelineApp(tk.Tk):
         profile = "personal" if self._is_personal_lucas() else "team"
         return f"http://{host}:{self.bridge.port}/mobile/{profile}"
 
+    def _ebay_connect_url(self, account: str = "default") -> str:
+        profile = "personal" if self._is_personal_lucas() else "team"
+        public_url = mobile_public_app_url(profile, getattr(self, "app_settings", {}))
+        if public_url:
+            parsed = urllib.parse.urlparse(public_url)
+            base_path = re.sub(r"/mobile/(?:team|personal)/?$", "", parsed.path.rstrip("/"))
+            base = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, base_path, "", "", "")).rstrip("/")
+        else:
+            host = mobile_app_host(getattr(self, "app_settings", {}))
+            base = f"http://{host}:{self.bridge.port}"
+        return f"{base}/ebay/connect?{urllib.parse.urlencode({'profile': profile, 'account': account})}"
+
+    def open_ebay_connection_helper(self) -> None:
+        url = self._ebay_connect_url()
+        webbrowser.open(url)
+        self.events.put(("status", "Opened eBay Connect in browser. Sign in once to link this seller account to LUCAS."))
+
     def open_mobile_connection_helper(self) -> None:
         url = self._mobile_app_url()
         local_url = self._mobile_local_app_url()
@@ -3397,6 +3444,19 @@ class CardPipelineApp(tk.Tk):
         return items
 
     def mobile_inventory_search(self, payload: dict) -> dict:
+        profile = "personal" if self._is_personal_lucas() else "team"
+        profile_error = mobile_profile_data_root_error(profile, CARD_PIPELINE_DIR, SETTINGS_PATH)
+        if profile_error:
+            return {
+                "ok": False,
+                "error": profile_error,
+                "profile": profile,
+                "dataRoot": str(CARD_PIPELINE_DIR),
+                "settingsPath": str(SETTINGS_PATH),
+                "count": 0,
+                "items": [],
+                "people": [],
+            }
         query = str(payload.get("query") or payload.get("q") or "").strip().lower()
         cert_query = scan_to_cert(query)
         person = str(payload.get("person") or "").strip().lower()
@@ -3434,7 +3494,15 @@ class CardPipelineApp(tk.Tk):
             matched.append((record, index))
         matched.sort(key=lambda item: self._mobile_inventory_added_sort_key(item[0], item[1]), reverse=True)
         results = [self._mobile_inventory_json_record(record) for record, _index in matched[:limit]]
-        return {"ok": True, "count": len(results), "items": results, "people": self._known_people()}
+        return {
+            "ok": True,
+            "profile": profile,
+            "dataRoot": str(CARD_PIPELINE_DIR),
+            "settingsPath": str(SETTINGS_PATH),
+            "count": len(results),
+            "items": results,
+            "people": self._known_people(),
+        }
 
     def _mobile_inventory_sport_filters(self, payload: dict) -> set[str]:
         raw = payload.get("sport") or payload.get("category") or ""
@@ -4481,6 +4549,109 @@ class CardPipelineApp(tk.Tk):
             "mode": mode,
         }
 
+    def _mobile_photo_upload_images(self, payload: dict) -> list[dict[str, object]]:
+        images = payload.get("images")
+        if isinstance(images, list):
+            return [item for item in images if isinstance(item, dict)]
+        image = str(payload.get("image") or "").strip()
+        if not image:
+            return []
+        return [{"image": image, "name": payload.get("name") or payload.get("filename") or "mobile-photo.jpg"}]
+
+    def _mobile_photo_upload_owner(self, payload: dict) -> tuple[str, str]:
+        profile = "personal" if self._is_personal_lucas() else "team"
+        person = str(payload.get("assigned_person") or payload.get("person") or "").strip()
+        if profile == "personal" and not person:
+            person = self._personal_default_person()
+        elif profile == "team":
+            person = self._canonical_person_choice(person) or person
+        return profile, person or "Unassigned"
+
+    def _mobile_photo_upload_folder(self, payload: dict) -> Path:
+        profile, person = self._mobile_photo_upload_owner(payload)
+        person_slug = re.sub(r"[^a-z0-9]+", "-", safe_filename(person).strip().lower()).strip("-") or "unassigned"
+        return INVENTORY_PHOTOS_DIR / "mobile" / profile / person_slug / datetime.now().strftime("%Y") / datetime.now().strftime("%m")
+
+    def _record_mobile_photo_upload_state(self, photo_paths: list[Path], linked_keys: set[str], status: str) -> None:
+        state = self._load_inventory_photo_state()
+        photos = state.setdefault("photos", {})
+        for path in photo_paths:
+            try:
+                stat = path.stat()
+                sha = self._inventory_photo_file_hash(path)
+                relative = path.relative_to(INVENTORY_PHOTOS_DIR).as_posix()
+            except Exception:
+                continue
+            photos[sha] = {
+                "path": str(path),
+                "relative_path": relative,
+                "filename": path.name,
+                "size": stat.st_size,
+                "modified": int(stat.st_mtime),
+                "sha256": sha,
+                "cards": [],
+                "certs": [],
+                "linked_keys": sorted(linked_keys),
+                "status": status,
+                "source": "mobile_upload",
+                "last_seen": datetime.now().isoformat(timespec="seconds"),
+            }
+        self._save_inventory_photo_state(state)
+
+    def mobile_photo_upload(self, payload: dict) -> dict:
+        upload_items = self._mobile_photo_upload_images(payload)
+        if not upload_items:
+            return {"ok": False, "error": "Take or choose at least one photo."}
+        if len(upload_items) > 12:
+            return {"ok": False, "error": "Upload 12 photos or fewer at a time."}
+        destination_folder = self._mobile_photo_upload_folder(payload)
+        destination_folder.mkdir(parents=True, exist_ok=True)
+        saved_paths: list[Path] = []
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        client_id = re.sub(r"[^A-Za-z0-9_-]+", "-", str(payload.get("client_id") or payload.get("clientId") or "mobile")).strip("-")[:40] or "mobile"
+        for index, item in enumerate(upload_items, start=1):
+            image = str(item.get("image") or "").strip()
+            if not image:
+                continue
+            try:
+                mime_type, _image_b64, image_bytes = self._mobile_image_parts(image)
+            except Exception as error:
+                return {"ok": False, "error": f"Could not read photo {index}: {error}"}
+            if not str(mime_type or "").startswith("image/"):
+                return {"ok": False, "error": f"Photo {index} is not an image."}
+            if len(image_bytes) > 12 * 1024 * 1024:
+                return {"ok": False, "error": f"Photo {index} is too large. Retake it closer or choose a smaller image."}
+            original = str(item.get("name") or item.get("filename") or f"photo-{index}.jpg")
+            safe_stem = safe_filename(Path(original).stem or f"photo-{index}")[:90] or f"photo-{index}"
+            extension = ".png" if "png" in mime_type.lower() else ".webp" if "webp" in mime_type.lower() else ".jpg"
+            path = destination_folder / f"[{timestamp}]-Mobile-{client_id}-[{index}]-[{safe_stem}]{extension}"
+            suffix = 1
+            while path.exists():
+                suffix += 1
+                path = destination_folder / f"[{timestamp}]-Mobile-{client_id}-[{index}-{suffix}]-[{safe_stem}]{extension}"
+            temp_path = path.with_name(f".{path.name}.tmp")
+            try:
+                temp_path.write_bytes(image_bytes)
+                temp_path.replace(path)
+            except OSError as error:
+                return {"ok": False, "error": f"Could not save photo {index}: {error}"}
+            saved_paths.append(path)
+        if not saved_paths:
+            return {"ok": False, "error": "No usable photos were uploaded."}
+        self._record_mobile_photo_upload_state(saved_paths, set(), "pending_scan")
+        status = "saved"
+        message = f"Uploaded {len(saved_paths)} photo(s) to inventory photos. Desktop photo scan will link them."
+        return {
+            "ok": True,
+            "saved": len(saved_paths),
+            "linked": 0,
+            "status": status,
+            "scan_started": False,
+            "folder": str(destination_folder),
+            "files": [path.name for path in saved_paths],
+            "message": message,
+        }
+
     def _retarget_inventory_rows_for_source(self, source_sheet_name: str, assigned_person: str) -> int:
         source_name = Path(str(source_sheet_name or "")).name.strip().lower()
         if not source_name:
@@ -4594,13 +4765,9 @@ class CardPipelineApp(tk.Tk):
                 source_sheet = Path(str(source_value or "")).name.strip().lower()
                 if source_sheet and cert:
                     keys.add((source_sheet, cert))
-                if cert:
-                    keys.add(("", cert))
                 item_id = str(record.get("item_id") or "").strip().lower()
                 if source_sheet and item_id:
                     keys.add((source_sheet, f"item:{item_id}"))
-                if item_id:
-                    keys.add(("", f"item:{item_id}"))
                 title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
                 if source_sheet and not cert and title_identity:
                     keys.add((source_sheet, f"title:{title_identity}"))
@@ -4626,6 +4793,12 @@ class CardPipelineApp(tk.Tk):
         company_keys = company_keys if company_keys is not None else self._company_sheet_source_cert_keys()
         accounted_loader = getattr(self, "_received_inventory_accounted_source_cert_keys", None)
         accounted_keys = accounted_keys if accounted_keys is not None else accounted_loader() if callable(accounted_loader) else set()
+        prior_profit_titles_by_cert: dict[str, str] = {}
+        for profit_record in [self._normalize_profit_record(row) for row in self._load_profit_ledger()]:
+            profit_cert = scan_to_cert(profit_record.get("cert_number"))
+            profit_title = str(profit_record.get("card_title") or "").strip()
+            if profit_cert and profit_title and profit_cert not in prior_profit_titles_by_cert:
+                prior_profit_titles_by_cert[profit_cert] = profit_title
         candidates: list[dict[str, object]] = []
         for row in rows:
             cert = scan_to_cert(row.get("cert_number"))
@@ -4644,7 +4817,9 @@ class CardPipelineApp(tk.Tk):
                 continue
             if ("", row_identity) in accounted_keys:
                 continue
-            card_title = str(row.get("card_title") or "")
+            card_title = str(row.get("card_title") or "").strip()
+            if not card_title and cert:
+                card_title = prior_profit_titles_by_cert.get(cert, "")
             title_identity = CardPipelineApp._received_inventory_title_identity(self, card_title)
             if not cert and title_identity and (path.name.lower(), f"title:{title_identity}") in accounted_keys:
                 continue
@@ -5015,6 +5190,10 @@ class CardPipelineApp(tk.Tk):
         return str(person or "").strip() or "Unassigned"
 
     def _personal_instagram_sync_enabled(self) -> bool:
+        if not self._is_personal_lucas():
+            return False
+        if mobile_profile_data_root_error("personal", CARD_PIPELINE_DIR, SETTINGS_PATH):
+            return False
         return str(os.environ.get("LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC") or "").strip().lower() in {"1", "true", "yes", "on"}
 
     def _instagram_background_tunnel_enabled(self) -> bool:
@@ -6527,6 +6706,23 @@ class CardPipelineApp(tk.Tk):
                     photo_paths = item.get("photo_paths") if isinstance(item.get("photo_paths"), list) else []
                     if not photo_paths:
                         photo_paths = [item.get("photo_path")]
+                    current_photo_paths: list[Path] = []
+                    current_photo_path_source = getattr(self, "_inventory_photo_paths_for_record", None)
+                    if callable(current_photo_path_source):
+                        current_photo_paths = instagram_inventory_photo_order(current_photo_path_source(current_record))
+                    if current_photo_paths and hasattr(self, "_instagram_inventory_photo_is_postable"):
+                        current_photo_paths = [
+                            path for path in current_photo_paths if self._instagram_inventory_photo_is_postable(path)
+                        ]
+                    if current_photo_paths:
+                        refreshed_urls = [
+                            self._instagram_inventory_photo_url(path, plan["config"])
+                            for path in current_photo_paths[:10]
+                        ]
+                        refreshed_urls = instagram_ready_photo_urls({"photo_urls": refreshed_urls})
+                        if refreshed_urls:
+                            photo_paths = current_photo_paths[: len(refreshed_urls)]
+                            photo_urls = refreshed_urls
                     photo_ids = [
                         self._instagram_inventory_photo_id(Path(str(path or "")))
                         for path in photo_paths[: len(photo_urls)]
@@ -6655,9 +6851,9 @@ class CardPipelineApp(tk.Tk):
         kept = [record for record in ledger if str(record.get("inventory_key") or "") not in moved_keys]
         if len(kept) != len(ledger):
             self._save_inventory_ledger(kept)
-            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
-            if callable(cleanup):
-                cleanup(removed, kept)
+            mark_sold_photos = getattr(self, "_mark_inventory_photo_files_for_sold_records", None)
+            if callable(mark_sold_photos):
+                mark_sold_photos(removed, "company_sheet_move")
 
     def _safe_inventory_photo_path(self, path_value: object) -> Path | None:
         safe_candidates = getattr(self, "_inventory_photo_safe_candidates", None)
@@ -6784,6 +6980,105 @@ class CardPipelineApp(tk.Tk):
             except OSError:
                 pass
         return purged
+
+    def _mark_inventory_photo_files_for_sold_records(
+        self,
+        sold_records: list[dict[str, object]],
+        sale_context: str = "inventory_sold",
+    ) -> int:
+        if not sold_records:
+            return 0
+        safe_candidates = getattr(self, "_inventory_photo_safe_candidates", None)
+
+        def photo_safe_candidates(value: object) -> list[Path]:
+            if callable(safe_candidates):
+                return safe_candidates(value)
+            path = self._safe_inventory_photo_path(value)
+            return [path] if path else []
+
+        state = self._load_inventory_photo_state()
+        photos = state.setdefault("photos", {})
+        sold_at = datetime.now().isoformat(timespec="seconds")
+        changed = 0
+        archived_paths: list[str] = []
+        remaining_records = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        still_used: set[str] = set()
+        for remaining in remaining_records:
+            for remaining_path_value in remaining.get("photo_paths") or []:
+                still_used.add(str(remaining_path_value))
+                for candidate in photo_safe_candidates(remaining_path_value):
+                    still_used.add(str(candidate))
+                    try:
+                        still_used.add(str(candidate.resolve()))
+                    except Exception:
+                        pass
+        for record in sold_records:
+            inventory_key = str(record.get("inventory_key") or "").strip()
+            cert = scan_to_cert(record.get("cert_number"))
+            for path_value in record.get("photo_paths") or []:
+                for path in photo_safe_candidates(path_value):
+                    if not path.exists() or not path.is_file():
+                        continue
+                    try:
+                        resolved_path = str(path.resolve())
+                    except Exception:
+                        resolved_path = str(path)
+                    if str(path_value) in still_used or str(path) in still_used or resolved_path in still_used:
+                        continue
+                    try:
+                        stat = path.stat()
+                        sha = self._inventory_photo_file_hash(path)
+                    except Exception:
+                        continue
+                    archive_path_text = ""
+                    try:
+                        archive_path = self._archive_deleted_file(
+                            path,
+                            DELETED_INVENTORY_PHOTOS_DIR,
+                            "inventory_photo_sold",
+                            {
+                                "inventory_key": inventory_key,
+                                "cert_number": cert,
+                                "card_title": record.get("card_title") or "",
+                                "source_sheet": record.get("source_sheet") or "",
+                                "sale_context": sale_context,
+                            },
+                        )
+                        archive_path_text = str(archive_path)
+                        archived_paths.append(archive_path_text)
+                    except Exception:
+                        continue
+                    existing = photos.get(sha) if isinstance(photos.get(sha), dict) else {}
+                    linked_keys = {str(key).strip() for key in (existing.get("linked_keys") or []) if str(key).strip()}
+                    if inventory_key:
+                        linked_keys.add(inventory_key)
+                    certs = {scan_to_cert(value) for value in (existing.get("certs") or []) if scan_to_cert(value)}
+                    if cert:
+                        certs.add(cert)
+                    relative = self._inventory_photo_storage_value(path)
+                    photos[sha] = {
+                        **existing,
+                        "path": str(path),
+                        "relative_path": relative,
+                        "filename": path.name,
+                        "size": stat.st_size,
+                        "modified": int(stat.st_mtime),
+                        "sha256": sha,
+                        "certs": sorted(certs),
+                        "linked_keys": sorted(linked_keys),
+                        "status": "archived_from_album",
+                        "sold_at": sold_at,
+                        "sale_context": sale_context,
+                        "archived_at": sold_at,
+                        "archive_path": archive_path_text,
+                        "last_seen": sold_at,
+                    }
+                    changed += 1
+        if changed:
+            self._save_inventory_photo_state(state)
+        if archived_paths:
+            self._append_activity("Inventory Photo Archive", f"Archived {len(archived_paths)} sold inventory photo file(s) for {DELETED_ARCHIVE_RETENTION_DAYS} days.", {"paths": archived_paths[:20]})
+        return changed
 
     def _delete_inventory_photo_files_for_removed_records(
         self,
@@ -6981,9 +7276,9 @@ class CardPipelineApp(tk.Tk):
         changed = len(ledger) - len(kept)
         if changed:
             self._save_inventory_ledger(kept)
-            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
-            if callable(cleanup):
-                cleanup(removed, kept)
+            mark_sold_photos = getattr(self, "_mark_inventory_photo_files_for_sold_records", None)
+            if callable(mark_sold_photos):
+                mark_sold_photos(removed, "inventory_sold")
         return changed
 
     def _general_sold_sheet_name(self, person: str) -> str:
@@ -12051,6 +12346,7 @@ class CardPipelineApp(tk.Tk):
             menu.add_separator()
             menu.add_command(label="Instagram Inventory Sync", command=self.open_instagram_inventory_sync)
         menu.add_separator()
+        menu.add_command(label="Connect eBay", command=self.open_ebay_connection_helper)
         menu.add_command(label="Mobile Help", command=self.open_mobile_connection_helper)
         try:
             menu.tk_popup(anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height())
@@ -16133,6 +16429,8 @@ class CardPipelineApp(tk.Tk):
             return False
         status = str(existing.get("status") or "").strip()
         linked_keys = [str(key).strip() for key in (existing.get("linked_keys") or []) if str(key).strip()]
+        if status == "sold_inventory":
+            return True
         if status not in {"linked", "missing_from_album", "archived_from_album"} or not linked_keys:
             return False
         for key in linked_keys:
@@ -16998,6 +17296,36 @@ class CardPipelineApp(tk.Tk):
         normalized_ref = (row_ref[0].strip().lower(), row_ref[1].strip().lower(), int(row_ref[2]))
         return normalized_ref in marked_row_refs
 
+    def _hydrate_marked_receive_rows_from_cert_refs(
+        self,
+        rows: list[WorkbookRow],
+        row_ref_certs: dict[tuple[str, str, int], str],
+    ) -> int:
+        if not rows or not row_ref_certs:
+            return 0
+        normalized_certs = {
+            (str(sheet_file).strip().lower(), str(sheet_name).strip().lower(), int(row_index)): scan_to_cert(cert)
+            for (sheet_file, sheet_name, row_index), cert in row_ref_certs.items()
+            if scan_to_cert(cert)
+        }
+        hydrated = 0
+        for row in rows:
+            if scan_to_cert(row.cert_number):
+                continue
+            row_ref = self._receive_row_ref(row)
+            if not row_ref:
+                continue
+            cert = normalized_certs.get((row_ref[0].strip().lower(), row_ref[1].strip().lower(), int(row_ref[2])))
+            if not cert:
+                continue
+            row.cert_number = cert
+            row.item_id = ""
+            row.status = "Received"
+            if row.notes in {"Missing cert", "Missing cert or grader"}:
+                row.notes = ""
+            hydrated += 1
+        return hydrated
+
     def _match_all_review_rows(self) -> None:
         for row in self.review_rows:
             match = self._incoming_match(row.cert_number) if scan_to_cert(row.cert_number) else self._incoming_raw_match(
@@ -17137,6 +17465,8 @@ class CardPipelineApp(tk.Tk):
                 files_updated = int(result.get("files_updated") or 0)
                 marked_certs = set(result.get("certs_marked") or set())
                 marked_row_refs = set(result.get("row_refs_marked") or set())
+                row_ref_certs = dict(result.get("row_ref_certs") or {})
+                hydrated_receive_certs = self._hydrate_marked_receive_rows_from_cert_refs(self.review_rows, row_ref_certs)
                 certs_marked = len(marked_certs)
                 raw_rows_marked = len(marked_row_refs)
                 company_rows_added = 0
@@ -17210,6 +17540,8 @@ class CardPipelineApp(tk.Tk):
             f"Updated sheet files: {files_updated}",
             f"Matched certs: {certs_marked}/{len(certs)}",
         ]
+        if hydrated_receive_certs:
+            summary_lines.append(f"Recovered certs from row refs: {hydrated_receive_certs}")
         if row_refs:
             summary_lines.append(f"Matched raw rows: {raw_rows_marked}/{len(row_refs)}")
         if moved_received:
@@ -17232,6 +17564,7 @@ class CardPipelineApp(tk.Tk):
                 "total_certs": len(certs),
                 "raw_rows_marked": raw_rows_marked,
                 "total_raw_rows": len(row_refs),
+                "hydrated_receive_certs": hydrated_receive_certs,
                 "company_rows_added": company_rows_added,
                 "inventory_rows_added": inventory_rows_added,
                 "receive_rows_cleared": cleared_receive_rows,
