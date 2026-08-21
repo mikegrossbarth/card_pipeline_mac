@@ -9251,6 +9251,34 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
+    def test_inventory_photo_paths_skip_archive_folders_before_scan(self) -> None:
+        class PhotoDummy:
+            _inventory_photo_path_is_archived = app.CardPipelineApp._inventory_photo_path_is_archived
+            _inventory_photo_paths = app.CardPipelineApp._inventory_photo_paths
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "INVENTORY PHOTOS"
+            active = root / "active.jpg"
+            mobile_active = root / "mobile" / "team" / "kevin" / "2026" / "08" / "phone.jpg"
+            archive_photo = root / "archive" / "old.jpg"
+            deleted_archive_photo = root / "DELETED ARCHIVE" / "INVENTORY PHOTOS" / "2026-08-21" / "sold.jpg"
+            sold_archive_photo = root / "sold photos" / "sold-card.jpg"
+            product_name_photo = root / "Topps Archives Active" / "card.jpg"
+            for path in (active, mobile_active, archive_photo, deleted_archive_photo, sold_archive_photo, product_name_photo):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"photo")
+
+            found = {path.relative_to(root).as_posix() for path in PhotoDummy()._inventory_photo_paths(root)}
+
+        self.assertEqual(
+            found,
+            {
+                "active.jpg",
+                "mobile/team/kevin/2026/08/phone.jpg",
+                "Topps Archives Active/card.jpg",
+            },
+        )
+
     def test_inventory_photo_scan_retries_previous_no_match_but_skips_active_link(self) -> None:
         class PhotoDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -9710,6 +9738,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _inventory_photo_path_is_archived = app.CardPipelineApp._inventory_photo_path_is_archived
             _inventory_photo_paths = app.CardPipelineApp._inventory_photo_paths
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
