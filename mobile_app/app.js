@@ -13,11 +13,9 @@ const state = {
   tradeOutgoing: [],
   tradeIncomingSeq: 0,
   profitItems: [],
-  uploadedPhotos: [],
   lastFailedQueueIds: new Set(),
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
-const APP_PROFILE = profileMatch ? profileMatch[1] : "";
 const IS_PERSONAL_PROFILE = Boolean(profileMatch && profileMatch[1] === "personal");
 const PERSONAL_DEFAULT_PERSON = "Mikey";
 const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
@@ -36,7 +34,6 @@ const CACHE_KEYS = {
   profit: `${CACHE_PREFIX}lucasMobileLastProfit`,
   payouts: `${CACHE_PREFIX}lucasMobileLastPayouts`,
 };
-const PROFILE_STORAGE_KEY = "lucasMobileProfile";
 const INVENTORY_SNAPSHOT_LIMIT = 1000;
 const INVENTORY_SNAPSHOT_REFRESH_MS = 5 * 60 * 1000;
 
@@ -55,11 +52,7 @@ function setConnectionStatus(connected, message = "") {
 
 function cacheSet(key, payload) {
   try {
-    if (!payloadMatchesProfile(payload)) {
-      localStorage.removeItem(key);
-      return;
-    }
-    localStorage.setItem(key, JSON.stringify({ saved_at: new Date().toISOString(), payload: { ...payload, profile: APP_PROFILE } }));
+    localStorage.setItem(key, JSON.stringify({ saved_at: new Date().toISOString(), payload }));
   } catch (_error) {
     // Local storage can be full or disabled; offline queue still handles writes separately.
   }
@@ -68,31 +61,10 @@ function cacheSet(key, payload) {
 function cacheGet(key) {
   try {
     const wrapper = JSON.parse(localStorage.getItem(key) || "null");
-    if (!wrapper || !wrapper.payload) return null;
-    if (!payloadMatchesProfile(wrapper.payload)) {
-      localStorage.removeItem(key);
-      return null;
-    }
-    return wrapper;
+    return wrapper && wrapper.payload ? wrapper : null;
   } catch (_error) {
     return null;
   }
-}
-
-function payloadMatchesProfile(payload) {
-  if (!payload || typeof payload !== "object") return false;
-  const payloadProfile = String(payload.profile || "").toLowerCase();
-  if (payloadProfile && APP_PROFILE && payloadProfile !== APP_PROFILE) return false;
-  if (!payloadProfile && APP_PROFILE && Array.isArray(payload.items)) return false;
-  if (IS_PERSONAL_PROFILE && Array.isArray(payload.items)) {
-    const allowedPeople = new Set([PERSONAL_DEFAULT_PERSON.toLowerCase(), "danny"]);
-    const teamRows = payload.items.filter((item) => {
-      const person = String(item?.assigned_person || item?.person || "").trim().toLowerCase();
-      return person && !allowedPeople.has(person);
-    });
-    return teamRows.length === 0;
-  }
-  return true;
 }
 
 function cacheAgeText(savedAt) {
@@ -114,52 +86,6 @@ function cacheIsFresh(wrapper, maxAgeMs) {
 function setUnlocked(unlocked) {
   $("authPanel").classList.toggle("hidden", unlocked);
   $("appPanel").classList.toggle("hidden", !unlocked);
-}
-
-function clearProfileCaches() {
-  const baseKeys = [
-    "lucasMobileLastSearch",
-    "lucasMobileInventorySnapshot",
-    "lucasMobileLastProfit",
-    "lucasMobileLastPayouts",
-  ];
-  ["", "default:", "team:", "personal:"].forEach((prefix) => {
-    baseKeys.forEach((key) => localStorage.removeItem(`${prefix}${key}`));
-  });
-}
-
-async function verifyMobileProfile() {
-  if (!APP_PROFILE || navigator.onLine === false) return true;
-  let result = {};
-  try {
-    const response = await fetch(`${API_BASE}/config`, { cache: "no-store" });
-    result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(result.error || `Config failed with ${response.status}`);
-    }
-  } catch (error) {
-    const serverProfile = String(result.profile || "").toLowerCase();
-    if (serverProfile && serverProfile !== APP_PROFILE) {
-      clearProfileCaches();
-      setUnlocked(false);
-      setConnectionStatus(false, result.error || `This URL is ${APP_PROFILE}, but desktop LUCAS is serving ${serverProfile}.`);
-      return false;
-    }
-    return true;
-  }
-  const serverProfile = String(result.profile || "").toLowerCase();
-  if (serverProfile && serverProfile !== APP_PROFILE) {
-    clearProfileCaches();
-    setUnlocked(false);
-    setConnectionStatus(false, `This URL is ${APP_PROFILE}, but desktop LUCAS is serving ${serverProfile}. Restart the matching mobile stack.`);
-    return false;
-  }
-  const priorProfile = localStorage.getItem(PROFILE_STORAGE_KEY);
-  if (priorProfile && priorProfile !== APP_PROFILE) {
-    clearProfileCaches();
-  }
-  localStorage.setItem(PROFILE_STORAGE_KEY, APP_PROFILE);
-  return true;
 }
 
 async function api(path, body, options = {}) {
@@ -272,7 +198,7 @@ function updatePeople(people) {
     state.people = people.filter(Boolean);
   }
   ["personFilter", "profitPerson", "payoutPerson"].forEach((id) => fillSelect($(id), state.people));
-  ["assignedPerson", "expensePerson", "tradePerson", "photoUploadPerson"].forEach((id) => fillSelect($(id), state.people, { allLabel: "Choose person" }));
+  ["assignedPerson", "expensePerson", "tradePerson"].forEach((id) => fillSelect($(id), state.people, { allLabel: "Choose person" }));
 }
 
 function cachedInventoryWrapper() {
@@ -473,14 +399,12 @@ function syncPersonInputs(person) {
     $("assignedPerson").value = PERSONAL_DEFAULT_PERSON;
     $("expensePerson").value = PERSONAL_DEFAULT_PERSON;
     $("tradePerson").value = PERSONAL_DEFAULT_PERSON;
-    $("photoUploadPerson").value = PERSONAL_DEFAULT_PERSON;
     return;
   }
   const value = person || $("personFilter").value || $("profitPerson").value || $("payoutPerson").value || "";
   if (value && !$("assignedPerson").value) $("assignedPerson").value = value;
   if (value && !$("expensePerson").value) $("expensePerson").value = value;
   if (value && !$("tradePerson").value) $("tradePerson").value = value;
-  if (value && !$("photoUploadPerson").value) $("photoUploadPerson").value = value;
 }
 
 function personalPersonValue(value = "") {
@@ -1465,58 +1389,6 @@ function bindPhotoInput(inputId, targetId) {
   });
 }
 
-function renderUploadedPhotos() {
-  const list = $("photoUploadList");
-  if (!list) return;
-  list.innerHTML = state.uploadedPhotos.length ? state.uploadedPhotos.slice(0, 20).map((item) => `
-    <article class="result">
-      <h2>${escapeHtml(item.name || "Mobile photo")}</h2>
-      <div class="meta">
-        <div><strong>Status</strong>${escapeHtml(item.status || "")}</div>
-        <div><strong>Linked</strong>${escapeHtml(String(item.linked || 0))}</div>
-      </div>
-    </article>
-  `).join("") : '<div class="hint">No mobile photo uploads yet.</div>';
-}
-
-async function uploadInventoryPhotos(inputId) {
-  const input = $(inputId);
-  const files = Array.from((input && input.files) || []);
-  if (input) input.value = "";
-  if (!files.length) return;
-  const status = $("photoUploadStatus");
-  status.textContent = `Preparing ${files.length} photo(s)...`;
-  try {
-    const images = [];
-    for (let index = 0; index < files.length; index += 1) {
-      status.textContent = `Preparing photo ${index + 1}/${files.length}...`;
-      images.push({
-        name: files[index].name || `mobile-photo-${index + 1}.jpg`,
-        type: files[index].type || "image/jpeg",
-        image: await imageFileToCompressedDataUrl(files[index]),
-      });
-    }
-    status.textContent = "Uploading photos to LUCAS...";
-    const result = await api("/photos/upload", {
-      images,
-      client_id: state.clientId,
-      assigned_person: personalPersonValue($("photoUploadPerson").value),
-    }, { timeoutMs: 90000 });
-    if (!result.ok) {
-      status.textContent = result.error || "Photo upload failed.";
-      return;
-    }
-    status.textContent = result.message || `Uploaded ${result.saved || files.length} photo(s).`;
-    (result.files || []).forEach((name) => {
-      state.uploadedPhotos.unshift({ name, status: result.status || "saved", linked: result.linked || 0 });
-    });
-    renderUploadedPhotos();
-  } catch (error) {
-    setConnectionStatus(false);
-    status.textContent = `Photo upload needs desktop LUCAS online. ${error.message || error}`;
-  }
-}
-
 function bind() {
   loadQueue();
   hydratePendingInventoryFromQueue();
@@ -1536,21 +1408,19 @@ function bind() {
   syncPersonInputs(PERSONAL_DEFAULT_PERSON);
   renderQueue();
   setUnlocked(Boolean(state.pin));
-  $("savePin").addEventListener("click", async () => {
+  $("savePin").addEventListener("click", () => {
     state.pin = $("pin").value.trim();
     localStorage.setItem("lucasMobilePin", state.pin);
     setUnlocked(Boolean(state.pin));
-    if (!(await verifyMobileProfile())) return;
     searchInventory();
   });
   document.querySelectorAll(".tab").forEach((button) => {
     button.addEventListener("click", () => {
       document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
-      ["search", "add", "photos", "trade", "expense", "profit", "payout", "sync"].forEach((view) => {
+      ["search", "add", "trade", "expense", "profit", "payout", "sync"].forEach((view) => {
         $(`${view}View`).classList.toggle("hidden", button.dataset.view !== view);
       });
-      if (button.dataset.view === "photos") renderUploadedPhotos();
       if (button.dataset.view === "trade" && !$("tradeIncomingRows").children.length) addTradeIncomingRow();
       if (button.dataset.view === "profit") loadProfit();
       if (button.dataset.view === "payout") loadPayouts();
@@ -1621,8 +1491,6 @@ function bind() {
   window.addEventListener("offline", () => setConnectionStatus(false));
   bindPhotoInput("photoSearchInput", "searchInput");
   bindPhotoInput("photoAddInput", "certNumber");
-  $("photoUploadInput").addEventListener("change", () => uploadInventoryPhotos("photoUploadInput"));
-  $("photoUploadGalleryInput").addEventListener("change", () => uploadInventoryPhotos("photoUploadGalleryInput"));
   $("addInventory").addEventListener("click", () => addInventory(false));
   $("updateDuplicate").addEventListener("click", () => addInventory(true));
   $("addExpense").addEventListener("click", () => addExpense());
@@ -1632,19 +1500,16 @@ function bind() {
     navigator.serviceWorker.register(`${APP_BASE}/sw.js`, { scope: `${APP_BASE}/` }).catch(() => {});
   }
   if (state.pin) {
-    verifyMobileProfile().then((profileOk) => {
-      if (!profileOk) return;
-      const cached = cachedInventoryWrapper();
-      if (cached && cached.payload) {
-        renderCachedInventory(cached, `Showing last synced inventory (${cacheAgeText(cached.saved_at)}). Refreshing if desktop LUCAS is reachable.`);
-      }
-      if (navigator.onLine === false) {
-        setConnectionStatus(false, "Offline mode: showing last synced inventory from this phone.");
-        if (!cached || !cached.payload) renderCachedSearch(null, "Phone is offline.");
-      } else {
-        refreshInventorySnapshot(true).then(() => searchInventory()).catch(() => searchInventory());
-      }
-    });
+    const cached = cachedInventoryWrapper();
+    if (cached && cached.payload) {
+      renderCachedInventory(cached, `Showing last synced inventory (${cacheAgeText(cached.saved_at)}). Refreshing if desktop LUCAS is reachable.`);
+    }
+    if (navigator.onLine === false) {
+      setConnectionStatus(false, "Offline mode: showing last synced inventory from this phone.");
+      if (!cached || !cached.payload) renderCachedSearch(null, "Phone is offline.");
+    } else {
+      refreshInventorySnapshot(true).then(() => searchInventory()).catch(() => searchInventory());
+    }
   }
 }
 

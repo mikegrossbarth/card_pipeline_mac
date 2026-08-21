@@ -946,7 +946,6 @@ def mark_received_in_workbooks(
         "rows_marked": 0,
         "certs_marked": set(),
         "row_refs_marked": set(),
-        "row_ref_certs": {},
         "errors": [],
     }
     if not target_certs and not target_row_refs:
@@ -984,8 +983,6 @@ def mark_received_in_workbooks(
                         result["certs_marked"].add(cert)
                     if row_ref in target_row_refs:
                         result["row_refs_marked"].add(row_ref)
-                        if cert:
-                            result["row_ref_certs"][row_ref] = cert
                     changed = True
             if changed:
                 workbook.save(path)
