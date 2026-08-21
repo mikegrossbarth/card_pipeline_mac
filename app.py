@@ -16451,15 +16451,58 @@ class CardPipelineApp(tk.Tk):
                 digest.update(chunk)
         return digest.hexdigest()
 
+    def _inventory_photo_path_is_archived(self, path: Path, root: Path | None = None) -> bool:
+        archive_names = {
+            "archive",
+            "archives",
+            "archived",
+            "deleted archive",
+            "deleted archives",
+            "deleted inventory photos",
+            "inventory photos archive",
+            "sold archive",
+            "sold archives",
+            "sold inventory photos",
+            "sold photos",
+        }
+        candidate = Path(path)
+        try:
+            parts = candidate.relative_to(root).parts if root is not None else candidate.parts
+        except Exception:
+            parts = candidate.parts
+        for part in parts[:-1] if candidate.suffix else parts:
+            normalized = re.sub(r"\s+", " ", str(part).replace("_", " ").replace("-", " ").strip().lower())
+            if normalized in archive_names:
+                return True
+        try:
+            deleted_root = DELETED_INVENTORY_PHOTOS_DIR.resolve(strict=False)
+            return deleted_root in candidate.resolve(strict=False).parents
+        except Exception:
+            return False
+
     def _inventory_photo_paths(self, folder: Path) -> list[Path]:
         allowed = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
         if not folder.exists():
             return []
-        return [
-            path
-            for path in sorted(folder.rglob("*"), key=lambda item: str(item).lower())
-            if path.is_file() and path.suffix.lower() in allowed
-        ]
+        archive_check = getattr(self, "_inventory_photo_path_is_archived", None)
+        if not callable(archive_check):
+            archive_check = lambda path, root=None: CardPipelineApp._inventory_photo_path_is_archived(self, path, root)
+        paths: list[Path] = []
+        for current_root, dirnames, filenames in os.walk(folder):
+            root_path = Path(current_root)
+            dirnames[:] = [
+                dirname
+                for dirname in dirnames
+                if not archive_check(root_path / dirname, folder)
+            ]
+            for filename in filenames:
+                path = root_path / filename
+                if path.suffix.lower() not in allowed:
+                    continue
+                if archive_check(path, folder):
+                    continue
+                paths.append(path)
+        return sorted(paths, key=lambda item: str(item).lower())
 
     def _inventory_photo_files(self, folder: Path) -> list[dict[str, object]]:
         images: list[dict[str, object]] = []
