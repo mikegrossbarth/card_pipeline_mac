@@ -2846,6 +2846,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             ),
             8766,
         )
+        self.assertEqual(app.mobile_bridge_port({"profile": "personal"}, Path("lucas_settings.json")), 8766)
+        with patch.dict(app.os.environ, {"LUCAS_MOBILE_PORT": "8799"}):
+            self.assertEqual(app.mobile_bridge_port({"profile": "personal"}, Path("lucas_settings.json")), 8799)
 
     def test_mobile_bridge_port_can_be_overridden(self) -> None:
         with patch.dict(app.os.environ, {"LUCAS_MOBILE_PORT": "8777"}):
@@ -4745,6 +4748,40 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(items[0]["payout_balance"], 50.0)
         self.assertEqual(sum(float(item["payout_balance"]) for item in items), 60.0)
 
+    def test_payout_history_includes_manual_paid_adjustment_without_profit_row(self) -> None:
+        class Dummy:
+            _payout_history_items_for_person = app.CardPipelineApp._payout_history_items_for_person
+
+            def _payout_sheet_items(self):
+                return [
+                    {
+                        "key": "Sold|Tyler Hamlin|Open.xlsx",
+                        "person": "Tyler Hamlin",
+                        "name": "Open.xlsx",
+                        "stage": "Sold",
+                        "paid": False,
+                        "row_count": 1,
+                        "net_profit_total": 100,
+                        "payout_balance": 50,
+                    }
+                ]
+
+            home_sheet_markers = {
+                "SoldCard|Tyler Hamlin|manual-tyler-paid-payout-20260815-3000|general sold|2026-08-15|manual paid payout adjustment|tyler hamlin general sold": {
+                    "assigned_person": "Tyler Hamlin",
+                    "paid": True,
+                    "paid_at": "2026-08-15T19:24:32",
+                    "manual_paid_adjustment": True,
+                    "manual_paid_amount": 3000.0,
+                }
+            }
+
+        items = Dummy()._payout_history_items_for_person("Tyler Hamlin")
+
+        self.assertEqual(items[0]["name"], "Total paid at 2026-08-15T19:24:32")
+        self.assertEqual(items[0]["payout_balance"], 3000.0)
+        self.assertEqual(items[1]["name"], "Open.xlsx")
+
     def test_save_payout_marker_blocks_pending_seller_paid(self) -> None:
         class PayoutDummy:
             _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
@@ -5591,9 +5628,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
             _profit_record_identity_keys = app.CardPipelineApp._profit_record_identity_keys
             _money_value = app.CardPipelineApp._money_value
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _update_duplicate_inventory_sale_profit_record = app.CardPipelineApp._update_duplicate_inventory_sale_profit_record
             record_profit_sales = app.CardPipelineApp.record_profit_sales
             refresh_profit_tab = lambda self: None
 
@@ -5631,9 +5671,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
             _profit_record_identity_keys = app.CardPipelineApp._profit_record_identity_keys
             _money_value = app.CardPipelineApp._money_value
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _update_duplicate_inventory_sale_profit_record = app.CardPipelineApp._update_duplicate_inventory_sale_profit_record
             record_profit_sales = app.CardPipelineApp.record_profit_sales
             refresh_profit_tab = lambda self: None
 
@@ -5666,6 +5709,71 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 ledger = json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8"))
                 self.assertEqual(len(ledger), 1)
                 self.assertEqual(ledger[0]["weekly_sheet_name"], "Inventory Sale")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.PROFIT_LEDGER_PATH = old_ledger
+
+    def test_record_profit_sales_keeps_distinct_inventory_sales_with_corrected_cert(self) -> None:
+        class ProfitDummy:
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_record_identity_keys = app.CardPipelineApp._profit_record_identity_keys
+            _money_value = app.CardPipelineApp._money_value
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _update_duplicate_inventory_sale_profit_record = app.CardPipelineApp._update_duplicate_inventory_sale_profit_record
+            record_profit_sales = app.CardPipelineApp.record_profit_sales
+            refresh_profit_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_ledger = app.PROFIT_LEDGER_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            dummy = ProfitDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            try:
+                old_sale = dummy._normalize_profit_record(
+                    {
+                        "assigned_person": "Mikey",
+                        "cert_number": "2668770",
+                        "grader": "SGC",
+                        "card_title": "2019 Topps Chrome 1 Shohei Ohtani SGC 10",
+                        "company": "FANATICS",
+                        "source_sheet": "COMPLETE_GRADED_INVENTORY_ADD_7_7_26.xlsx",
+                        "purchase_price": 120,
+                        "sale_price": 155.31,
+                        "date_added": "2026-08-16",
+                        "status": "Sold from inventory",
+                    }
+                )
+                dummy._save_profit_ledger([old_sale])
+
+                self.assertEqual(
+                    dummy.record_profit_sales(
+                        [
+                            {
+                                "assigned_person": "Mikey",
+                                "cert_number": "2668770",
+                                "grader": "SGC",
+                                "card_title": "2019 Topps Chrome 1 Shohei Ohtani SGC 10",
+                                "company": "FANATICS",
+                                "source_sheet": "COMPLETE_GRADED_INVENTORY_ADD_7_7_26.xlsx",
+                                "inventory_key": "2668770|complete_graded_inventory_add_7_7_26.xlsx|mikey",
+                                "purchase_price": 100,
+                                "sale_price": 190,
+                                "date_added": "2026-08-17",
+                                "status": "Sold from inventory",
+                            }
+                        ]
+                    ),
+                    1,
+                )
+                ledger = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                self.assertEqual(len(ledger), 2)
+                self.assertEqual(sorted(record["sale_price"] for record in ledger), [155.31, 190.0])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
