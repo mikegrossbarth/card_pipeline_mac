@@ -11631,6 +11631,238 @@ class CardPipelineApp(tk.Tk):
         self.wait_window(popup)
         return result or None
 
+    def _sold_profit_edit_row_dialog(self, record: dict[str, object]) -> dict[str, object] | None:
+        normalized = self._normalize_profit_record(record)
+        if str(normalized.get("record_type") or "").strip().lower() == "expense":
+            return None
+        personal_inventory = self._is_personal_lucas()
+        fields = [
+            ("date_added", "Sold Date"),
+            ("assigned_person", "Person"),
+            ("company", "Company"),
+            ("card_title", "Card"),
+            ("cert_number", "Cert"),
+            ("item_id", "Item ID"),
+            ("purchase_price", "Purchase"),
+            ("sale_price", "Sale Price"),
+            ("source_sheet", "Source Sheet"),
+            ("weekly_sheet_name", "Sold Sheet"),
+            ("notes", "Notes"),
+        ]
+        popup = tk.Toplevel(self)
+        popup.title("Edit Sold Item")
+        popup.geometry("820x500")
+        popup.minsize(680, 390)
+        popup.transient(self)
+        popup.grab_set()
+        popup.configure(bg="#121212")
+        result: dict[str, object] = {}
+        vars_by_field: dict[str, tk.StringVar] = {}
+
+        frame = self._scrollable_popup_frame(popup, style_name="Panel.TFrame", bg="#121212", padding=(18, 16))
+        ttk.Label(frame, text="Edit Sold Item", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 2))
+        ttk.Label(frame, text=str(normalized.get("ledger_added_at") or normalized.get("ledger_key") or "Profit sold-card row"), style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 14))
+        for index, (field, label) in enumerate(fields):
+            row = 2 + index // 2
+            col = 0 if index % 2 == 0 else 2
+            value = normalized.get(field)
+            text = "" if value is None else f"{value:.2f}" if field in {"purchase_price", "sale_price"} and isinstance(value, (int, float)) else str(value)
+            var = tk.StringVar(value=text)
+            vars_by_field[field] = var
+            if personal_inventory and field == "assigned_person":
+                continue
+            ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=col, sticky="w", padx=(0, 8), pady=(0, 8))
+            if field == "assigned_person":
+                person_combo = ttk.Combobox(frame, textvariable=var, width=24)
+                person_combo.grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
+                self._bind_person_autocomplete(person_combo)
+            else:
+                width = 54 if field in {"card_title", "source_sheet", "weekly_sheet_name", "notes"} else 24
+                ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
+
+        status_var = tk.StringVar(value="Edits update this sold-card row in the profit ledger.")
+        status_row = 2 + (len(fields) + 1) // 2
+        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=status_row, column=0, columnspan=4, sticky="w", pady=(4, 14))
+
+        def submit() -> None:
+            person = vars_by_field["assigned_person"].get().strip()
+            if personal_inventory:
+                person = self._personal_default_person()
+            person_choice = self._canonical_person_choice(person)
+            if person_choice is None:
+                status_var.set("Choose an existing person.")
+                return
+            sold_date = vars_by_field["date_added"].get().strip()
+            if self._profit_record_date(sold_date) is None:
+                status_var.set("Enter the sold date as YYYY-MM-DD.")
+                return
+            purchase = self._money_value(vars_by_field["purchase_price"].get())
+            sale = self._money_value(vars_by_field["sale_price"].get())
+            if purchase is None or purchase < 0:
+                status_var.set("Enter a purchase amount of 0 or more.")
+                return
+            if sale is None or sale < 0:
+                status_var.set("Enter a sale price of 0 or more.")
+                return
+            card_title = vars_by_field["card_title"].get().strip()
+            if not card_title:
+                status_var.set("Enter the card title.")
+                return
+            cert_number = vars_by_field["cert_number"].get().strip()
+            item_id = vars_by_field["item_id"].get().strip()
+            if not (cert_number or item_id):
+                status_var.set("Enter either a cert number or item ID.")
+                return
+            result.update(
+                {
+                    "date_added": sold_date[:10],
+                    "assigned_person": person_choice,
+                    "company": vars_by_field["company"].get().strip(),
+                    "card_title": card_title,
+                    "cert_number": cert_number,
+                    "item_id": item_id,
+                    "purchase_price": float(purchase),
+                    "sale_price": float(sale),
+                    "source_sheet": vars_by_field["source_sheet"].get().strip(),
+                    "weekly_sheet_name": vars_by_field["weekly_sheet_name"].get().strip(),
+                    "notes": vars_by_field["notes"].get().strip(),
+                }
+            )
+            popup.destroy()
+
+        buttons = ttk.Frame(frame, style="Panel.TFrame")
+        buttons.grid(row=status_row + 1, column=0, columnspan=4, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(buttons, text="Save Changes", command=submit, style="Primary.TButton").pack(side=tk.LEFT)
+        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(3, weight=1)
+        popup.bind("<Return>", lambda _event: submit())
+        popup.bind("<Escape>", lambda _event: popup.destroy())
+        popup.update_idletasks()
+        x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        self.wait_window(popup)
+        return result or None
+
+    def _migrate_sold_card_payout_marker(
+        self,
+        original_record: dict[str, object],
+        updated_record: dict[str, object],
+        previous_ledger_keys: set[str],
+    ) -> None:
+        markers = getattr(self, "home_sheet_markers", None)
+        if not isinstance(markers, dict):
+            return
+        new_person = str(updated_record.get("assigned_person") or "").strip()
+        if not new_person:
+            return
+        new_key = self._sold_card_payout_key(new_person, updated_record)
+        old_people = {
+            str(original_record.get("assigned_person") or "").strip(),
+            str(updated_record.get("assigned_person") or "").strip(),
+        }
+        old_people.discard("")
+        old_ledger_keys = {
+            str(key).strip()
+            for key in previous_ledger_keys
+            if str(key).strip()
+        }
+        original_key = str(original_record.get("ledger_key") or self._profit_record_key(original_record) or "").strip()
+        if original_key:
+            old_ledger_keys.add(original_key)
+        if not old_people or not old_ledger_keys:
+            return
+        marker_changed = False
+        for old_person in sorted(old_people):
+            for old_ledger_key in sorted(old_ledger_keys):
+                old_key = self._home_sheet_key("SoldCard", f"{old_person}|{old_ledger_key}")
+                if old_key == new_key or old_key not in markers:
+                    continue
+                marker = dict(markers.get(old_key) or {})
+                marker.setdefault("assigned_person", new_person)
+                if new_key not in markers:
+                    markers[new_key] = marker
+                markers.pop(old_key, None)
+                marker_changed = True
+        if marker_changed and hasattr(self, "_save_sheet_markers"):
+            self._save_sheet_markers()
+
+    def _update_profit_sold_record(self, original_record: dict[str, object], updates: dict[str, object]) -> dict[str, object] | None:
+        original = self._normalize_profit_record(original_record)
+        if str(original.get("record_type") or "").strip().lower() == "expense":
+            return None
+        original_key = str(original.get("ledger_key") or self._profit_record_key(original) or "").strip().lower()
+        original_previous_keys = {
+            str(key).strip().lower()
+            for key in (original.get("previous_ledger_keys") or [])
+            if str(key).strip()
+        }
+        if original_key:
+            original_previous_keys.add(original_key)
+        with shared_lock(CARD_PIPELINE_DIR, "profit-sold-edit", self.lucas_identity):
+            ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+            for index, record in enumerate(ledger):
+                if str(record.get("record_type") or "").strip().lower() == "expense":
+                    continue
+                record_key = str(record.get("ledger_key") or self._profit_record_key(record) or "").strip().lower()
+                record_previous_keys = {
+                    str(key).strip().lower()
+                    for key in (record.get("previous_ledger_keys") or [])
+                    if str(key).strip()
+                }
+                searchable_record_keys = set(record_previous_keys)
+                if record_key:
+                    searchable_record_keys.add(record_key)
+                key_matches = bool(original_key and original_key in searchable_record_keys)
+                previous_key_matches = bool(original_previous_keys and searchable_record_keys & original_previous_keys)
+                if not (key_matches or previous_key_matches):
+                    continue
+                merged = dict(record)
+                merged.update(updates)
+                merged.pop("record_type", None)
+                merged["ledger_added_at"] = str(record.get("ledger_added_at") or original.get("ledger_added_at") or "").strip()
+                if not merged["ledger_added_at"]:
+                    merged["ledger_added_at"] = datetime.now().isoformat(timespec="microseconds")
+                previous_keys = set(searchable_record_keys) | original_previous_keys
+                if original_key:
+                    previous_keys.add(original_key)
+                merged["previous_ledger_keys"] = sorted(previous_keys)
+                merged["recorded_by"] = self.lucas_identity.get("display_name", "")
+                merged["recorded_machine"] = self.lucas_identity.get("machine", "")
+                normalized = self._normalize_profit_record(merged)
+                ledger[index] = normalized
+                self._save_profit_ledger(ledger)
+                self._migrate_sold_card_payout_marker(record, normalized, previous_keys)
+                return normalized
+        return None
+
+    def edit_selected_profit_sold_item(self) -> None:
+        if not hasattr(self, "profit_tree"):
+            return
+        selected = list(self.profit_tree.selection())
+        records = [self.profit_tree_records.get(iid) for iid in selected if self.profit_tree_records.get(iid)]
+        if len(records) != 1:
+            messagebox.showinfo("Choose one sold item", "Select one sold-card row to edit.")
+            return
+        record = self._normalize_profit_record(records[0])
+        if str(record.get("record_type") or "").strip().lower() == "expense":
+            messagebox.showinfo("Sold item required", "Use Edit Expense for expense rows.")
+            return
+        updates = self._sold_profit_edit_row_dialog(record)
+        if not updates:
+            return
+        updated = self._update_profit_sold_record(record, updates)
+        self.refresh_profit_tab()
+        if hasattr(self, "refresh_payout_tab"):
+            self.refresh_payout_tab()
+        if updated:
+            sale = self._money_value(updated.get("sale_price")) or 0.0
+            self.status_var.set(f"Edited sold item: {updated.get('card_title') or 'sold card'} for {format_money(sale)}.")
+            self._append_activity("Sold Item Edit", f"Edited sold item: {updated.get('card_title') or 'sold card'} for {format_money(sale)}.", {"ledger_key": updated.get("ledger_key"), "sale_price": sale})
+        else:
+            messagebox.showinfo("Sold item not found", "That sold-card row could not be found in the profit ledger.")
+
     def _update_profit_expense_record(self, original_record: dict[str, object], updates: dict[str, object]) -> dict[str, object] | None:
         original = self._normalize_profit_record(original_record)
         if str(original.get("record_type") or "").strip().lower() != "expense":
@@ -11796,6 +12028,8 @@ class CardPipelineApp(tk.Tk):
         sold_cards = [record for record in records if str(record.get("record_type") or "").strip().lower() != "expense"]
         menu = tk.Menu(self, tearoff=0)
         if sold_cards and len(sold_cards) == len(records):
+            if len(sold_cards) == 1:
+                menu.add_command(label="Edit Sold Item", command=self.edit_selected_profit_sold_item)
             menu.add_command(label="Refund to Inventory", command=self.refund_selected_profit_to_inventory)
         if expenses and len(expenses) == len(records):
             if len(expenses) == 1:

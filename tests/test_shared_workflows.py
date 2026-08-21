@@ -6007,9 +6007,16 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _profit_chart_series = app.CardPipelineApp._profit_chart_series
             _expense_related_label = app.CardPipelineApp._expense_related_label
             _expense_link_options = app.CardPipelineApp._expense_link_options
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
+            _migrate_sold_card_payout_marker = app.CardPipelineApp._migrate_sold_card_payout_marker
+            _update_profit_sold_record = app.CardPipelineApp._update_profit_sold_record
             _update_profit_expense_record = app.CardPipelineApp._update_profit_expense_record
             _delete_profit_expense_records = app.CardPipelineApp._delete_profit_expense_records
             refresh_profit_tab = lambda self: None
+
+            def _save_sheet_markers(self) -> None:
+                self.saved_sheet_markers = True
 
         with TemporaryDirectory() as tmp:
             old_pipeline = app.CARD_PIPELINE_DIR
@@ -6064,6 +6071,59 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 filtered = dummy._filtered_profit_records(ledger)
                 _days, values = dummy._profit_chart_series(filtered)
                 self.assertEqual(sum(values), 25)
+                sale_row = next(record for record in ledger if record.get("record_type") != "expense")
+                old_sale_key = sale_row["ledger_key"]
+                old_payout_key = dummy._sold_card_payout_key("Kevin Hambone", sale_row)
+                dummy.saved_sheet_markers = False
+                dummy.home_sheet_markers = {
+                    old_payout_key: {
+                        "assigned_person": "Kevin Hambone",
+                        "paid": True,
+                        "paid_at": "2026-06-19T12:00:00",
+                    }
+                }
+                edited_sale = dummy._update_profit_sold_record(
+                    sale_row,
+                    {
+                        "date_added": "2026-06-20",
+                        "assigned_person": "Kevin Hambone",
+                        "company": "Corrected Sold",
+                        "card_title": "Corrected Test Card",
+                        "purchase_price": "60",
+                        "sale_price": "125.50",
+                        "source_sheet": "Lot A.xlsx",
+                        "weekly_sheet_name": "Week of 2026-06-20",
+                        "notes": "Corrected sale",
+                    },
+                )
+                self.assertIsNotNone(edited_sale)
+                assert edited_sale is not None
+                self.assertEqual(edited_sale["company"], "Corrected Sold")
+                self.assertEqual(edited_sale["card_title"], "Corrected Test Card")
+                self.assertEqual(edited_sale["purchase_price"], 60.0)
+                self.assertEqual(edited_sale["sale_price"], 125.5)
+                self.assertEqual(edited_sale["profit"], 65.5)
+                self.assertEqual(edited_sale["date_added"], "2026-06-20")
+                self.assertIn(old_sale_key, edited_sale.get("previous_ledger_keys") or [])
+                self.assertNotEqual(edited_sale["ledger_key"], old_sale_key)
+                new_payout_key = dummy._sold_card_payout_key("Kevin Hambone", edited_sale)
+                self.assertNotIn(old_payout_key, dummy.home_sheet_markers)
+                self.assertIn(new_payout_key, dummy.home_sheet_markers)
+                self.assertTrue(dummy.home_sheet_markers[new_payout_key]["paid"])
+                self.assertTrue(dummy.saved_sheet_markers)
+                ledger_after_sale_edit = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                sold_rows = [record for record in ledger_after_sale_edit if record.get("record_type") != "expense"]
+                self.assertEqual(len(sold_rows), 1)
+                self.assertEqual(sold_rows[0]["ledger_key"], edited_sale["ledger_key"])
+                edited_sale_again = dummy._update_profit_sold_record(sale_row, {"sale_price": 130, "notes": "Second sale edit"})
+                self.assertIsNotNone(edited_sale_again)
+                ledger_after_second_sale_edit = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
+                sold_rows = [record for record in ledger_after_second_sale_edit if record.get("record_type") != "expense"]
+                self.assertEqual(len(sold_rows), 1)
+                self.assertEqual(sold_rows[0]["sale_price"], 130.0)
+                self.assertEqual(sold_rows[0]["profit"], 70.0)
+                self.assertEqual(sold_rows[0]["notes"], "Second sale edit")
+
                 old_expense_key = expense_row["ledger_key"]
                 edited = dummy._update_profit_expense_record(
                     expense_row,
@@ -6132,7 +6192,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 ledger_after_delete = [dummy._normalize_profit_record(record) for record in dummy._load_profit_ledger()]
                 self.assertEqual(len(ledger_after_delete), 1)
                 self.assertNotEqual(ledger_after_delete[0].get("record_type"), "expense")
-                self.assertEqual(ledger_after_delete[0]["profit"], 50)
+                self.assertEqual(ledger_after_delete[0]["profit"], 70)
                 self.assertEqual(dummy._delete_profit_expense_records([ledger_after_delete[0]]), 0)
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
