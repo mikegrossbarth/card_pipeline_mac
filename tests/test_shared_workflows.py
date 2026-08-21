@@ -11055,6 +11055,56 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(config["public_bridge_url"], "https://hidden-background.trycloudflare.com")
 
+    def test_personal_instagram_sync_is_disabled_for_team_profile(self) -> None:
+        class InstagramDummy:
+            _personal_instagram_sync_enabled = app.CardPipelineApp._personal_instagram_sync_enabled
+            _is_personal_lucas = app.CardPipelineApp._is_personal_lucas
+
+            def __init__(self, settings):
+                self.app_settings = settings
+
+        with (
+            patch.dict(app.os.environ, {"LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC": "1"}),
+            patch.object(app, "CARD_PIPELINE_DIR", Path("/Users/test/Drive/CARD_PIPELINE")),
+            patch.object(app, "SETTINGS_PATH", Path("/repo/lucas_settings.json")),
+        ):
+            self.assertFalse(InstagramDummy({"pipeline_root": "/Users/test/Drive/CARD_PIPELINE"})._personal_instagram_sync_enabled())
+
+    def test_personal_instagram_sync_requires_personal_data_root(self) -> None:
+        class InstagramDummy:
+            _personal_instagram_sync_enabled = app.CardPipelineApp._personal_instagram_sync_enabled
+            _is_personal_lucas = app.CardPipelineApp._is_personal_lucas
+
+            def __init__(self, settings):
+                self.app_settings = settings
+
+        with (
+            patch.dict(app.os.environ, {"LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC": "1"}),
+            patch.object(app, "CARD_PIPELINE_DIR", Path("/Users/test/Drive/CARD_PIPELINE")),
+            patch.object(app, "SETTINGS_PATH", Path("/repo/lucas_settings.michael.json")),
+        ):
+            self.assertFalse(InstagramDummy({"pipeline_root": "/Users/test/Drive/LUCAS_PERSONAL"})._personal_instagram_sync_enabled())
+
+    def test_instagram_media_preflight_blocks_unfetchable_bridge_url(self) -> None:
+        class InstagramDummy:
+            _instagram_media_url_fetch_error = app.CardPipelineApp._instagram_media_url_fetch_error
+            _instagram_media_preflight_errors = app.CardPipelineApp._instagram_media_preflight_errors
+
+        dummy = InstagramDummy()
+        with patch.object(app.urllib.request, "urlopen", side_effect=OSError("tunnel down")):
+            errors = dummy._instagram_media_preflight_errors(
+                [
+                    {
+                        "caption": "Bridge Test Card",
+                        "photo_url": "https://dead-example.trycloudflare.com/instagram/media/token/photo/photo.jpg",
+                    }
+                ]
+            )
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("Bridge Test Card", errors[0])
+        self.assertIn("could not be fetched", errors[0])
+
     def test_instagram_bridge_media_requires_token(self) -> None:
         state = app.BridgeState()
         state.instagram_media_resolver = lambda photo_id: (b"jpg-bytes", "image/jpeg") if photo_id == "abc" else None

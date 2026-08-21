@@ -358,6 +358,16 @@ def is_personal_lucas_profile(settings: dict[str, object] | None = None, setting
     )
 
 
+def mobile_profile_data_root_error(profile: str, data_root: Path, settings_path: Path | None = None) -> str:
+    root_text = str(data_root or "").lower()
+    if profile == "personal":
+        if not any(marker in root_text for marker in ("lucas_personal", "personal lucas")):
+            return f"Personal mobile profile is pointed at non-personal data root: {data_root}"
+    elif any(marker in root_text for marker in ("lucas_personal", "personal lucas")):
+        return f"Team mobile profile is pointed at personal data root: {data_root}"
+    return ""
+
+
 def mobile_bridge_port(settings: dict[str, object] | None = None, settings_path: Path | None = None) -> int:
     raw_port = str(os.environ.get("LUCAS_MOBILE_PORT") or (settings or {}).get("mobile_port") or "").strip()
     if raw_port:
@@ -5015,6 +5025,10 @@ class CardPipelineApp(tk.Tk):
         return str(person or "").strip() or "Unassigned"
 
     def _personal_instagram_sync_enabled(self) -> bool:
+        if not self._is_personal_lucas():
+            return False
+        if mobile_profile_data_root_error("personal", CARD_PIPELINE_DIR, SETTINGS_PATH):
+            return False
         return str(os.environ.get("LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC") or "").strip().lower() in {"1", "true", "yes", "on"}
 
     def _instagram_background_tunnel_enabled(self) -> bool:
@@ -6297,6 +6311,47 @@ class CardPipelineApp(tk.Tk):
             raise RuntimeError(body or str(error)) from error
         return json.loads(raw) if raw else {}
 
+    def _instagram_media_url_fetch_error(self, url: str) -> str:
+        url = str(url or "").strip()
+        if not url:
+            return "missing photo URL"
+        headers = {"User-Agent": "LUCAS Instagram media preflight"}
+        for method in ("HEAD", "GET"):
+            request_headers = dict(headers)
+            if method == "GET":
+                request_headers["Range"] = "bytes=0-0"
+            request = urllib.request.Request(url, headers=request_headers, method=method)
+            try:
+                with urllib.request.urlopen(request, timeout=12) as response:
+                    content_type = str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+                    if content_type.startswith("image/"):
+                        return ""
+                    return f"photo URL returned {content_type or 'unknown content type'}"
+            except urllib.error.HTTPError as error:
+                if method == "HEAD" and error.code in {405, 501}:
+                    continue
+                return f"photo URL returned HTTP {error.code}"
+            except Exception as error:
+                if method == "HEAD":
+                    continue
+                return f"photo URL could not be fetched: {error}"
+        return "photo URL could not be fetched"
+
+    def _instagram_media_preflight_errors(self, items: list[object], max_errors: int = 5) -> list[str]:
+        errors: list[str] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            caption = str(item.get("caption") or item.get("inventory_key") or "Instagram card").strip()
+            for url in instagram_ready_photo_urls(item):
+                error = self._instagram_media_url_fetch_error(url)
+                if error:
+                    errors.append(f"{caption}: {error}")
+                    break
+            if len(errors) >= max_errors:
+                break
+        return errors
+
     def _run_instagram_inventory_sync(self, plan: dict[str, object], popup: tk.Toplevel, refresh_callback) -> None:
         config = plan.get("config") if isinstance(plan.get("config"), dict) else self._instagram_env_config()
         if not str(config.get("user_id") or "").strip() or not str(config.get("access_token") or "").strip():
@@ -6313,6 +6368,14 @@ class CardPipelineApp(tk.Tk):
             )
             return
         sync_plan, ready_total, post_limit = self._instagram_limited_manual_sync_plan(plan, meta_remaining)
+        post_preflight_errors = self._instagram_media_preflight_errors(list(sync_plan.get("to_post") or []))
+        if post_preflight_errors:
+            messagebox.showerror(
+                "Instagram Sync",
+                "Instagram photo bridge is not reachable, so LUCAS did not attempt to post.\n\n"
+                + "\n".join(post_preflight_errors[:5]),
+            )
+            return
         if not sync_plan.get("to_post") and not sync_plan.get("to_remove"):
             if ready_candidates and meta_remaining == 0:
                 messagebox.showinfo(
@@ -6488,6 +6551,17 @@ class CardPipelineApp(tk.Tk):
         removed = 0
         queued_removals = 0
         errors: list[str] = []
+        post_preflight_errors = self._instagram_media_preflight_errors(list(plan.get("to_post") or []))
+        if post_preflight_errors:
+            errors.extend(post_preflight_errors)
+            self._append_activity(
+                "Instagram Inventory Sync",
+                f"Instagram inventory sync posted 0, removed 0, queued 0, errors {len(errors)}.",
+                {"posted": 0, "removed": 0, "queued_removals": 0, "errors": errors[:3]},
+            )
+            self.events.put(("status", f"Instagram sync blocked: photo bridge is not reachable ({len(errors)} issue(s))."))
+            record_performance_event("instagram.inventory_sync", started, f"posted=0 removed=0 queued=0 errors={len(errors)} preflight=failed", force=True)
+            return
         try:
             for item in plan.get("to_post") or []:
                 if not isinstance(item, dict):
