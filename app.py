@@ -16432,6 +16432,29 @@ class CardPipelineApp(tk.Tk):
             return
         self.inventory_status_var.set(message)
 
+    def _inventory_photo_scan_override_key(self, folder: Path) -> str:
+        try:
+            return str(Path(folder).expanduser().resolve(strict=False))
+        except Exception:
+            return str(Path(folder).expanduser())
+
+    def _set_inventory_photo_scan_paths(self, folder: Path, paths: list[Path] | None) -> None:
+        overrides = getattr(self, "_inventory_photo_scan_path_overrides", None)
+        if not isinstance(overrides, dict):
+            overrides = {}
+            self._inventory_photo_scan_path_overrides = overrides
+        key = self._inventory_photo_scan_override_key(folder)
+        if paths is None:
+            overrides.pop(key, None)
+            return
+        overrides[key] = list(paths)
+
+    def _pop_inventory_photo_scan_paths(self, folder: Path) -> list[Path] | None:
+        overrides = getattr(self, "_inventory_photo_scan_path_overrides", None)
+        if not isinstance(overrides, dict):
+            return None
+        return overrides.pop(self._inventory_photo_scan_override_key(folder), None)
+
     def _prepare_inventory_photo_scan_folder(self, manual: bool = False, background: bool = False) -> Path | None:
         source = self._inventory_photo_source_folder()
         shared = self._inventory_photo_shared_folder()
@@ -16442,6 +16465,7 @@ class CardPipelineApp(tk.Tk):
                 source_is_shared = source == shared
             if source_is_shared:
                 shared.mkdir(parents=True, exist_ok=True)
+                self._set_inventory_photo_scan_paths(shared, self._inventory_photo_source_mirror_candidates(shared, shared))
                 return shared
             if manual:
                 messagebox.showerror("Photo folder missing", f"Inventory photo folder does not exist:\n{source}")
@@ -16454,6 +16478,7 @@ class CardPipelineApp(tk.Tk):
             source_resolved = source
             shared_resolved = shared
         if source_resolved == shared_resolved:
+            self._set_inventory_photo_scan_paths(shared, self._inventory_photo_source_mirror_candidates(shared, shared))
             return shared
         try:
             source_images = self._inventory_photo_source_mirror_candidates(source, shared)
@@ -16461,6 +16486,7 @@ class CardPipelineApp(tk.Tk):
             shared.mkdir(parents=True, exist_ok=True)
             copied = 0
             skipped = 0
+            scan_paths: list[Path] = []
             if not total:
                 self._inventory_photo_status(f"No active or unassigned inventory photos found in {source}. Scanning {shared}...", background=background)
                 if not background:
@@ -16473,6 +16499,7 @@ class CardPipelineApp(tk.Tk):
                 if relative.is_absolute() or ".." in relative.parts:
                     relative = Path(source_path.name)
                 destination = shared / relative
+                scan_paths.append(destination)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 self._inventory_photo_status(f"Mirroring inventory photos: {index}/{total} {source_path.name}", background=background)
                 if background:
@@ -16489,6 +16516,7 @@ class CardPipelineApp(tk.Tk):
                         pass
                 shutil.copy2(source_path, destination)
                 copied += 1
+            self._set_inventory_photo_scan_paths(shared, scan_paths)
             self._inventory_photo_status(f"Mirrored {copied} photo(s) to shared folder; skipped {skipped}. Scanning {shared}...", background=background)
             if background:
                 self.events.put(("status", f"Mirrored inventory photos to {shared}."))
@@ -16589,9 +16617,16 @@ class CardPipelineApp(tk.Tk):
                 paths.append(path)
         return sorted(paths, key=lambda item: str(item).lower())
 
-    def _inventory_photo_files(self, folder: Path) -> list[dict[str, object]]:
+    def _inventory_photo_files(self, folder: Path, paths: list[Path] | None = None) -> list[dict[str, object]]:
         images: list[dict[str, object]] = []
-        if hasattr(self, "_inventory_photo_paths"):
+        if paths is not None:
+            allowed = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+            paths = [
+                Path(path).expanduser()
+                for path in paths
+                if Path(path).expanduser().is_file() and Path(path).expanduser().suffix.lower() in allowed
+            ]
+        elif hasattr(self, "_inventory_photo_paths"):
             paths = self._inventory_photo_paths(folder)
         else:
             allowed = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
@@ -17090,15 +17125,18 @@ class CardPipelineApp(tk.Tk):
         state = self._load_inventory_photo_state()
         photos = state.setdefault("photos", {})
         try:
-            images = self._inventory_photo_files(folder)
+            pop_scan_paths = getattr(self, "_pop_inventory_photo_scan_paths", None)
+            scan_paths = pop_scan_paths(folder) if callable(pop_scan_paths) else None
+            images = self._inventory_photo_files(folder, scan_paths)
             total = len(images)
             if not background:
                 self.events.put(("inventory_photo_status", f"Inventory photo scan starting in {folder}: 0/{total} file(s)."))
             current_hashes = {str(image.get("sha256") or "") for image in images}
-            for sha, record in list(photos.items()):
-                if sha and sha not in current_hashes and isinstance(record, dict) and not record.get("removed_at"):
-                    record["status"] = "missing_from_album"
-                    record["removed_at"] = datetime.now().isoformat(timespec="seconds")
+            if scan_paths is None:
+                for sha, record in list(photos.items()):
+                    if sha and sha not in current_hashes and isinstance(record, dict) and not record.get("removed_at"):
+                        record["status"] = "missing_from_album"
+                        record["removed_at"] = datetime.now().isoformat(timespec="seconds")
             rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
             keys_by_cert = self._active_inventory_keys_by_cert(rows)
             active_records = [record for record in rows if str(record.get("status") or "").lower() == "active"]
