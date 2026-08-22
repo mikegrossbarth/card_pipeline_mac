@@ -9704,6 +9704,122 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             },
         )
 
+    def test_inventory_photo_mirror_only_keeps_active_or_unassigned_source_photos(self) -> None:
+        class PhotoDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _inventory_photo_path_is_archived = app.CardPipelineApp._inventory_photo_path_is_archived
+            _inventory_photo_paths = app.CardPipelineApp._inventory_photo_paths
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_path_keys = app.CardPipelineApp._inventory_photo_path_keys
+            _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
+            _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
+            _inventory_photo_state_used_keys = app.CardPipelineApp._inventory_photo_state_used_keys
+            _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
+            _sold_inventory_photo_used_keys = app.CardPipelineApp._sold_inventory_photo_used_keys
+            _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
+            _inventory_photo_source_mirror_candidates = app.CardPipelineApp._inventory_photo_source_mirror_candidates
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "shared" / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            source = Path(tmp) / "icloud" / "INVENTORY PHOTOS"
+            shared = app.INVENTORY_PHOTOS_DIR
+            source.mkdir(parents=True)
+            shared.mkdir(parents=True)
+            paths = {
+                "active.jpg": b"active image",
+                "fresh.jpg": b"fresh image",
+                "no-match.jpg": b"retry image",
+                "old-linked.jpg": b"old linked image",
+                "sold-path.jpg": b"sold path image",
+                "sold-state.jpg": b"sold state image",
+                "inactive.jpg": b"inactive image",
+            }
+            for name, contents in paths.items():
+                (source / name).write_bytes(contents)
+            archive_photo = source / "sold photos" / "archived.jpg"
+            archive_photo.parent.mkdir(parents=True)
+            archive_photo.write_bytes(b"archived image")
+
+            dummy = PhotoDummy()
+            dummy.app_settings = {"inventory_photo_folder": str(source)}
+            dummy._save_inventory_ledger(
+                [
+                    {"inventory_key": "active-key", "status": "Active", "card_title": "Active Card", "photo_paths": ["active.jpg"]},
+                    {"inventory_key": "inactive-key", "status": "Sold", "card_title": "Inactive Card", "photo_paths": ["inactive.jpg"]},
+                ]
+            )
+            dummy._save_profit_ledger(
+                [
+                    {"cert_number": "11111111", "card_title": "Sold Path Card", "sale_price": 20, "photo_paths": ["sold-path.jpg"]},
+                ]
+            )
+            old_linked_sha = dummy._inventory_photo_file_hash(source / "old-linked.jpg")
+            sold_state_sha = dummy._inventory_photo_file_hash(source / "sold-state.jpg")
+            no_match_sha = dummy._inventory_photo_file_hash(source / "no-match.jpg")
+            app.INVENTORY_PHOTO_STATE_PATH.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "photos": {
+                            old_linked_sha: {
+                                "path": str(source / "old-linked.jpg"),
+                                "filename": "old-linked.jpg",
+                                "linked_keys": ["old-key"],
+                                "status": "linked",
+                            },
+                            sold_state_sha: {
+                                "path": str(source / "sold-state.jpg"),
+                                "filename": "sold-state.jpg",
+                                "linked_keys": [],
+                                "status": "sold_inventory",
+                            },
+                            no_match_sha: {
+                                "path": str(source / "no-match.jpg"),
+                                "filename": "no-match.jpg",
+                                "linked_keys": [],
+                                "status": "no_matching_inventory",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                found = {path.name for path in dummy._inventory_photo_source_mirror_candidates(source, shared)}
+                self.assertEqual(found, {"active.jpg", "fresh.jpg", "no-match.jpg"})
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+
     def test_inventory_photo_scan_retries_previous_no_match_but_skips_active_link(self) -> None:
         class PhotoDummy:
             _money_value = app.CardPipelineApp._money_value

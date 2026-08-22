@@ -9087,6 +9087,21 @@ class CardPipelineApp(tk.Tk):
         shutil.copy2(source_path, destination)
         return destination
 
+    def _inventory_photo_path_keys(self, path: Path) -> set[str]:
+        keys = {str(path), path.name}
+        try:
+            keys.add(str(path.resolve()))
+        except Exception:
+            pass
+        storage = self._inventory_photo_storage_value(path)
+        if storage:
+            keys.add(storage)
+        relative = self._inventory_photo_relative_path(path)
+        if relative and not relative.is_absolute() and ".." not in relative.parts:
+            keys.add(relative.as_posix())
+            keys.add(str(relative))
+        return {key for key in keys if key}
+
     def _inventory_photo_used_path_keys(self, rows: list[dict[str, object]] | None = None) -> set[str]:
         rows = rows if rows is not None else [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         used: set[str] = set()
@@ -9215,6 +9230,76 @@ class CardPipelineApp(tk.Tk):
             return False
         photo_certs = {scan_to_cert(cert) for cert in (existing.get("certs") or []) if scan_to_cert(cert)}
         return bool(photo_certs & sold_certs)
+
+    def _inventory_photo_source_mirror_candidates(self, source: Path, shared: Path) -> list[Path]:
+        source_images = self._inventory_photo_paths(source)
+        if not source_images:
+            return []
+
+        inventory_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        active_rows = [
+            record
+            for record in inventory_rows
+            if str(record.get("status") or "").strip().lower() == "active"
+        ]
+        active_photo_paths = self._inventory_photo_used_path_keys(active_rows)
+        active_photo_hashes = self._inventory_photo_used_hashes(active_rows)
+        inventory_photo_paths = self._inventory_photo_used_path_keys(inventory_rows)
+        inventory_photo_hashes = self._inventory_photo_used_hashes(inventory_rows)
+        state_used_names, state_used_paths, state_used_hashes = self._inventory_photo_state_used_keys()
+        sold_photo_source = getattr(self, "_sold_inventory_photo_used_keys", None)
+        sold_photo_paths, sold_photo_hashes = sold_photo_source() if callable(sold_photo_source) else (set(), set())
+        sold_certs_source = getattr(self, "_sold_inventory_cert_numbers", None)
+        sold_certs = sold_certs_source() if callable(sold_certs_source) else set()
+        state = self._load_inventory_photo_state()
+        photos = state.get("photos") if isinstance(state, dict) else {}
+        photos = photos if isinstance(photos, dict) else {}
+
+        candidates: list[Path] = []
+        seen: set[str] = set()
+        for source_path in source_images:
+            keys = self._inventory_photo_path_keys(source_path)
+            try:
+                relative = source_path.relative_to(source)
+                keys.add(relative.as_posix())
+                destination = shared / relative
+                keys.update(self._inventory_photo_path_keys(destination))
+            except Exception:
+                pass
+
+            unique_key = ""
+            try:
+                unique_key = self._inventory_photo_file_hash(source_path)
+            except Exception:
+                pass
+
+            if (keys & active_photo_paths) or (unique_key and unique_key in active_photo_hashes):
+                resolved_key = unique_key or next(iter(keys), str(source_path))
+                if resolved_key not in seen:
+                    seen.add(resolved_key)
+                    candidates.append(source_path)
+                continue
+
+            existing_state = photos.get(unique_key) if unique_key and isinstance(photos.get(unique_key), dict) else {}
+            if existing_state and self._inventory_photo_state_matches_sold_cert(existing_state, sold_certs):
+                continue
+            if source_path.name in state_used_names:
+                continue
+            if keys & inventory_photo_paths or keys & state_used_paths or keys & sold_photo_paths:
+                continue
+            if unique_key and (
+                unique_key in inventory_photo_hashes
+                or unique_key in state_used_hashes
+                or unique_key in sold_photo_hashes
+            ):
+                continue
+
+            resolved_key = unique_key or next(iter(keys), str(source_path))
+            if resolved_key in seen:
+                continue
+            seen.add(resolved_key)
+            candidates.append(source_path)
+        return sorted(candidates, key=lambda item: str(item).lower())
 
     def _inventory_unattached_photo_paths(self) -> list[Path]:
         used = self._inventory_photo_used_path_keys()
@@ -16371,13 +16456,13 @@ class CardPipelineApp(tk.Tk):
         if source_resolved == shared_resolved:
             return shared
         try:
-            source_images = self._inventory_photo_paths(source)
+            source_images = self._inventory_photo_source_mirror_candidates(source, shared)
             total = len(source_images)
             shared.mkdir(parents=True, exist_ok=True)
             copied = 0
             skipped = 0
             if not total:
-                self._inventory_photo_status(f"No inventory photos found in {source}. Scanning {shared}...", background=background)
+                self._inventory_photo_status(f"No active or unassigned inventory photos found in {source}. Scanning {shared}...", background=background)
                 if not background:
                     self.update_idletasks()
             for index, source_path in enumerate(source_images, start=1):
