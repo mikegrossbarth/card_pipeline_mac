@@ -1404,7 +1404,7 @@ class BridgeServer:
                 if parsed.path == "/ebay/oauth/callback":
                     self._send_ebay_oauth_callback(parsed)
                     return
-                if parsed.path in {"/ebay/broker/callback", "/mobile/ebay/broker/callback"}:
+                if parsed.path == "/ebay/broker/callback":
                     self._send_ebay_broker_callback(parsed)
                     return
                 if parsed.path == "/ebay/oauth/declined":

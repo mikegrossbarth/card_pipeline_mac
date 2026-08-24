@@ -22,9 +22,6 @@ from ebay_api import (
 
 BROKER_STATE_KIND = "lucas_ebay_broker"
 DEFAULT_STORE_PATH = Path(__file__).resolve().parent / "work" / "ebay_broker_connections.json"
-DEFAULT_ALLOWED_CALLBACK_HOSTS = ("lucas.mikeyscards.com", "team-lucas.mikeyscards.com")
-LOCAL_CALLBACK_PATH = "/ebay/broker/callback"
-HOSTED_CALLBACK_PATH = "/mobile/ebay/broker/callback"
 
 
 def broker_store_path() -> Path:
@@ -38,12 +35,6 @@ def broker_public_url() -> str:
 
 def broker_state_secret() -> str:
     return str(os.environ.get("LUCAS_EBAY_BROKER_STATE_SECRET") or os.environ.get("EBAY_CLIENT_SECRET") or "").strip()
-
-
-def allowed_callback_hosts() -> set[str]:
-    raw = str(os.environ.get("LUCAS_EBAY_ALLOWED_CALLBACK_HOSTS") or "").strip()
-    values = raw.split(",") if raw else DEFAULT_ALLOWED_CALLBACK_HOSTS
-    return {value.strip().lower() for value in values if value.strip()}
 
 
 def _load_store() -> dict[str, object]:
@@ -101,12 +92,7 @@ def _decode_state(value: str) -> dict[str, object]:
 
 def _callback_allowed(callback: str) -> bool:
     parsed = urllib.parse.urlparse(str(callback or "").strip())
-    hostname = (parsed.hostname or "").lower()
-    if parsed.scheme == "http" and hostname in {"127.0.0.1", "localhost"} and parsed.path == LOCAL_CALLBACK_PATH:
-        return True
-    if parsed.scheme == "https" and parsed.path == HOSTED_CALLBACK_PATH and hostname in allowed_callback_hosts():
-        return True
-    return False
+    return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"} and parsed.path == "/ebay/broker/callback"
 
 
 def _redirect(handler: BaseHTTPRequestHandler, target: str) -> None:
@@ -328,11 +314,11 @@ class EbayBrokerHandler(BaseHTTPRequestHandler):
         )
 
 
-def run(host: str = "0.0.0.0", port: int = 8788) -> None:
+def run(host: str = "127.0.0.1", port: int = 8788) -> None:
     server = ThreadingHTTPServer((host, port), EbayBrokerHandler)
     print(f"LUCAS eBay broker listening on http://{host}:{port}")
     server.serve_forever()
 
 
 if __name__ == "__main__":
-    run(os.environ.get("HOST", "0.0.0.0"), int(os.environ.get("PORT", "8788")))
+    run(os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "8788")))
