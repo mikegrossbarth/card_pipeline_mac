@@ -28,7 +28,6 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
-from typing import Callable
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -68,9 +67,7 @@ from ebay_api import (  # noqa: E402
     EbayOAuthError,
     ebay_access_token_for_account,
     ebay_account_record,
-    ebay_account_request,
     ebay_account_status,
-    ebay_broker_url,
     ebay_inventory_request,
 )
 
@@ -3308,210 +3305,39 @@ class CardPipelineApp(tk.Tk):
         profile = "personal" if self._is_personal_lucas() else "team"
         return f"http://{host}:{self.bridge.port}/mobile/{profile}"
 
-    def _ebay_direct_oauth_allowed(self) -> bool:
-        return str(os.environ.get("LUCAS_EBAY_INTERNAL_DIRECT_OAUTH") or "").strip().lower() in {"1", "true", "yes", "on"}
-
     def _ebay_connect_url(self, account: str = "default") -> str:
         profile = "personal" if self._is_personal_lucas() else "team"
-        local_callback = f"http://127.0.0.1:{self.bridge.port}/ebay/broker/callback"
-        if self._ebay_direct_oauth_allowed():
-            base = f"http://127.0.0.1:{self.bridge.port}"
-            return f"{base}/ebay/connect?{urllib.parse.urlencode({'profile': profile, 'account': account})}"
-        return ebay_broker_url() + "/connect?" + urllib.parse.urlencode(
-            {
-                "profile": profile,
-                "account": account,
-                "callback": local_callback,
-                "app": "lucas-desktop",
-            }
-        )
-
-    def _ebay_record_is_connected(self, record: dict[str, object]) -> bool:
-        if str(record.get("connection_mode") or "").strip().lower() == "broker":
-            return bool(str(record.get("connection_token") or "").strip())
-        if CardPipelineApp._ebay_direct_oauth_allowed(self):
-            return bool(str(record.get("refresh_token") or "").strip())
-        return False
-
-    def _ebay_account_display_name(self, account: str = "default", record: dict[str, object] | None = None) -> str:
-        seller = str((record or {}).get("seller_username") or "").strip()
-        if seller:
-            return seller
-        account_key = str(account or (record or {}).get("account") or "default").strip() or "default"
-        if account_key == "default":
-            return "Primary eBay Account"
-        return account_key
-
-    def _ebay_connection_mode_label(self, record: dict[str, object]) -> str:
-        if str(record.get("connection_mode") or "").strip().lower() == "broker" and str(record.get("connection_token") or "").strip():
-            return "Bundled LUCAS eBay"
-        if str(record.get("refresh_token") or "").strip():
-            return "Legacy Direct eBay"
-        if not str(record.get("connection_token") or "").strip():
-            return "Not connected"
-        return "Not connected"
+        base = f"http://127.0.0.1:{self.bridge.port}"
+        return f"{base}/ebay/connect?{urllib.parse.urlencode({'profile': profile, 'account': account})}"
 
     def open_ebay_connection_helper(self) -> None:
         account = str(self._ebay_env_config().get("account") or "default").strip() or "default"
         store_path = self.state.ebay_store_path()
         record = ebay_account_record(store_path, account)
-        if record and (str(record.get("refresh_token") or "").strip() or str(record.get("connection_token") or "").strip()):
+        if record and str(record.get("refresh_token") or "").strip():
             def timestamp(value: object) -> str:
                 try:
                     return datetime.fromtimestamp(int(value)).strftime("%Y-%m-%d %I:%M %p")
                 except (TypeError, ValueError, OSError):
                     return str(value or "").strip() or "unknown"
 
-            connected = CardPipelineApp._ebay_record_is_connected(self, record)
-            prompt = "Reconnect this eBay account?" if connected else "Replace this old direct connection with the bundled eBay login?"
             details = "\n".join(
                 [
-                    f"Account: {self._ebay_account_display_name(account, record)}",
-                    f"Connection: {self._ebay_connection_mode_label(record)}",
+                    f"Account: {account}",
+                    f"Environment: {record.get('env') or 'production'}",
                     f"Connected: {timestamp(record.get('connected_at'))}",
                     f"Updated: {timestamp(record.get('updated_at'))}",
                     f"Saved in: {store_path}",
                     "",
-                    prompt,
+                    "Reconnect this eBay account?",
                 ]
             )
             if not messagebox.askyesno("eBay Account", details):
-                status = "already connected" if connected else "still needs the bundled eBay login"
-                self.events.put(("status", f"eBay account {self._ebay_account_display_name(account, record)} is {status}."))
+                self.events.put(("status", f"eBay account {account} is already connected."))
                 return
         url = self._ebay_connect_url()
         webbrowser.open(url)
         self.events.put(("status", "Opened eBay Connect in browser. Sign in once to link this seller account to LUCAS."))
-
-    def open_ebay_listing_settings(self, refresh: Callable[[], None] | None = None) -> None:
-        config = self._ebay_env_config()
-        setup_options = self._ebay_listing_setup_options()
-        popup = tk.Toplevel(self)
-        popup.title("eBay Listing Settings")
-        popup.configure(bg="#1f1f1f")
-        popup.transient(self)
-        popup.geometry("820x720")
-        popup.minsize(760, 640)
-
-        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(16, 14))
-        frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text="eBay Listing Settings", style="Panel.TLabel", font=("Segoe UI Semibold", 14)).grid(row=0, column=0, columnspan=4, sticky="w")
-        ttk.Label(frame, text="Defaults used when LUCAS saves eBay draft offers or submits selected cards live.", style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(5, 12))
-        frame.columnconfigure(1, weight=1)
-        frame.columnconfigure(3, weight=1)
-
-        field_vars: dict[str, tk.StringVar] = {}
-        option_label_to_id: dict[str, dict[str, str]] = {}
-        option_id_to_label: dict[str, dict[str, str]] = {}
-        account = str(config.get("account") or "default").strip() or "default"
-        account_record = ebay_account_record(self.state.ebay_store_path(), account)
-        connected = CardPipelineApp._ebay_record_is_connected(self, account_record)
-        account_lines = [
-            f"Status: {'Active' if connected else 'Not connected'}",
-            f"Account: {self._ebay_account_display_name(account, account_record)}",
-            f"Connection: {self._ebay_connection_mode_label(account_record)}",
-            f"Saved in: {self.state.ebay_store_path()}",
-        ]
-        if connected:
-            try:
-                updated = datetime.fromtimestamp(int(account_record.get("updated_at") or account_record.get("connected_at") or 0)).strftime("%Y-%m-%d %I:%M %p")
-            except (TypeError, ValueError, OSError):
-                updated = "unknown"
-            account_lines.append(f"Last updated: {updated}")
-
-        account_frame = ttk.Frame(frame, style="Panel.TFrame")
-        account_frame.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(0, 12))
-        account_frame.columnconfigure(0, weight=1)
-        ttk.Label(account_frame, text="eBay Account Setup", style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=0, column=0, sticky="w")
-        ttk.Label(account_frame, text="\n".join(account_lines), style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
-        ttk.Button(account_frame, text="Reconnect eBay" if connected else "Connect eBay", command=self.open_ebay_connection_helper, style="Soft.TButton").grid(row=0, column=1, rowspan=2, sticky="e", padx=(12, 0))
-
-        def add_entry(row: int, column: int, key: str, label: str, width: int = 28) -> None:
-            ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=column, sticky="w", padx=(0, 8), pady=4)
-            value = str(config.get(key) or "")
-            values = setup_options.get(key) or []
-            if values:
-                option_label_to_id[key] = {option["label"]: option["id"] for option in values}
-                option_id_to_label[key] = {option["id"]: option["label"] for option in values}
-                value = option_id_to_label[key].get(value, value)
-            var = tk.StringVar(value=value)
-            field_vars[key] = var
-            if values:
-                ttk.Combobox(frame, textvariable=var, values=[option["label"] for option in values], width=width).grid(row=row, column=column + 1, sticky="ew", pady=4)
-            else:
-                ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=column + 1, sticky="ew", pady=4)
-
-        ttk.Label(frame, text="eBay Policies", style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=3, column=0, columnspan=4, sticky="w", pady=(0, 4))
-        add_entry(4, 0, "payment_policy_id", "Payment policy")
-        add_entry(4, 2, "return_policy_id", "Return policy")
-        add_entry(5, 0, "fulfillment_policy_id", "Shipping policy")
-        add_entry(5, 2, "merchant_location_key", "Ship-from location")
-
-        ttk.Label(frame, text="Listing Defaults", style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=6, column=0, columnspan=4, sticky="w", pady=(12, 4))
-        ttk.Label(frame, text="Seller account", style="Panel.TLabel").grid(row=7, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Label(frame, text=self._ebay_account_display_name(account, account_record), style="Muted.TLabel").grid(row=7, column=1, sticky="w", pady=4)
-        add_entry(7, 2, "marketplace_id", "Marketplace")
-        add_entry(8, 0, "category_id", "eBay category ID")
-        add_entry(8, 2, "currency", "Currency")
-        add_entry(9, 0, "quantity", "Quantity")
-        add_entry(9, 2, "price_multiplier", "Price multiplier")
-        add_entry(10, 0, "listing_duration", "Duration")
-        add_entry(10, 2, "format", "Format")
-
-        ttk.Label(frame, text="Condition type", style="Panel.TLabel").grid(row=11, column=0, sticky="w", padx=(0, 8), pady=4)
-        condition_var = tk.StringVar(value=str(config.get("condition") or "USED"))
-        field_vars["condition"] = condition_var
-        condition_box = ttk.Combobox(frame, textvariable=condition_var, values=("USED", "NEW", "LIKE_NEW", "VERY_GOOD", "GOOD", "ACCEPTABLE"), state="readonly")
-        condition_box.grid(row=11, column=1, sticky="ew", pady=4)
-
-        ttk.Label(frame, text="Description footer", style="Panel.TLabel").grid(row=12, column=0, columnspan=4, sticky="w", pady=(12, 4))
-        footer = tk.Text(frame, height=6, wrap=tk.WORD, bg="#151515", fg="#f3f4f6", insertbackground="#f3f4f6", relief=tk.FLAT)
-        footer.grid(row=13, column=0, columnspan=4, sticky="nsew", pady=(0, 10))
-        footer.insert("1.0", str(config.get("description_footer") or self._ebay_saved_listing_settings().get("description_footer") or ""))
-        frame.rowconfigure(13, weight=1)
-
-        status_var = tk.StringVar()
-        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=14, column=0, columnspan=4, sticky="w", pady=(0, 8))
-
-        def refresh_setup() -> None:
-            try:
-                settings = {key: option_label_to_id.get(key, {}).get(var.get().strip(), var.get().strip()) for key, var in field_vars.items()}
-                settings["description_footer"] = footer.get("1.0", tk.END).strip()
-                live_config = {**config, **settings}
-                imported = self._refresh_ebay_listing_setup_options(live_config)
-            except Exception as error:
-                status_var.set(f"Could not import eBay policies: {error}")
-                return
-            total = sum(len(values) for values in imported.values())
-            status_var.set(f"Imported {total} eBay policy/location option(s). Close and reopen this window to select them.")
-
-        def save() -> None:
-            settings = {key: option_label_to_id.get(key, {}).get(var.get().strip(), var.get().strip()) for key, var in field_vars.items()}
-            settings["description_footer"] = footer.get("1.0", tk.END).strip()
-            try:
-                quantity = int(settings.get("quantity") or "1")
-                if quantity < 1:
-                    raise ValueError
-            except ValueError:
-                status_var.set("Quantity must be a whole number greater than zero.")
-                return
-            try:
-                multiplier = float(settings.get("price_multiplier") or "1")
-                if multiplier <= 0:
-                    raise ValueError
-            except ValueError:
-                status_var.set("Price multiplier must be greater than zero.")
-                return
-            self._save_ebay_listing_settings(settings)
-            status_var.set("Saved eBay listing settings.")
-            if refresh is not None:
-                refresh()
-
-        actions = ttk.Frame(frame, style="Panel.TFrame")
-        actions.grid(row=15, column=0, columnspan=4, sticky="ew")
-        ttk.Button(actions, text="Save Settings", command=save, style="Primary.TButton").pack(side=tk.LEFT)
-        ttk.Button(actions, text="Import eBay Policies", command=refresh_setup, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
 
     def open_ebay_auto_list(self) -> None:
         if not self._ebay_auto_list_enabled():
@@ -3669,7 +3495,6 @@ class CardPipelineApp(tk.Tk):
         actions.pack(fill=tk.X, pady=(12, 0))
         ttk.Button(actions, text="Refresh", command=reload_plan, style="Soft.TButton").pack(side=tk.LEFT)
         ttk.Button(actions, text="Connect eBay", command=connect_ebay, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(actions, text="Listing Settings", command=lambda: self.open_ebay_listing_settings(reload_plan), style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Preview Selected", command=preview_selected, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
 
@@ -5608,140 +5433,6 @@ class CardPipelineApp(tk.Tk):
         EBAY_LISTING_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(EBAY_LISTING_STATE_PATH, state)
 
-    def _ebay_saved_listing_settings(self) -> dict[str, str]:
-        state = self._load_ebay_listing_state()
-        raw = state.get("settings")
-        if not isinstance(raw, dict):
-            return {}
-        allowed = {
-            "account",
-            "marketplace_id",
-            "currency",
-            "category_id",
-            "merchant_location_key",
-            "payment_policy_id",
-            "return_policy_id",
-            "fulfillment_policy_id",
-            "condition",
-            "listing_duration",
-            "format",
-            "quantity",
-            "price_multiplier",
-            "description_footer",
-            "template_inventory_key",
-        }
-        return {key: str(value).strip() for key, value in raw.items() if key in allowed and str(value).strip()}
-
-    def _save_ebay_listing_settings(self, settings: dict[str, str]) -> None:
-        state = self._load_ebay_listing_state()
-        state["settings"] = {str(key): str(value).strip() for key, value in settings.items() if str(value).strip()}
-        self._save_ebay_listing_state(state)
-
-    def _ebay_listing_setup_options(self) -> dict[str, list[dict[str, str]]]:
-        state = self._load_ebay_listing_state()
-        raw = state.get("setup_options")
-        result: dict[str, list[dict[str, str]]] = {
-            "payment_policy_id": [],
-            "return_policy_id": [],
-            "fulfillment_policy_id": [],
-            "merchant_location_key": [],
-        }
-        if not isinstance(raw, dict):
-            return result
-        for key in result:
-            values = raw.get(key)
-            if not isinstance(values, list):
-                continue
-            for value in values:
-                if not isinstance(value, dict):
-                    continue
-                option_id = str(value.get("id") or "").strip()
-                label = str(value.get("label") or option_id).strip()
-                if option_id:
-                    default = str(value.get("default") or "").strip()
-                    option = {"id": option_id, "label": label}
-                    if default:
-                        option["default"] = default
-                    result[key].append(option)
-        return result
-
-    def _save_ebay_listing_setup_options(self, options: dict[str, list[dict[str, str]]]) -> None:
-        state = self._load_ebay_listing_state()
-        clean: dict[str, list[dict[str, str]]] = {}
-        for key, values in options.items():
-            clean[key] = [
-                {
-                    "id": str(value.get("id") or "").strip(),
-                    "label": str(value.get("label") or value.get("id") or "").strip(),
-                    "default": str(value.get("default") or "").strip(),
-                }
-                for value in values
-                if isinstance(value, dict) and str(value.get("id") or "").strip()
-            ]
-        state["setup_options"] = clean
-        self._save_ebay_listing_state(state)
-
-    def _ebay_policy_label(self, policy: dict[str, object], id_key: str) -> str:
-        policy_id = str(policy.get(id_key) or "").strip()
-        name = str(policy.get("name") or "").strip()
-        return f"{name} ({policy_id})" if name and policy_id else name or policy_id
-
-    def _refresh_ebay_listing_setup_options(self, config: dict[str, str]) -> dict[str, list[dict[str, str]]]:
-        api_config = EbayConfig.from_env()
-        account = str(config.get("account") or "default").strip() or "default"
-        access_token = ebay_access_token_for_account(self.state.ebay_store_path(), api_config, account)
-        marketplace = urllib.parse.quote(str(config.get("marketplace_id") or "EBAY_US").strip() or "EBAY_US")
-
-        payment_response = ebay_account_request(api_config, access_token, "GET", f"payment_policy?marketplace_id={marketplace}")
-        return_response = ebay_account_request(api_config, access_token, "GET", f"return_policy?marketplace_id={marketplace}")
-        fulfillment_response = ebay_account_request(api_config, access_token, "GET", f"fulfillment_policy?marketplace_id={marketplace}")
-        location_response = ebay_inventory_request(api_config, access_token, "GET", "location", marketplace_id=str(config.get("marketplace_id") or "EBAY_US"))
-
-        def policy_is_default(policy: dict[str, object]) -> str:
-            category_types = policy.get("categoryTypes")
-            if isinstance(category_types, list) and any(isinstance(item, dict) and item.get("default") for item in category_types):
-                return "1"
-            return ""
-
-        options = {
-            "payment_policy_id": [
-                {"id": str(policy.get("paymentPolicyId") or "").strip(), "label": self._ebay_policy_label(policy, "paymentPolicyId"), "default": policy_is_default(policy)}
-                for policy in payment_response.get("paymentPolicies", [])
-                if isinstance(policy, dict)
-            ],
-            "return_policy_id": [
-                {"id": str(policy.get("returnPolicyId") or "").strip(), "label": self._ebay_policy_label(policy, "returnPolicyId"), "default": policy_is_default(policy)}
-                for policy in return_response.get("returnPolicies", [])
-                if isinstance(policy, dict)
-            ],
-            "fulfillment_policy_id": [
-                {"id": str(policy.get("fulfillmentPolicyId") or "").strip(), "label": self._ebay_policy_label(policy, "fulfillmentPolicyId"), "default": policy_is_default(policy)}
-                for policy in fulfillment_response.get("fulfillmentPolicies", [])
-                if isinstance(policy, dict)
-            ],
-            "merchant_location_key": [
-                {
-                    "id": str(location.get("merchantLocationKey") or "").strip(),
-                    "label": str(location.get("name") or location.get("merchantLocationKey") or "").strip(),
-                }
-                for location in location_response.get("locations", [])
-                if isinstance(location, dict)
-            ],
-        }
-        options = {key: [value for value in values if value.get("id")] for key, values in options.items()}
-        self._save_ebay_listing_setup_options(options)
-        saved_settings = self._ebay_saved_listing_settings()
-        changed = False
-        for key, values in options.items():
-            if saved_settings.get(key) or not values:
-                continue
-            selected = next((value for value in values if value.get("default")), values[0])
-            saved_settings[key] = str(selected.get("id") or "").strip()
-            changed = True
-        if changed:
-            self._save_ebay_listing_settings(saved_settings)
-        return options
-
     def _ebay_media_token(self) -> str:
         state = self._load_ebay_listing_state()
         token = str(state.get("media_token") or "").strip()
@@ -5768,7 +5459,7 @@ class CardPipelineApp(tk.Tk):
                 parsed = urllib.parse.urlparse(public_url)
                 base_path = re.sub(r"/mobile/(?:team|personal)/?$", "", parsed.path.rstrip("/"))
                 public_bridge = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, base_path, "", "", "")).rstrip("/")
-        config = {
+        return {
             "account": str(os.environ.get("LUCAS_EBAY_ACCOUNT") or "default").strip() or "default",
             "marketplace_id": str(os.environ.get("EBAY_MARKETPLACE_ID") or "EBAY_US").strip() or "EBAY_US",
             "currency": str(os.environ.get("EBAY_CURRENCY") or "USD").strip() or "USD",
@@ -5782,18 +5473,10 @@ class CardPipelineApp(tk.Tk):
             "format": str(os.environ.get("EBAY_LISTING_FORMAT") or "FIXED_PRICE").strip() or "FIXED_PRICE",
             "quantity": str(os.environ.get("EBAY_LISTING_QUANTITY") or "1").strip() or "1",
             "price_multiplier": str(os.environ.get("EBAY_LIST_PRICE_MULTIPLIER") or "1").strip() or "1",
-            "description_footer": "",
-            "template_inventory_key": "",
             "public_photo_base_url": str(os.environ.get("LUCAS_EBAY_PUBLIC_PHOTO_BASE_URL") or "").strip().rstrip("/"),
             "public_bridge_url": public_bridge,
             "auto_publish": str(os.environ.get("LUCAS_EBAY_AUTO_PUBLISH") or "").strip().lower(),
         }
-        settings_reader = getattr(self, "_ebay_saved_listing_settings", None)
-        saved_settings = settings_reader() if callable(settings_reader) else {}
-        for key, value in saved_settings.items():
-            if key in config:
-                config[key] = value
-        return config
 
     def _ebay_inventory_active_records(self) -> list[dict[str, object]]:
         rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
@@ -5841,7 +5524,7 @@ class CardPipelineApp(tk.Tk):
                 return round(value * max(0.01, multiplier), 2)
         return None
 
-    def _ebay_listing_description(self, record: dict[str, object], config: dict[str, str] | None = None) -> str:
+    def _ebay_listing_description(self, record: dict[str, object]) -> str:
         lines = [self._ebay_listing_title(record), "", "Trading card from LUCAS inventory."]
         cert = scan_to_cert(record.get("cert_number"))
         if cert:
@@ -5853,9 +5536,6 @@ class CardPipelineApp(tk.Tk):
         notes = str(record.get("notes") or "").strip()
         if notes:
             lines.extend(["", notes[:800]])
-        footer = str((config or {}).get("description_footer") or "").strip()
-        if footer:
-            lines.extend(["", footer[:1200]])
         return "\n".join(lines).strip()
 
     def _ebay_listing_aspects(self, record: dict[str, object]) -> dict[str, list[str]]:
@@ -5916,7 +5596,7 @@ class CardPipelineApp(tk.Tk):
             "condition": str(config.get("condition") or "USED"),
             "product": {
                 "title": self._ebay_listing_title(record),
-                "description": self._ebay_listing_description(record, config),
+                "description": self._ebay_listing_description(record),
                 "aspects": self._ebay_listing_aspects(record),
                 "imageUrls": item.get("photo_urls") if isinstance(item.get("photo_urls"), list) else [],
             },
@@ -5956,10 +5636,6 @@ class CardPipelineApp(tk.Tk):
             str(account.get("account") or "").strip()
             for account in connected_accounts
             if isinstance(account, dict)
-            and (
-                str(account.get("connection_mode") or "").strip().lower() == "broker"
-                or CardPipelineApp._ebay_direct_oauth_allowed(self)
-            )
         }
         active_records = self._ebay_inventory_active_records()
         active_by_key = {str(record.get("inventory_key") or ""): record for record in active_records if str(record.get("inventory_key") or "")}
@@ -6018,7 +5694,7 @@ class CardPipelineApp(tk.Tk):
                 "sku": sku,
                 "existing_offer_id": existing_offer_id,
                 "title": self._ebay_listing_title(record),
-                "description": self._ebay_listing_description(record, config),
+                "description": self._ebay_listing_description(record),
                 "price": price,
                 "quantity": quantity,
                 "photo_urls": urls,
@@ -6046,8 +5722,8 @@ class CardPipelineApp(tk.Tk):
         api_config = EbayConfig.from_env()
         account = str(config.get("account") or "default")
         account_record = ebay_account_record(self.state.ebay_store_path(), account)
-        if not CardPipelineApp._ebay_record_is_connected(self, account_record):
-            raise EbayOAuthError("Connect eBay with the bundled LUCAS login before drafting or publishing listings.")
+        if not str(account_record.get("refresh_token") or "").strip():
+            raise EbayOAuthError("Connect eBay from LUCAS before drafting or publishing listings.")
         access_token = ebay_access_token_for_account(self.state.ebay_store_path(), api_config, account)
         sku = str(item.get("sku") or "").strip()
         if not sku:

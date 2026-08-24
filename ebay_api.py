@@ -18,10 +18,7 @@ PRODUCTION_AUTHORIZE_URL = "https://auth.ebay.com/oauth2/authorize"
 SANDBOX_AUTHORIZE_URL = "https://auth.sandbox.ebay.com/oauth2/authorize"
 PRODUCTION_INVENTORY_URL = "https://api.ebay.com/sell/inventory/v1"
 SANDBOX_INVENTORY_URL = "https://api.sandbox.ebay.com/sell/inventory/v1"
-PRODUCTION_ACCOUNT_URL = "https://api.ebay.com/sell/account/v1"
-SANDBOX_ACCOUNT_URL = "https://api.sandbox.ebay.com/sell/account/v1"
 CONNECT_STATE_KIND = "lucas_ebay_connect"
-DEFAULT_BROKER_URL = "https://lucas.mikeyscards.com/ebay"
 DEFAULT_SCOPES = (
     "https://api.ebay.com/oauth/api_scope",
     "https://api.ebay.com/oauth/api_scope/sell.account",
@@ -31,10 +28,6 @@ DEFAULT_SCOPES = (
 
 class EbayOAuthError(RuntimeError):
     pass
-
-
-def ebay_broker_url() -> str:
-    return str(os.environ.get("LUCAS_EBAY_BROKER_URL") or DEFAULT_BROKER_URL).strip().rstrip("/")
 
 
 @dataclass(frozen=True)
@@ -56,10 +49,6 @@ class EbayConfig:
     @property
     def inventory_url(self) -> str:
         return SANDBOX_INVENTORY_URL if self.env.lower() == "sandbox" else PRODUCTION_INVENTORY_URL
-
-    @property
-    def account_url(self) -> str:
-        return SANDBOX_ACCOUNT_URL if self.env.lower() == "sandbox" else PRODUCTION_ACCOUNT_URL
 
     @classmethod
     def from_env(cls) -> "EbayConfig":
@@ -235,44 +224,6 @@ def ebay_inventory_request(
         raise EbayOAuthError(f"eBay returned invalid JSON: {raw[:200]}") from error
 
 
-def ebay_account_request(
-    config: EbayConfig,
-    access_token: str,
-    method: str,
-    path: str,
-    payload: dict[str, object] | None = None,
-    timeout: int = 45,
-) -> dict[str, object]:
-    token = str(access_token or "").strip()
-    if not token:
-        raise EbayOAuthError("Missing eBay access token.")
-    url = config.account_url.rstrip("/") + "/" + path.lstrip("/")
-    body = json.dumps(payload or {}).encode("utf-8") if payload is not None else None
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Content-Language": "en-US",
-        },
-        method=method.upper(),
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8")
-    except urllib.error.HTTPError as error:
-        raw_error = error.read().decode("utf-8", errors="replace")
-        raise EbayOAuthError(raw_error or str(error)) from error
-    except urllib.error.URLError as error:
-        raise EbayOAuthError(str(error)) from error
-    try:
-        return json.loads(raw) if raw else {}
-    except json.JSONDecodeError as error:
-        raise EbayOAuthError(f"eBay returned invalid JSON: {raw[:200]}") from error
-
-
 def ebay_token_store_path(data_root: object = None) -> Path:
     configured = str(os.environ.get("EBAY_TOKEN_STORE_PATH") or "").strip()
     if configured:
@@ -341,45 +292,6 @@ def save_ebay_account_token(
     return record
 
 
-def save_ebay_broker_account(
-    path: Path,
-    account: str,
-    broker_url: str,
-    connection_token: str,
-    seller_username: str = "",
-    marketplace_id: str = "EBAY_US",
-) -> dict[str, object]:
-    token = str(connection_token or "").strip()
-    if not token:
-        raise EbayOAuthError("Missing LUCAS eBay connection token.")
-    account_key = str(account or "default").strip() or "default"
-    now = int(time.time())
-    data = load_ebay_accounts(path)
-    accounts = data.setdefault("accounts", {})
-    if not isinstance(accounts, dict):
-        accounts = {}
-        data["accounts"] = accounts
-    previous = accounts.get(account_key) if isinstance(accounts.get(account_key), dict) else {}
-    record = {
-        **previous,
-        "account": account_key,
-        "env": "production",
-        "connection_mode": "broker",
-        "broker_url": str(broker_url or ebay_broker_url()).strip().rstrip("/"),
-        "connection_token": token,
-        "seller_username": str(seller_username or "").strip(),
-        "marketplace_id": str(marketplace_id or "EBAY_US").strip() or "EBAY_US",
-        "connected_at": previous.get("connected_at") or now,
-        "updated_at": now,
-    }
-    accounts[account_key] = record
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(path)
-    return record
-
-
 def ebay_account_record(path: Path, account: str = "default") -> dict[str, object]:
     data = load_ebay_accounts(path)
     accounts = data.get("accounts") if isinstance(data, dict) else {}
@@ -390,39 +302,8 @@ def ebay_account_record(path: Path, account: str = "default") -> dict[str, objec
     return dict(record) if isinstance(record, dict) else {}
 
 
-def ebay_broker_access_token(record: dict[str, object], timeout: int = 45) -> str:
-    broker = str(record.get("broker_url") or ebay_broker_url()).strip().rstrip("/")
-    connection_token = str(record.get("connection_token") or "").strip()
-    if not broker or not connection_token:
-        raise EbayOAuthError("Connect eBay first so LUCAS has a seller connection token.")
-    request = urllib.request.Request(
-        broker + "/token",
-        data=json.dumps({"connection_token": connection_token}).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8")
-    except urllib.error.HTTPError as error:
-        body = error.read().decode("utf-8", errors="replace")
-        raise EbayOAuthError(body or str(error)) from error
-    except urllib.error.URLError as error:
-        raise EbayOAuthError(str(error)) from error
-    try:
-        payload = json.loads(raw) if raw else {}
-    except json.JSONDecodeError as error:
-        raise EbayOAuthError(f"LUCAS eBay broker returned invalid JSON: {raw[:200]}") from error
-    access_token = str(payload.get("access_token") or "").strip()
-    if not access_token:
-        raise EbayOAuthError("LUCAS eBay broker did not return an access token.")
-    return access_token
-
-
 def ebay_access_token_for_account(path: Path, config: EbayConfig, account: str = "default", allow_env_fallback: bool = False) -> str:
     record = ebay_account_record(path, account)
-    if str(record.get("connection_mode") or "").strip().lower() == "broker":
-        return ebay_broker_access_token(record)
     refresh_token = str(record.get("refresh_token") or (os.environ.get("EBAY_REFRESH_TOKEN") if allow_env_fallback else "") or "").strip()
     if not refresh_token:
         raise EbayOAuthError("Connect eBay first so LUCAS has a seller refresh token.")
@@ -454,10 +335,7 @@ def ebay_account_status(path: Path) -> dict[str, object]:
                     "client_id": record.get("client_id", ""),
                     "connected_at": record.get("connected_at"),
                     "updated_at": record.get("updated_at"),
-                    "connection_mode": record.get("connection_mode") or "direct",
-                    "seller_username": record.get("seller_username", ""),
                     "refresh_token": mask_token(record.get("refresh_token", "")),
-                    "connection_token": mask_token(record.get("connection_token", "")),
                     "scopes": record.get("scopes", []),
                 }
             )

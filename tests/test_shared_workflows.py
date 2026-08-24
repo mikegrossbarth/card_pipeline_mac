@@ -36,7 +36,6 @@ import cardladder_ocr
 import google_sheets_import
 import lucas_diagnostics
 import ebay_api
-import ebay_broker_server
 from comp_engine.workbook_io import WorkbookRow
 from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, normalize_cert, parse_money as intake_parse_money, scan_to_cert, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
@@ -280,10 +279,7 @@ class SharedStateTests(unittest.TestCase):
             photo = root / "front.jpg"
             photo.write_bytes(b"fake-jpeg")
             store_path = root / "ebay_accounts.json"
-            store_path.write_text(
-                '{"accounts":{"default":{"connection_mode":"broker","connection_token":"lucas-link-secret","broker_url":"https://connect.lucas.example/ebay"}}}',
-                encoding="utf-8",
-            )
+            store_path.write_text('{"accounts":{"default":{"refresh_token":"secret"}}}', encoding="utf-8")
 
             bridge_state = bridge_server.BridgeState()
             bridge_state.ebay_token_store_path = str(store_path)
@@ -335,48 +331,6 @@ class SharedStateTests(unittest.TestCase):
             self.assertEqual(plan["to_list"][0]["price"], 99.99)
             self.assertEqual(plan["to_list"][0]["photo_count"], 1)
             self.assertEqual(plan["needs_review"], [])
-
-    def test_ebay_saved_listing_settings_override_env_and_description_footer(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            state_path = root / "ebay_listing_state.json"
-
-            class SettingsDummy:
-                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
-                _save_ebay_listing_state = app.CardPipelineApp._save_ebay_listing_state
-                _ebay_saved_listing_settings = app.CardPipelineApp._ebay_saved_listing_settings
-                _save_ebay_listing_settings = app.CardPipelineApp._save_ebay_listing_settings
-                _ebay_env_config = app.CardPipelineApp._ebay_env_config
-                _ebay_listing_title = app.CardPipelineApp._ebay_listing_title
-                _ebay_listing_description = app.CardPipelineApp._ebay_listing_description
-                _is_personal_lucas = lambda self: True
-                app_settings = {}
-
-            dummy = SettingsDummy()
-            with patch.object(app, "EBAY_LISTING_STATE_PATH", state_path), patch.dict(
-                app.os.environ,
-                {
-                    "EBAY_DEFAULT_CATEGORY_ID": "env-category",
-                    "EBAY_PAYMENT_POLICY_ID": "env-payment",
-                    "EBAY_RETURN_POLICY_ID": "env-return",
-                    "EBAY_FULFILLMENT_POLICY_ID": "env-ship",
-                },
-                clear=False,
-            ):
-                dummy._save_ebay_listing_settings(
-                    {
-                        "category_id": "saved-category",
-                        "payment_policy_id": "saved-payment",
-                        "description_footer": "Ships securely from Mikey's Cards.",
-                    }
-                )
-                config = dummy._ebay_env_config()
-                description = dummy._ebay_listing_description({"card_title": "Test Card", "cert_number": "12345678"}, config)
-
-            self.assertEqual(config["category_id"], "saved-category")
-            self.assertEqual(config["payment_policy_id"], "saved-payment")
-            self.assertEqual(config["return_policy_id"], "env-return")
-            self.assertIn("Ships securely from Mikey's Cards.", description)
 
     def test_ebay_listing_plan_requires_lucas_connected_account_not_env_token(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -461,98 +415,6 @@ class SharedStateTests(unittest.TestCase):
                 with self.assertRaises(ebay_api.EbayOAuthError):
                     ebay_api.ebay_access_token_for_account(Path(tmp) / "missing.json", config, "default")
 
-    def test_ebay_broker_connection_token_can_supply_access_token(self) -> None:
-        with TemporaryDirectory() as tmp:
-            store_path = Path(tmp) / "ebay_accounts.json"
-            record = ebay_api.save_ebay_broker_account(
-                store_path,
-                "default",
-                "https://connect.lucas.example/ebay",
-                "lucas-link-secret",
-                seller_username="mikeycards",
-            )
-            self.assertEqual(record["connection_mode"], "broker")
-            status = ebay_api.ebay_account_status(store_path)
-            self.assertEqual(status["accounts"][0]["connection_mode"], "broker")
-            self.assertEqual(status["accounts"][0]["seller_username"], "mikeycards")
-            self.assertNotEqual(status["accounts"][0]["connection_token"], "lucas-link-secret")
-
-            class FakeResponse:
-                def __enter__(self):
-                    return self
-
-                def __exit__(self, *_args):
-                    return False
-
-                def read(self):
-                    return b'{"access_token":"access-from-broker"}'
-
-            config = ebay_api.EbayConfig(env="production", client_id="", client_secret="", runame="")
-            with patch("ebay_api.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
-                token = ebay_api.ebay_access_token_for_account(store_path, config, "default")
-
-            self.assertEqual(token, "access-from-broker")
-            request = urlopen.call_args.args[0]
-            self.assertEqual(request.full_url, "https://connect.lucas.example/ebay/token")
-            self.assertIn("lucas-link-secret", request.data.decode("utf-8"))
-
-    def test_ebay_broker_state_is_signed_and_callback_is_local_only(self) -> None:
-        payload = {
-            "kind": ebay_broker_server.BROKER_STATE_KIND,
-            "account": "default",
-            "callback": "http://127.0.0.1:8765/ebay/broker/callback",
-            "created_at": 1787544385,
-        }
-        with patch.dict(ebay_broker_server.os.environ, {"LUCAS_EBAY_BROKER_STATE_SECRET": "state-secret"}, clear=False):
-            state = ebay_broker_server._encode_state(payload)
-            self.assertEqual(ebay_broker_server._decode_state(state)["account"], "default")
-            tampered = ("A" if state[0] != "A" else "B") + state[1:]
-            self.assertEqual(ebay_broker_server._decode_state(tampered), {})
-
-        self.assertTrue(ebay_broker_server._callback_allowed("http://127.0.0.1:8765/ebay/broker/callback"))
-        self.assertTrue(ebay_broker_server._callback_allowed("http://localhost:8765/ebay/broker/callback"))
-        self.assertFalse(ebay_broker_server._callback_allowed("https://lucas.mikeyscards.com/ebay/broker/callback"))
-        self.assertFalse(ebay_broker_server._callback_allowed("http://192.168.1.10:8765/ebay/broker/callback"))
-
-    def test_ebay_policy_import_auto_selects_default_setup_values(self) -> None:
-        with TemporaryDirectory() as tmp:
-            state_path = Path(tmp) / "ebay_listing_state.json"
-            bridge_state = bridge_server.BridgeState()
-            bridge_state.ebay_token_store_path = str(Path(tmp) / "ebay_accounts.json")
-
-            class PolicyDummy:
-                state = bridge_state
-                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
-                _save_ebay_listing_state = app.CardPipelineApp._save_ebay_listing_state
-                _ebay_saved_listing_settings = app.CardPipelineApp._ebay_saved_listing_settings
-                _save_ebay_listing_settings = app.CardPipelineApp._save_ebay_listing_settings
-                _save_ebay_listing_setup_options = app.CardPipelineApp._save_ebay_listing_setup_options
-                _ebay_policy_label = app.CardPipelineApp._ebay_policy_label
-                _refresh_ebay_listing_setup_options = app.CardPipelineApp._refresh_ebay_listing_setup_options
-
-            def fake_account_request(_api_config, _access_token, _method, path):
-                if path.startswith("payment_policy"):
-                    return {"paymentPolicies": [{"name": "Immediate Payment", "paymentPolicyId": "pay-1", "categoryTypes": [{"default": True}]}]}
-                if path.startswith("return_policy"):
-                    return {"returnPolicies": [{"name": "No returns", "returnPolicyId": "return-1", "categoryTypes": [{"default": True}]}]}
-                if path.startswith("fulfillment_policy"):
-                    return {"fulfillmentPolicies": [{"name": "Standard shipping", "fulfillmentPolicyId": "ship-1", "categoryTypes": [{"default": True}]}]}
-                return {}
-
-            with patch.object(app, "EBAY_LISTING_STATE_PATH", state_path), \
-                patch("app.EbayConfig.from_env", return_value=ebay_api.EbayConfig(env="production", client_id="", client_secret="", runame="")), \
-                patch("app.ebay_access_token_for_account", return_value="access"), \
-                patch("app.ebay_account_request", side_effect=fake_account_request), \
-                patch("app.ebay_inventory_request", return_value={"locations": [{"merchantLocationKey": "main", "name": "Main warehouse"}]}):
-                imported = PolicyDummy()._refresh_ebay_listing_setup_options({"account": "default", "marketplace_id": "EBAY_US"})
-                settings = PolicyDummy()._ebay_saved_listing_settings()
-
-            self.assertEqual(imported["payment_policy_id"][0]["label"], "Immediate Payment (pay-1)")
-            self.assertEqual(settings["payment_policy_id"], "pay-1")
-            self.assertEqual(settings["return_policy_id"], "return-1")
-            self.assertEqual(settings["fulfillment_policy_id"], "ship-1")
-            self.assertEqual(settings["merchant_location_key"], "main")
-
     def test_ebay_env_config_uses_mobile_public_url_for_photo_bridge(self) -> None:
         dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
         dummy.app_settings = {"mobile_public_url": "https://lucas.example.com/mobile/personal"}
@@ -596,10 +458,7 @@ class SharedStateTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             store_path = root / "ebay_accounts.json"
-            store_path.write_text(
-                '{"accounts":{"default":{"connection_mode":"broker","connection_token":"lucas-link-secret","broker_url":"https://connect.lucas.example/ebay"}}}',
-                encoding="utf-8",
-            )
+            store_path.write_text('{"accounts":{"default":{"refresh_token":"secret"}}}', encoding="utf-8")
             state_path = root / "ebay_listing_state.json"
             state_path.write_text(
                 json.dumps(
@@ -654,10 +513,7 @@ class SharedStateTests(unittest.TestCase):
     def test_ebay_existing_offer_publish_does_not_create_duplicate_offer(self) -> None:
         with TemporaryDirectory() as tmp:
             store_path = Path(tmp) / "ebay_accounts.json"
-            store_path.write_text(
-                '{"accounts":{"default":{"connection_mode":"broker","connection_token":"lucas-link-secret","broker_url":"https://connect.lucas.example/ebay"}}}',
-                encoding="utf-8",
-            )
+            store_path.write_text('{"accounts":{"default":{"refresh_token":"secret"}}}', encoding="utf-8")
             bridge_state = bridge_server.BridgeState()
             bridge_state.ebay_token_store_path = str(store_path)
 
@@ -3361,10 +3217,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
     def test_bridge_serves_ebay_oauth_and_privacy_pages(self) -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.bind(("127.0.0.1", 0))
-            except PermissionError as error:
-                self.skipTest(f"local socket bind denied: {error}")
+            sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
 
         state = app.BridgeState()
@@ -3378,60 +3231,18 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(response.headers.get("cache-control"), "no-store")
                 self.assertIn("LUCAS Privacy", body)
 
-            with self.assertRaises(urllib.error.HTTPError) as context:
-                urllib.request.urlopen(f"http://127.0.0.1:{port}/ebay/oauth/callback?code=test-code&state=test-state", timeout=5)
-            body = context.exception.read().decode("utf-8")
-            self.assertEqual(context.exception.code, 400)
-            self.assertIn("eBay Not Connected", body)
-            self.assertNotIn("test-code", body)
-            self.assertNotIn("test-state", body)
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/ebay/oauth/callback?code=test-code&state=test-state", timeout=5) as response:
+                body = response.read().decode("utf-8")
+                self.assertEqual(response.status, 200)
+                self.assertIn("eBay Authorization Received", body)
+                self.assertIn("test-code", body)
+                self.assertIn("test-state", body)
         finally:
             bridge.stop()
 
-    def test_bridge_broker_callback_saves_bundled_ebay_connection(self) -> None:
-        with TemporaryDirectory() as tmp:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                try:
-                    sock.bind(("127.0.0.1", 0))
-                except PermissionError as error:
-                    self.skipTest(f"local socket bind denied: {error}")
-                port = sock.getsockname()[1]
-
-            store_path = Path(tmp) / "ebay_accounts.json"
-            state = app.BridgeState()
-            state.ebay_token_store_path = str(store_path)
-            bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
-            bridge.start()
-            self.assertTrue(bridge.started, bridge.error)
-            try:
-                query = urllib.parse.urlencode(
-                    {
-                        "connection_token": "lucas-connection-secret",
-                        "account": "default",
-                        "seller_username": "mikeycards",
-                        "broker_url": "https://connect.lucas.example/ebay",
-                        "marketplace_id": "EBAY_US",
-                    }
-                )
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/ebay/broker/callback?{query}", timeout=5) as response:
-                    body = response.read().decode("utf-8")
-                    self.assertEqual(response.status, 200)
-                    self.assertIn("eBay Ready in LUCAS", body)
-
-                record = ebay_api.ebay_account_record(store_path, "default")
-                self.assertEqual(record["connection_mode"], "broker")
-                self.assertEqual(record["seller_username"], "mikeycards")
-                self.assertEqual(record["broker_url"], "https://connect.lucas.example/ebay")
-                self.assertEqual(record["connection_token"], "lucas-connection-secret")
-            finally:
-                bridge.stop()
-
     def test_bridge_serves_ebay_media_with_head_support(self) -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.bind(("127.0.0.1", 0))
-            except PermissionError as error:
-                self.skipTest(f"local socket bind denied: {error}")
+            sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
 
         state = app.BridgeState()
@@ -3484,34 +3295,16 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 "https://team-env.example.com/mobile/team",
             )
 
-    def test_ebay_connect_url_uses_bundled_broker_by_default(self) -> None:
+    def test_ebay_connect_url_uses_local_bridge_so_tokens_save_to_this_lucas(self) -> None:
         dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
         dummy.app_settings = {"mobile_public_url": "https://lucas.mikeyscards.com/mobile/personal"}
         dummy.bridge = type("Bridge", (), {"port": 8765})()
         dummy._is_personal_lucas = lambda: True
 
-        with patch.dict(app.os.environ, {"LUCAS_EBAY_BROKER_URL": "https://connect.lucas.example/ebay"}, clear=False):
-            url = app.CardPipelineApp._ebay_connect_url(dummy, "mikey")
-
-        parsed = urllib.parse.urlparse(url)
-        query = urllib.parse.parse_qs(parsed.query)
-        self.assertEqual(f"{parsed.scheme}://{parsed.netloc}{parsed.path}", "https://connect.lucas.example/ebay/connect")
-        self.assertEqual(query["profile"], ["personal"])
-        self.assertEqual(query["account"], ["mikey"])
-        self.assertEqual(query["app"], ["lucas-desktop"])
-        self.assertEqual(query["callback"], ["http://127.0.0.1:8765/ebay/broker/callback"])
-
-    def test_ebay_connect_url_can_use_direct_oauth_for_internal_testing(self) -> None:
-        dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
-        dummy.app_settings = {"mobile_public_url": "https://lucas.mikeyscards.com/mobile/personal"}
-        dummy.bridge = type("Bridge", (), {"port": 8765})()
-        dummy._is_personal_lucas = lambda: True
-
-        with patch.dict(app.os.environ, {"LUCAS_EBAY_INTERNAL_DIRECT_OAUTH": "1"}, clear=False):
-            self.assertEqual(
-                app.CardPipelineApp._ebay_connect_url(dummy, "mikey"),
-                "http://127.0.0.1:8765/ebay/connect?profile=personal&account=mikey",
-            )
+        self.assertEqual(
+            app.CardPipelineApp._ebay_connect_url(dummy, "mikey"),
+            "http://127.0.0.1:8765/ebay/connect?profile=personal&account=mikey",
+        )
 
     def test_ebay_connection_helper_reports_existing_connection_before_reconnect(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -3543,8 +3336,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.CardPipelineApp.open_ebay_connection_helper(dummy)
 
             self.assertTrue(ask.called)
-            self.assertIn("Account: Primary eBay Account", ask.call_args.args[1])
-            self.assertNotIn("Account: default", ask.call_args.args[1])
             self.assertIn("Saved in:", ask.call_args.args[1])
             browser_open.assert_not_called()
 
