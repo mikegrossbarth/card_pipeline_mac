@@ -43,6 +43,37 @@ Health check:
 curl http://127.0.0.1:8788/health
 ```
 
+## Cloudflare Routing
+
+The key production routing requirement is that `/ebay*` must go to the broker, not to any individual desktop LUCAS instance.
+
+Example tunnel config:
+
+```yaml
+tunnel: YOUR_TUNNEL_ID
+credentials-file: /etc/cloudflared/YOUR_TUNNEL_ID.json
+
+ingress:
+  - hostname: lucas.mikeyscards.com
+    path: /ebay*
+    service: http://127.0.0.1:8788
+  - hostname: lucas.mikeyscards.com
+    service: http://127.0.0.1:8766
+  - hostname: team-lucas.mikeyscards.com
+    service: http://127.0.0.1:8765
+  - service: http_status:404
+```
+
+The same template is saved at `deploy/ebay-broker/cloudflared.example.yml`.
+
+After deployment, verify:
+
+```bash
+curl https://lucas.mikeyscards.com/ebay/health
+```
+
+The response should say `service: lucas-ebay-broker`. If it reports `service: lucas-mobile`, `/ebay*` is still routed to a desktop LUCAS instance and eBay connect is not production-ready.
+
 ## Desktop Configuration
 
 Desktop LUCAS is broker-first by default. It uses:
