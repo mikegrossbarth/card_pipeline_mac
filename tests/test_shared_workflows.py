@@ -3484,28 +3484,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 "https://team-env.example.com/mobile/team",
             )
 
-    def test_ebay_connect_url_uses_local_bridge_by_default(self) -> None:
+    def test_ebay_connect_url_uses_bundled_broker_by_default(self) -> None:
         dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
         dummy.app_settings = {"mobile_public_url": "https://lucas.mikeyscards.com/mobile/personal"}
         dummy.bridge = type("Bridge", (), {"port": 8765})()
         dummy._is_personal_lucas = lambda: True
 
-        with patch.dict(app.os.environ, {}, clear=False):
-            url = app.CardPipelineApp._ebay_connect_url(dummy, "mikey")
-
-        parsed = urllib.parse.urlparse(url)
-        query = urllib.parse.parse_qs(parsed.query)
-        self.assertEqual(f"{parsed.scheme}://{parsed.netloc}{parsed.path}", "http://127.0.0.1:8765/ebay/connect")
-        self.assertEqual(query["profile"], ["personal"])
-        self.assertEqual(query["account"], ["mikey"])
-
-    def test_ebay_connect_url_can_use_bundled_broker_when_local_oauth_disabled(self) -> None:
-        dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
-        dummy.app_settings = {"mobile_public_url": "https://lucas.mikeyscards.com/mobile/personal"}
-        dummy.bridge = type("Bridge", (), {"port": 8765})()
-        dummy._is_personal_lucas = lambda: True
-
-        with patch.dict(app.os.environ, {"LUCAS_EBAY_DISABLE_LOCAL_OAUTH": "1", "LUCAS_EBAY_BROKER_URL": "https://connect.lucas.example/ebay"}, clear=False):
+        with patch.dict(app.os.environ, {"LUCAS_EBAY_BROKER_URL": "https://connect.lucas.example/ebay"}, clear=False):
             url = app.CardPipelineApp._ebay_connect_url(dummy, "mikey")
 
         parsed = urllib.parse.urlparse(url)
@@ -3515,6 +3500,18 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(query["account"], ["mikey"])
         self.assertEqual(query["app"], ["lucas-desktop"])
         self.assertEqual(query["callback"], ["http://127.0.0.1:8765/ebay/broker/callback"])
+
+    def test_ebay_connect_url_can_use_direct_oauth_for_internal_testing(self) -> None:
+        dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
+        dummy.app_settings = {"mobile_public_url": "https://lucas.mikeyscards.com/mobile/personal"}
+        dummy.bridge = type("Bridge", (), {"port": 8765})()
+        dummy._is_personal_lucas = lambda: True
+
+        with patch.dict(app.os.environ, {"LUCAS_EBAY_INTERNAL_DIRECT_OAUTH": "1"}, clear=False):
+            self.assertEqual(
+                app.CardPipelineApp._ebay_connect_url(dummy, "mikey"),
+                "http://127.0.0.1:8765/ebay/connect?profile=personal&account=mikey",
+            )
 
     def test_ebay_connection_helper_reports_existing_connection_before_reconnect(self) -> None:
         with TemporaryDirectory() as tmp:
