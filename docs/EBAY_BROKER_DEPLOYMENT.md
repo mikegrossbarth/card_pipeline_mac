@@ -1,86 +1,57 @@
 # LUCAS eBay Broker
 
-The production eBay connection flow runs on the Windows-hosted LUCAS machine. End users should only click **Connect eBay**, sign in at eBay, and return to LUCAS ready to list cards.
+The production eBay connection flow must use one hosted LUCAS broker. Desktop users should never configure eBay developer keys.
 
-## Correct Hosted Flow
+## Flow
 
-1. Hosted LUCAS opens `https://lucas.mikeyscards.com/ebay/connect`.
-2. The eBay broker redirects the user to official eBay OAuth.
-3. eBay redirects back to the broker callback registered in the eBay developer app.
-4. The broker stores the eBay refresh token server-side on the Windows host.
-5. The broker redirects to hosted LUCAS at `https://lucas.mikeyscards.com/mobile/ebay/broker/callback`.
-6. LUCAS saves only a LUCAS connection token in its normal account store.
-7. When listing cards, LUCAS asks the broker for short-lived eBay access tokens.
+1. Desktop LUCAS opens `https://lucas.mikeyscards.com/ebay/connect`.
+2. The broker redirects the user to official eBay OAuth.
+3. eBay redirects back to the registered broker callback.
+4. The broker stores the eBay refresh token server-side.
+5. The broker redirects back to the running desktop app with a LUCAS connection token.
+6. Desktop LUCAS stores only that connection token and asks the broker for short-lived eBay access tokens when listing cards.
 
-The broker owns `/ebay*`. LUCAS owns `/mobile/ebay/broker/callback`. Do not route the LUCAS callback through `/ebay*`.
+## Required Environment
 
-## Required Windows Environment
+Set these on the hosted broker service:
 
-Set these on the Windows host account that runs the broker:
-
-```powershell
-setx EBAY_ENV production
-setx EBAY_CLIENT_ID "..."
-setx EBAY_CLIENT_SECRET "..."
-setx EBAY_RUNAME "..."
-setx EBAY_OAUTH_SCOPES "https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/sell.account https://api.ebay.com/oauth/api_scope/sell.inventory"
-setx LUCAS_EBAY_BROKER_PUBLIC_URL "https://lucas.mikeyscards.com/ebay"
-setx LUCAS_EBAY_ALLOWED_CALLBACK_HOSTS "lucas.mikeyscards.com,team-lucas.mikeyscards.com"
-setx LUCAS_EBAY_BROKER_STATE_SECRET "replace-with-long-random-secret"
-setx LUCAS_EBAY_BROKER_STORE_PATH "C:\LUCAS\ebay_broker_connections.json"
+```bash
+EBAY_ENV=production
+EBAY_CLIENT_ID=...
+EBAY_CLIENT_SECRET=...
+EBAY_RUNAME=...
+EBAY_OAUTH_SCOPES="https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/sell.account https://api.ebay.com/oauth/api_scope/sell.inventory"
+LUCAS_EBAY_BROKER_PUBLIC_URL=https://lucas.mikeyscards.com/ebay
+LUCAS_EBAY_BROKER_STATE_SECRET=...
+LUCAS_EBAY_BROKER_STORE_PATH=/data/ebay_broker_connections.json
+HOST=0.0.0.0
+PORT=8788
 ```
 
-Restart PowerShell after `setx`, or set the same values in the current shell with `$env:NAME = "value"` before testing.
+`EBAY_RUNAME` must be the redirect name/URL registered in the eBay developer app for the broker callback, not an individual desktop machine.
 
-`EBAY_RUNAME` must be the redirect name/URL registered in the shared LUCAS eBay developer app for the broker callback. It is not a per-user value.
+## Local Docker Run
 
-## Update The Windows Checkout
-
-From the Windows LUCAS repo:
-
-```powershell
-cd C:\Users\user\Documents\card_pipeline
-git fetch origin
-git checkout -B mobile-shared-photo-upload origin/mobile-shared-photo-upload
-git rev-parse HEAD
-dir .\ebay_broker_server.py
+```bash
+docker build -f Dockerfile.ebay-broker -t lucas-ebay-broker .
+docker run --rm -p 8788:8788 --env-file .env -e LUCAS_EBAY_BROKER_STATE_SECRET=change-me lucas-ebay-broker
 ```
 
-The file `ebay_broker_server.py` must exist in that folder. If `git rev-parse --show-toplevel` points somewhere else, run these commands from that top-level repo folder instead.
+Health check:
 
-## Run The Broker On Windows
-
-From the Windows repo:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\deploy\ebay-broker\windows\run-ebay-broker.ps1
-```
-
-Verify locally:
-
-```powershell
+```bash
 curl http://127.0.0.1:8788/health
 ```
 
-Expected JSON includes:
+## Cloudflare Routing
 
-```json
-{"ok": true, "service": "lucas-ebay-broker"}
-```
+The key production routing requirement is that `/ebay*` must go to the broker, not to any individual desktop LUCAS instance.
 
-To install it as a startup task:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\deploy\ebay-broker\windows\install-ebay-broker-task.ps1
-```
-
-## Cloudflare Routing On Windows
-
-The tunnel must route only `/ebay*` to the broker:
+Example tunnel config:
 
 ```yaml
 tunnel: YOUR_TUNNEL_ID
-credentials-file: C:\Users\user\.cloudflared\YOUR_TUNNEL_ID.json
+credentials-file: /etc/cloudflared/YOUR_TUNNEL_ID.json
 
 ingress:
   - hostname: lucas.mikeyscards.com
@@ -93,25 +64,28 @@ ingress:
   - service: http_status:404
 ```
 
-The same template is saved at `deploy/ebay-broker/windows/cloudflared-windows.example.yml`.
+The same template is saved at `deploy/ebay-broker/cloudflared.example.yml`.
 
-Verify public routing:
+After deployment, verify:
 
-```powershell
+```bash
 curl https://lucas.mikeyscards.com/ebay/health
-curl https://lucas.mikeyscards.com/mobile/api/config
 ```
 
-The first response should say `service: lucas-ebay-broker`. The second should still be the normal LUCAS mobile API. If `/ebay/health` says `lucas-mobile`, Cloudflare is still routing eBay to the app instead of the broker.
+The response should say `service: lucas-ebay-broker`. If it reports `service: lucas-mobile`, `/ebay*` is still routed to a desktop LUCAS instance and eBay connect is not production-ready.
 
-## Desktop/Hosted LUCAS Configuration
+## Desktop Configuration
 
-Hosted Windows LUCAS should have a public mobile URL configured, for example:
+Desktop LUCAS is broker-first by default. It uses:
 
-```powershell
-setx LUCAS_PERSONAL_MOBILE_PUBLIC_URL "https://lucas.mikeyscards.com/mobile/personal"
-setx LUCAS_TEAM_MOBILE_PUBLIC_URL "https://team-lucas.mikeyscards.com/mobile/team"
-setx LUCAS_EBAY_BROKER_URL "https://lucas.mikeyscards.com/ebay"
+```bash
+LUCAS_EBAY_BROKER_URL=https://lucas.mikeyscards.com/ebay
 ```
 
-Production users should not set `LUCAS_EBAY_USE_LOCAL_OAUTH`. That flag is only for local developer testing.
+Only use local desktop OAuth for development:
+
+```bash
+LUCAS_EBAY_USE_LOCAL_OAUTH=1
+```
+
+Production users should not set `LUCAS_EBAY_USE_LOCAL_OAUTH`.
