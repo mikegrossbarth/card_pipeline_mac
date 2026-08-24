@@ -28,7 +28,6 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
-from typing import Callable
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -63,16 +62,6 @@ from assignment_config_ui import open_assignment_rules_dialog, open_people_rules
 from google_sheets_import import export_google_sheet_to_xlsx  # noqa: E402
 from lucas_diagnostics import diagnostic_json, lucas_version_label, setup_doctor_results  # noqa: E402
 from shared_state import atomic_write_json, local_identity, shared_lock  # noqa: E402
-from ebay_api import (  # noqa: E402
-    EbayConfig,
-    EbayOAuthError,
-    ebay_access_token_for_account,
-    ebay_account_record,
-    ebay_account_request,
-    ebay_account_status,
-    ebay_broker_url,
-    ebay_inventory_request,
-)
 
 from intake_io import (  # noqa: E402
     append_company_sheet_rows,
@@ -142,7 +131,6 @@ INVENTORY_DELETED_TOMBSTONES_PATH = CARD_PIPELINE_DIR / "inventory_deleted_tombs
 INVENTORY_PHOTOS_DIR = CARD_PIPELINE_DIR / "INVENTORY PHOTOS"
 INVENTORY_PHOTO_STATE_PATH = CARD_PIPELINE_DIR / "inventory_photo_state.json"
 INSTAGRAM_INVENTORY_STATE_PATH = CARD_PIPELINE_DIR / "instagram_inventory_state.json"
-EBAY_LISTING_STATE_PATH = CARD_PIPELINE_DIR / "ebay_listing_state.json"
 DELETED_ARCHIVE_DIR = CARD_PIPELINE_DIR / "DELETED ARCHIVE"
 DELETED_INVENTORY_PHOTOS_DIR = DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
 DELETED_SHEETS_DIR = DELETED_ARCHIVE_DIR / "SHEETS"
@@ -397,15 +385,6 @@ def mobile_bridge_port(settings: dict[str, object] | None = None, settings_path:
     return 8766 if is_personal_lucas_profile(settings, settings_path) else 8765
 
 
-def mobile_profile_data_root_error(profile: str, data_root: Path, settings_path: Path) -> str:
-    profile = str(profile or "").strip().lower()
-    root_text = str(data_root or "").strip().lower()
-    settings_text = str(settings_path or "").strip()
-    if profile == "personal" and not any(marker in root_text for marker in ("lucas_personal", "personal lucas")):
-        return f"Personal mobile is using the wrong data root: {data_root}. Fix {settings_text} so pipeline_root points to LUCAS_PERSONAL."
-    return ""
-
-
 def make_photo_ocr_client(api_key: str):
     if genai is None:
         return None
@@ -460,7 +439,7 @@ def is_google_sheet_url(value: object) -> bool:
 
 
 def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> None:
-    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, INVENTORY_DELETED_TOMBSTONES_PATH, INVENTORY_PHOTOS_DIR, INVENTORY_PHOTO_STATE_PATH, INSTAGRAM_INVENTORY_STATE_PATH, EBAY_LISTING_STATE_PATH, DELETED_ARCHIVE_DIR, DELETED_INVENTORY_PHOTOS_DIR, DELETED_SHEETS_DIR, ACTIVITY_LOG_PATH, MOBILE_ACTION_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH, HOME_SUMMARY_CACHE_PATH
+    global CARD_PIPELINE_DIR, WORKING_SHEETS_DIR, INCOMING_SHEETS_DIR, RECEIVED_SHEETS_DIR, ARCHIVED_SHEETS_DIR, COMPANY_SHEETS_DIR, SHEET_MARKERS_PATH, WEEKLY_COMPANY_SHEETS_PATH, PROFIT_LEDGER_PATH, INVENTORY_LEDGER_PATH, INVENTORY_DELETED_TOMBSTONES_PATH, INVENTORY_PHOTOS_DIR, INVENTORY_PHOTO_STATE_PATH, INSTAGRAM_INVENTORY_STATE_PATH, DELETED_ARCHIVE_DIR, DELETED_INVENTORY_PHOTOS_DIR, DELETED_SHEETS_DIR, ACTIVITY_LOG_PATH, MOBILE_ACTION_LOG_PATH, UNASSIGNED_PLAYERS_PATH, PLAYER_OVERRIDES_PATH, SELLER_TERMS_PATH, PERFORMANCE_LOG_PATH, HOME_SUMMARY_CACHE_PATH
     CARD_PIPELINE_DIR = Path(path).expanduser()
     WORKING_SHEETS_DIR = Path(working_sheets_dir).expanduser() if working_sheets_dir else CARD_PIPELINE_DIR / "WORKING SHEETS"
     INCOMING_SHEETS_DIR = CARD_PIPELINE_DIR / "INCOMING SHEETS"
@@ -475,7 +454,6 @@ def set_pipeline_root(path: Path, working_sheets_dir: Path | None = None) -> Non
     INVENTORY_PHOTOS_DIR = CARD_PIPELINE_DIR / "INVENTORY PHOTOS"
     INVENTORY_PHOTO_STATE_PATH = CARD_PIPELINE_DIR / "inventory_photo_state.json"
     INSTAGRAM_INVENTORY_STATE_PATH = CARD_PIPELINE_DIR / "instagram_inventory_state.json"
-    EBAY_LISTING_STATE_PATH = CARD_PIPELINE_DIR / "ebay_listing_state.json"
     DELETED_ARCHIVE_DIR = CARD_PIPELINE_DIR / "DELETED ARCHIVE"
     DELETED_INVENTORY_PHOTOS_DIR = DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
     DELETED_SHEETS_DIR = DELETED_ARCHIVE_DIR / "SHEETS"
@@ -900,10 +878,6 @@ class CardPipelineApp(tk.Tk):
         self.app_settings = load_app_settings()
         self.mobile_pin = ensure_mobile_pin(self.app_settings)
         self.state = BridgeState()
-        self.state.mobile_profile = "personal" if is_personal_lucas_profile(self.app_settings, SETTINGS_PATH) else "team"
-        self.state.mobile_data_root = str(CARD_PIPELINE_DIR)
-        self.state.mobile_settings_path = str(SETTINGS_PATH)
-        self.state.mobile_profile_error = mobile_profile_data_root_error(self.state.mobile_profile, CARD_PIPELINE_DIR, SETTINGS_PATH)
         self.state.on_update = lambda: self.events.put("comp_refresh")
         self.state.mobile_pin_provider = lambda: self.mobile_pin
         self.state.mobile_inventory_search = self.mobile_inventory_search
@@ -911,15 +885,12 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_inventory_mark_sold = self.mobile_inventory_mark_sold
         self.state.mobile_inventory_trade = self.mobile_inventory_trade
         self.state.mobile_card_identify = self.mobile_card_identify
-        self.state.mobile_photo_upload = self.mobile_photo_upload
         self.state.mobile_profit_summary = self.mobile_profit_summary
         self.state.mobile_profit_refund = self.mobile_profit_refund
         self.state.mobile_expense_add = self.mobile_expense_add
         self.state.mobile_payouts = self.mobile_payouts
         self.state.mobile_queue_sync = self.mobile_queue_sync
         self.state.mobile_inventory_photo_resolver = self.mobile_inventory_photo_response
-        self.state.ebay_media_token = self._ebay_media_token()
-        self.state.ebay_media_resolver = self.ebay_inventory_media_response
         self.state.instagram_media_resolver = self.instagram_inventory_media_response
         self.bridge = BridgeServer(self.state, port=mobile_bridge_port(self.app_settings, SETTINGS_PATH), allow_port_fallback=True)
         self.bridge.start()
@@ -2908,12 +2879,6 @@ class CardPipelineApp(tk.Tk):
             return set()
         return self._inventory_identity_keys(record)
 
-    def _source_specific_inventory_identity_keys(self, record: dict[str, object], source_field: str = "source_sheet") -> set[str]:
-        source_sheet = Path(str(record.get(source_field) or "")).name.strip().lower()
-        if not source_sheet:
-            return set()
-        return {f"{key}|source:{source_sheet}" for key in self._inventory_identity_keys(record)}
-
     def _active_inventory_rows_excluding_sold_profit(
         self,
         rows: list[dict[str, object]],
@@ -2921,27 +2886,17 @@ class CardPipelineApp(tk.Tk):
         profit_loader = getattr(self, "_load_profit_ledger", None)
         if not callable(profit_loader):
             return rows, []
-        sold_global_keys: set[str] = set()
-        sold_source_keys: set[str] = set()
+        sold_keys: set[str] = set()
         for raw_record in profit_loader():
-            if not isinstance(raw_record, dict):
-                continue
-            keys = self._sold_inventory_identity_keys(raw_record)
-            if not keys:
-                continue
-            original_source_keys = self._source_specific_inventory_identity_keys(raw_record, "original_source_sheet")
-            if original_source_keys:
-                sold_source_keys.update(original_source_keys)
-            else:
-                sold_global_keys.update(keys)
-        if not sold_global_keys and not sold_source_keys:
+            if isinstance(raw_record, dict):
+                sold_keys.update(self._sold_inventory_identity_keys(raw_record))
+        if not sold_keys:
             return rows, []
         kept: list[dict[str, object]] = []
         removed: list[dict[str, object]] = []
         for record in rows:
             keys = self._inventory_identity_keys(record)
-            source_keys = self._source_specific_inventory_identity_keys(record)
-            if keys and (keys & sold_global_keys or source_keys & sold_source_keys):
+            if keys and keys & sold_keys:
                 removed.append(record)
             else:
                 kept.append(record)
@@ -3308,381 +3263,6 @@ class CardPipelineApp(tk.Tk):
         profile = "personal" if self._is_personal_lucas() else "team"
         return f"http://{host}:{self.bridge.port}/mobile/{profile}"
 
-    def _ebay_direct_oauth_allowed(self) -> bool:
-        return str(os.environ.get("LUCAS_EBAY_INTERNAL_DIRECT_OAUTH") or "").strip().lower() in {"1", "true", "yes", "on"}
-
-    def _ebay_connect_url(self, account: str = "default") -> str:
-        profile = "personal" if self._is_personal_lucas() else "team"
-        local_callback = f"http://127.0.0.1:{self.bridge.port}/ebay/broker/callback"
-        if self._ebay_direct_oauth_allowed():
-            base = f"http://127.0.0.1:{self.bridge.port}"
-            return f"{base}/ebay/connect?{urllib.parse.urlencode({'profile': profile, 'account': account})}"
-        return ebay_broker_url() + "/connect?" + urllib.parse.urlencode(
-            {
-                "profile": profile,
-                "account": account,
-                "callback": local_callback,
-                "app": "lucas-desktop",
-            }
-        )
-
-    def _ebay_record_is_connected(self, record: dict[str, object]) -> bool:
-        if str(record.get("connection_mode") or "").strip().lower() == "broker":
-            return bool(str(record.get("connection_token") or "").strip())
-        if CardPipelineApp._ebay_direct_oauth_allowed(self):
-            return bool(str(record.get("refresh_token") or "").strip())
-        return False
-
-    def _ebay_account_display_name(self, account: str = "default", record: dict[str, object] | None = None) -> str:
-        seller = str((record or {}).get("seller_username") or "").strip()
-        if seller:
-            return seller
-        account_key = str(account or (record or {}).get("account") or "default").strip() or "default"
-        if account_key == "default":
-            return "Primary eBay Account"
-        return account_key
-
-    def _ebay_connection_mode_label(self, record: dict[str, object]) -> str:
-        if str(record.get("connection_mode") or "").strip().lower() == "broker" and str(record.get("connection_token") or "").strip():
-            return "Bundled LUCAS eBay"
-        if str(record.get("refresh_token") or "").strip():
-            return "Legacy Direct eBay"
-        if not str(record.get("connection_token") or "").strip():
-            return "Not connected"
-        return "Not connected"
-
-    def open_ebay_connection_helper(self) -> None:
-        account = str(self._ebay_env_config().get("account") or "default").strip() or "default"
-        store_path = self.state.ebay_store_path()
-        record = ebay_account_record(store_path, account)
-        if record and (str(record.get("refresh_token") or "").strip() or str(record.get("connection_token") or "").strip()):
-            def timestamp(value: object) -> str:
-                try:
-                    return datetime.fromtimestamp(int(value)).strftime("%Y-%m-%d %I:%M %p")
-                except (TypeError, ValueError, OSError):
-                    return str(value or "").strip() or "unknown"
-
-            connected = CardPipelineApp._ebay_record_is_connected(self, record)
-            prompt = "Reconnect this eBay account?" if connected else "Replace this old direct connection with the bundled eBay login?"
-            details = "\n".join(
-                [
-                    f"Account: {self._ebay_account_display_name(account, record)}",
-                    f"Connection: {self._ebay_connection_mode_label(record)}",
-                    f"Connected: {timestamp(record.get('connected_at'))}",
-                    f"Updated: {timestamp(record.get('updated_at'))}",
-                    f"Saved in: {store_path}",
-                    "",
-                    prompt,
-                ]
-            )
-            if not messagebox.askyesno("eBay Account", details):
-                status = "already connected" if connected else "still needs the bundled eBay login"
-                self.events.put(("status", f"eBay account {self._ebay_account_display_name(account, record)} is {status}."))
-                return
-        url = self._ebay_connect_url()
-        webbrowser.open(url)
-        self.events.put(("status", "Opened eBay Connect in browser. Sign in once to link this seller account to LUCAS."))
-
-    def open_ebay_listing_settings(self, refresh: Callable[[], None] | None = None) -> None:
-        config = self._ebay_env_config()
-        setup_options = self._ebay_listing_setup_options()
-        popup = tk.Toplevel(self)
-        popup.title("eBay Listing Settings")
-        popup.configure(bg="#1f1f1f")
-        popup.transient(self)
-        popup.geometry("820x720")
-        popup.minsize(760, 640)
-
-        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(16, 14))
-        frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text="eBay Listing Settings", style="Panel.TLabel", font=("Segoe UI Semibold", 14)).grid(row=0, column=0, columnspan=4, sticky="w")
-        ttk.Label(frame, text="Defaults used when LUCAS saves eBay draft offers or submits selected cards live.", style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(5, 12))
-        frame.columnconfigure(1, weight=1)
-        frame.columnconfigure(3, weight=1)
-
-        field_vars: dict[str, tk.StringVar] = {}
-        option_label_to_id: dict[str, dict[str, str]] = {}
-        option_id_to_label: dict[str, dict[str, str]] = {}
-        account = str(config.get("account") or "default").strip() or "default"
-        account_record = ebay_account_record(self.state.ebay_store_path(), account)
-        connected = CardPipelineApp._ebay_record_is_connected(self, account_record)
-        account_lines = [
-            f"Status: {'Active' if connected else 'Not connected'}",
-            f"Account: {self._ebay_account_display_name(account, account_record)}",
-            f"Connection: {self._ebay_connection_mode_label(account_record)}",
-            f"Saved in: {self.state.ebay_store_path()}",
-        ]
-        if connected:
-            try:
-                updated = datetime.fromtimestamp(int(account_record.get("updated_at") or account_record.get("connected_at") or 0)).strftime("%Y-%m-%d %I:%M %p")
-            except (TypeError, ValueError, OSError):
-                updated = "unknown"
-            account_lines.append(f"Last updated: {updated}")
-
-        account_frame = ttk.Frame(frame, style="Panel.TFrame")
-        account_frame.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(0, 12))
-        account_frame.columnconfigure(0, weight=1)
-        ttk.Label(account_frame, text="eBay Account Setup", style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=0, column=0, sticky="w")
-        ttk.Label(account_frame, text="\n".join(account_lines), style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
-        ttk.Button(account_frame, text="Reconnect eBay" if connected else "Connect eBay", command=self.open_ebay_connection_helper, style="Soft.TButton").grid(row=0, column=1, rowspan=2, sticky="e", padx=(12, 0))
-
-        def add_entry(row: int, column: int, key: str, label: str, width: int = 28) -> None:
-            ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=column, sticky="w", padx=(0, 8), pady=4)
-            value = str(config.get(key) or "")
-            values = setup_options.get(key) or []
-            if values:
-                option_label_to_id[key] = {option["label"]: option["id"] for option in values}
-                option_id_to_label[key] = {option["id"]: option["label"] for option in values}
-                value = option_id_to_label[key].get(value, value)
-            var = tk.StringVar(value=value)
-            field_vars[key] = var
-            if values:
-                ttk.Combobox(frame, textvariable=var, values=[option["label"] for option in values], width=width).grid(row=row, column=column + 1, sticky="ew", pady=4)
-            else:
-                ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=column + 1, sticky="ew", pady=4)
-
-        ttk.Label(frame, text="eBay Policies", style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=3, column=0, columnspan=4, sticky="w", pady=(0, 4))
-        add_entry(4, 0, "payment_policy_id", "Payment policy")
-        add_entry(4, 2, "return_policy_id", "Return policy")
-        add_entry(5, 0, "fulfillment_policy_id", "Shipping policy")
-        add_entry(5, 2, "merchant_location_key", "Ship-from location")
-
-        ttk.Label(frame, text="Listing Defaults", style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=6, column=0, columnspan=4, sticky="w", pady=(12, 4))
-        ttk.Label(frame, text="Seller account", style="Panel.TLabel").grid(row=7, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Label(frame, text=self._ebay_account_display_name(account, account_record), style="Muted.TLabel").grid(row=7, column=1, sticky="w", pady=4)
-        add_entry(7, 2, "marketplace_id", "Marketplace")
-        add_entry(8, 0, "category_id", "eBay category ID")
-        add_entry(8, 2, "currency", "Currency")
-        add_entry(9, 0, "quantity", "Quantity")
-        add_entry(9, 2, "price_multiplier", "Price multiplier")
-        add_entry(10, 0, "listing_duration", "Duration")
-        add_entry(10, 2, "format", "Format")
-
-        ttk.Label(frame, text="Condition type", style="Panel.TLabel").grid(row=11, column=0, sticky="w", padx=(0, 8), pady=4)
-        condition_var = tk.StringVar(value=str(config.get("condition") or "USED"))
-        field_vars["condition"] = condition_var
-        condition_box = ttk.Combobox(frame, textvariable=condition_var, values=("USED", "NEW", "LIKE_NEW", "VERY_GOOD", "GOOD", "ACCEPTABLE"), state="readonly")
-        condition_box.grid(row=11, column=1, sticky="ew", pady=4)
-
-        ttk.Label(frame, text="Description footer", style="Panel.TLabel").grid(row=12, column=0, columnspan=4, sticky="w", pady=(12, 4))
-        footer = tk.Text(frame, height=6, wrap=tk.WORD, bg="#151515", fg="#f3f4f6", insertbackground="#f3f4f6", relief=tk.FLAT)
-        footer.grid(row=13, column=0, columnspan=4, sticky="nsew", pady=(0, 10))
-        footer.insert("1.0", str(config.get("description_footer") or self._ebay_saved_listing_settings().get("description_footer") or ""))
-        frame.rowconfigure(13, weight=1)
-
-        status_var = tk.StringVar()
-        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=14, column=0, columnspan=4, sticky="w", pady=(0, 8))
-
-        def refresh_setup() -> None:
-            try:
-                settings = {key: option_label_to_id.get(key, {}).get(var.get().strip(), var.get().strip()) for key, var in field_vars.items()}
-                settings["description_footer"] = footer.get("1.0", tk.END).strip()
-                live_config = {**config, **settings}
-                imported = self._refresh_ebay_listing_setup_options(live_config)
-            except Exception as error:
-                status_var.set(f"Could not import eBay policies: {error}")
-                return
-            total = sum(len(values) for values in imported.values())
-            status_var.set(f"Imported {total} eBay policy/location option(s). Close and reopen this window to select them.")
-
-        def save() -> None:
-            settings = {key: option_label_to_id.get(key, {}).get(var.get().strip(), var.get().strip()) for key, var in field_vars.items()}
-            settings["description_footer"] = footer.get("1.0", tk.END).strip()
-            try:
-                quantity = int(settings.get("quantity") or "1")
-                if quantity < 1:
-                    raise ValueError
-            except ValueError:
-                status_var.set("Quantity must be a whole number greater than zero.")
-                return
-            try:
-                multiplier = float(settings.get("price_multiplier") or "1")
-                if multiplier <= 0:
-                    raise ValueError
-            except ValueError:
-                status_var.set("Price multiplier must be greater than zero.")
-                return
-            self._save_ebay_listing_settings(settings)
-            status_var.set("Saved eBay listing settings.")
-            if refresh is not None:
-                refresh()
-
-        actions = ttk.Frame(frame, style="Panel.TFrame")
-        actions.grid(row=15, column=0, columnspan=4, sticky="ew")
-        ttk.Button(actions, text="Save Settings", command=save, style="Primary.TButton").pack(side=tk.LEFT)
-        ttk.Button(actions, text="Import eBay Policies", command=refresh_setup, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
-
-    def open_ebay_auto_list(self) -> None:
-        if not self._ebay_auto_list_enabled():
-            messagebox.showinfo("eBay Auto List", "eBay auto list is disabled on this LUCAS install.")
-            return
-        plan = self._ebay_listing_plan()
-        popup = tk.Toplevel(self)
-        popup.title("eBay Auto List")
-        popup.configure(bg="#1f1f1f")
-        popup.transient(self)
-        popup.geometry("1040x700")
-        popup.minsize(940, 640)
-
-        frame = ttk.Frame(popup, style="Panel.TFrame", padding=(14, 12))
-        frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text="eBay Auto List", style="Panel.TLabel", font=("Segoe UI Semibold", 14)).pack(anchor="w")
-        summary_var = tk.StringVar()
-        ttk.Label(frame, textvariable=summary_var, style="Muted.TLabel").pack(anchor="w", pady=(6, 10))
-
-        columns = ("action", "card", "price", "photo", "sku", "detail")
-        table_frame = ttk.Frame(frame, style="Panel.TFrame")
-        table_frame.rowconfigure(0, weight=1)
-        table_frame.columnconfigure(0, weight=1)
-        tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=13, selectmode="extended")
-        headings = {"action": "Action", "card": "Card", "price": "Price", "photo": "Photos", "sku": "SKU", "detail": "Detail"}
-        widths = {"action": 110, "card": 320, "price": 90, "photo": 80, "sku": 170, "detail": 260}
-        for column in columns:
-            tree.heading(column, text=headings[column])
-            tree.column(column, width=widths[column], anchor="w", stretch=column in {"card", "detail"})
-        y_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
-        x_scroll = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=tree.xview)
-        tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
-        tree.grid(row=0, column=0, sticky="nsew")
-        y_scroll.grid(row=0, column=1, sticky="ns")
-        x_scroll.grid(row=1, column=0, sticky="ew")
-        ready_items: dict[str, dict[str, object]] = {}
-
-        def reload_plan() -> None:
-            nonlocal plan
-            plan = self._ebay_listing_plan()
-            ready_items.clear()
-            tree.delete(*tree.get_children())
-            for index, item in enumerate(plan.get("to_list") or []):
-                if not isinstance(item, dict):
-                    continue
-                iid = f"ready:{index}"
-                action_label = str(item.get("action") or "Ready")
-                detail_label = "Can submit saved eBay offer live" if item.get("existing_offer_id") else "Can save draft offer or submit live"
-                tree.insert(
-                    "",
-                    tk.END,
-                    iid=iid,
-                    values=(
-                        action_label,
-                        item.get("title") or "",
-                        format_money(item.get("price")),
-                        item.get("photo_count") or 0,
-                        item.get("sku") or "",
-                        detail_label,
-                    ),
-                )
-                ready_items[iid] = item
-            for index, item in enumerate(plan.get("needs_review") or []):
-                if not isinstance(item, dict):
-                    continue
-                tree.insert(
-                    "",
-                    tk.END,
-                    iid=f"review:{index}",
-                    values=(
-                        "Review",
-                        item.get("title") or "",
-                        format_money(item.get("price")),
-                        item.get("photo_count") or 0,
-                        item.get("sku") or "",
-                        ", ".join(str(issue) for issue in item.get("issues") or []) or "Needs review",
-                    ),
-                )
-            for index, item in enumerate(plan.get("stale") or []):
-                if not isinstance(item, dict):
-                    continue
-                tree.insert(
-                    "",
-                    tk.END,
-                    iid=f"stale:{index}",
-                    values=("Inactive", item.get("title") or "", format_money(item.get("price")), "", item.get("sku") or "", "Tracked eBay item is no longer active inventory"),
-                )
-            accounts = plan.get("account_status") if isinstance(plan.get("account_status"), dict) else {}
-            connected = len(accounts.get("accounts") or []) if isinstance(accounts.get("accounts"), list) else 0
-            missing = ", ".join(plan.get("missing_config") or [])
-            suffix = f" | Missing config: {missing}" if missing else ""
-            summary_var.set(
-                f"Active inventory: {plan['active_count']} | Listed/drafted: {plan['listed_count']} | "
-                f"Ready: {len(plan['to_list'])} | Review: {len(plan['needs_review'])} | Inactive tracked: {len(plan['stale'])} | "
-                f"Connected eBay accounts: {connected}{suffix}"
-            )
-
-        def selected_ready_items() -> list[dict[str, object]]:
-            return [ready_items[iid] for iid in tree.selection() if iid in ready_items]
-
-        def preview_selected() -> None:
-            selected = selected_ready_items()
-            if not selected:
-                messagebox.showinfo("eBay Auto List", "Select one or more Ready rows to preview.")
-                return
-            lines: list[str] = []
-            for item in selected[:8]:
-                lines.append(
-                    "\n".join(
-                        [
-                            str(item.get("title") or "Untitled card"),
-                            f"Price: {format_money(item.get('price'))}",
-                            f"Photos: {item.get('photo_count') or 0}",
-                            f"SKU: {item.get('sku') or ''}",
-                        ]
-                    )
-                )
-            extra = "" if len(selected) <= 8 else f"\n\n...and {len(selected) - 8} more selected card(s)."
-            messagebox.showinfo("eBay Preview", "\n\n".join(lines) + extra)
-
-        def run_items(items: list[dict[str, object]], publish: bool) -> None:
-            if not items:
-                messagebox.showinfo("eBay Auto List", "Select one or more Ready rows first.")
-                return
-            if not publish:
-                items = [item for item in items if not item.get("existing_offer_id")]
-                if not items:
-                    messagebox.showinfo("eBay Auto List", "Selected eBay offers are already saved as drafts.")
-                    return
-            action = "publish live eBay listing(s)" if publish else "create eBay draft offer(s)"
-            if publish and str(plan.get("config", {}).get("auto_publish") or "").lower() not in {"1", "true", "yes", "on"}:
-                if not messagebox.askyesno(
-                    "eBay Auto List",
-                    "Publish live eBay listings now?\n\nSet LUCAS_EBAY_AUTO_PUBLISH=1 in .env to skip this extra confirmation.",
-                ):
-                    return
-            if not messagebox.askyesno("eBay Auto List", f"{action.capitalize()} for {len(items)} card(s)?"):
-                return
-            config = plan.get("config") if isinstance(plan.get("config"), dict) else self._ebay_env_config()
-
-            def worker() -> None:
-                try:
-                    self._ebay_listing_sync_worker(items, config, publish)
-                    popup.after(0, reload_plan)
-                except Exception as error:
-                    popup.after(0, lambda: messagebox.showerror("eBay Auto List", str(error)))
-
-            threading.Thread(target=worker, daemon=True).start()
-
-        def connect_ebay() -> None:
-            self.open_ebay_connection_helper()
-            popup.after(1500, reload_plan)
-
-        actions = ttk.Frame(frame, style="Panel.TFrame")
-        actions.pack(fill=tk.X, pady=(12, 0))
-        ttk.Button(actions, text="Refresh", command=reload_plan, style="Soft.TButton").pack(side=tk.LEFT)
-        ttk.Button(actions, text="Connect eBay", command=connect_ebay, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(actions, text="Listing Settings", command=lambda: self.open_ebay_listing_settings(reload_plan), style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(actions, text="Preview Selected", command=preview_selected, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
-
-        listing_actions = ttk.Frame(frame, style="Panel.TFrame")
-        listing_actions.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(listing_actions, text="Save One Draft", command=lambda: run_items(selected_ready_items()[:1], False), style="Primary.TButton").pack(side=tk.LEFT)
-        ttk.Button(listing_actions, text="Save Selected Drafts", command=lambda: run_items(selected_ready_items(), False), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(listing_actions, text="Submit One Live", command=lambda: run_items(selected_ready_items()[:1], True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(listing_actions, text="Submit Selected Live", command=lambda: run_items(selected_ready_items(), True), style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
-
-        table_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
-        reload_plan()
-
     def open_mobile_connection_helper(self) -> None:
         url = self._mobile_app_url()
         local_url = self._mobile_local_app_url()
@@ -3832,19 +3412,6 @@ class CardPipelineApp(tk.Tk):
         return items
 
     def mobile_inventory_search(self, payload: dict) -> dict:
-        profile = "personal" if self._is_personal_lucas() else "team"
-        profile_error = mobile_profile_data_root_error(profile, CARD_PIPELINE_DIR, SETTINGS_PATH)
-        if profile_error:
-            return {
-                "ok": False,
-                "error": profile_error,
-                "profile": profile,
-                "dataRoot": str(CARD_PIPELINE_DIR),
-                "settingsPath": str(SETTINGS_PATH),
-                "count": 0,
-                "items": [],
-                "people": [],
-            }
         query = str(payload.get("query") or payload.get("q") or "").strip().lower()
         cert_query = scan_to_cert(query)
         person = str(payload.get("person") or "").strip().lower()
@@ -3882,15 +3449,7 @@ class CardPipelineApp(tk.Tk):
             matched.append((record, index))
         matched.sort(key=lambda item: self._mobile_inventory_added_sort_key(item[0], item[1]), reverse=True)
         results = [self._mobile_inventory_json_record(record) for record, _index in matched[:limit]]
-        return {
-            "ok": True,
-            "profile": profile,
-            "dataRoot": str(CARD_PIPELINE_DIR),
-            "settingsPath": str(SETTINGS_PATH),
-            "count": len(results),
-            "items": results,
-            "people": self._known_people(),
-        }
+        return {"ok": True, "count": len(results), "items": results, "people": self._known_people()}
 
     def _mobile_inventory_sport_filters(self, payload: dict) -> set[str]:
         raw = payload.get("sport") or payload.get("category") or ""
@@ -4937,109 +4496,6 @@ class CardPipelineApp(tk.Tk):
             "mode": mode,
         }
 
-    def _mobile_photo_upload_images(self, payload: dict) -> list[dict[str, object]]:
-        images = payload.get("images")
-        if isinstance(images, list):
-            return [item for item in images if isinstance(item, dict)]
-        image = str(payload.get("image") or "").strip()
-        if not image:
-            return []
-        return [{"image": image, "name": payload.get("name") or payload.get("filename") or "mobile-photo.jpg"}]
-
-    def _mobile_photo_upload_owner(self, payload: dict) -> tuple[str, str]:
-        profile = "personal" if self._is_personal_lucas() else "team"
-        person = str(payload.get("assigned_person") or payload.get("person") or "").strip()
-        if profile == "personal" and not person:
-            person = self._personal_default_person()
-        elif profile == "team":
-            person = self._canonical_person_choice(person) or person
-        return profile, person or "Unassigned"
-
-    def _mobile_photo_upload_folder(self, payload: dict) -> Path:
-        profile, person = self._mobile_photo_upload_owner(payload)
-        person_slug = re.sub(r"[^a-z0-9]+", "-", safe_filename(person).strip().lower()).strip("-") or "unassigned"
-        return INVENTORY_PHOTOS_DIR / "mobile" / profile / person_slug / datetime.now().strftime("%Y") / datetime.now().strftime("%m")
-
-    def _record_mobile_photo_upload_state(self, photo_paths: list[Path], linked_keys: set[str], status: str) -> None:
-        state = self._load_inventory_photo_state()
-        photos = state.setdefault("photos", {})
-        for path in photo_paths:
-            try:
-                stat = path.stat()
-                sha = self._inventory_photo_file_hash(path)
-                relative = path.relative_to(INVENTORY_PHOTOS_DIR).as_posix()
-            except Exception:
-                continue
-            photos[sha] = {
-                "path": str(path),
-                "relative_path": relative,
-                "filename": path.name,
-                "size": stat.st_size,
-                "modified": int(stat.st_mtime),
-                "sha256": sha,
-                "cards": [],
-                "certs": [],
-                "linked_keys": sorted(linked_keys),
-                "status": status,
-                "source": "mobile_upload",
-                "last_seen": datetime.now().isoformat(timespec="seconds"),
-            }
-        self._save_inventory_photo_state(state)
-
-    def mobile_photo_upload(self, payload: dict) -> dict:
-        upload_items = self._mobile_photo_upload_images(payload)
-        if not upload_items:
-            return {"ok": False, "error": "Take or choose at least one photo."}
-        if len(upload_items) > 12:
-            return {"ok": False, "error": "Upload 12 photos or fewer at a time."}
-        destination_folder = self._mobile_photo_upload_folder(payload)
-        destination_folder.mkdir(parents=True, exist_ok=True)
-        saved_paths: list[Path] = []
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        client_id = re.sub(r"[^A-Za-z0-9_-]+", "-", str(payload.get("client_id") or payload.get("clientId") or "mobile")).strip("-")[:40] or "mobile"
-        for index, item in enumerate(upload_items, start=1):
-            image = str(item.get("image") or "").strip()
-            if not image:
-                continue
-            try:
-                mime_type, _image_b64, image_bytes = self._mobile_image_parts(image)
-            except Exception as error:
-                return {"ok": False, "error": f"Could not read photo {index}: {error}"}
-            if not str(mime_type or "").startswith("image/"):
-                return {"ok": False, "error": f"Photo {index} is not an image."}
-            if len(image_bytes) > 12 * 1024 * 1024:
-                return {"ok": False, "error": f"Photo {index} is too large. Retake it closer or choose a smaller image."}
-            original = str(item.get("name") or item.get("filename") or f"photo-{index}.jpg")
-            safe_stem = safe_filename(Path(original).stem or f"photo-{index}")[:90] or f"photo-{index}"
-            extension = ".png" if "png" in mime_type.lower() else ".webp" if "webp" in mime_type.lower() else ".jpg"
-            path = destination_folder / f"[{timestamp}]-Mobile-{client_id}-[{index}]-[{safe_stem}]{extension}"
-            suffix = 1
-            while path.exists():
-                suffix += 1
-                path = destination_folder / f"[{timestamp}]-Mobile-{client_id}-[{index}-{suffix}]-[{safe_stem}]{extension}"
-            temp_path = path.with_name(f".{path.name}.tmp")
-            try:
-                temp_path.write_bytes(image_bytes)
-                temp_path.replace(path)
-            except OSError as error:
-                return {"ok": False, "error": f"Could not save photo {index}: {error}"}
-            saved_paths.append(path)
-        if not saved_paths:
-            return {"ok": False, "error": "No usable photos were uploaded."}
-        self._record_mobile_photo_upload_state(saved_paths, set(), "pending_scan")
-        status = "saved"
-        message = f"Uploaded {len(saved_paths)} photo(s) to inventory photos. Desktop photo scan will link them."
-        return {
-            "ok": True,
-            "saved": len(saved_paths),
-            "linked": 0,
-            "status": status,
-            "scan_started": False,
-            "folder": str(destination_folder),
-            "files": [path.name for path in saved_paths],
-            "message": message,
-        }
-
     def _retarget_inventory_rows_for_source(self, source_sheet_name: str, assigned_person: str) -> int:
         source_name = Path(str(source_sheet_name or "")).name.strip().lower()
         if not source_name:
@@ -5153,9 +4609,13 @@ class CardPipelineApp(tk.Tk):
                 source_sheet = Path(str(source_value or "")).name.strip().lower()
                 if source_sheet and cert:
                     keys.add((source_sheet, cert))
+                if cert:
+                    keys.add(("", cert))
                 item_id = str(record.get("item_id") or "").strip().lower()
                 if source_sheet and item_id:
                     keys.add((source_sheet, f"item:{item_id}"))
+                if item_id:
+                    keys.add(("", f"item:{item_id}"))
                 title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
                 if source_sheet and not cert and title_identity:
                     keys.add((source_sheet, f"title:{title_identity}"))
@@ -5181,12 +4641,6 @@ class CardPipelineApp(tk.Tk):
         company_keys = company_keys if company_keys is not None else self._company_sheet_source_cert_keys()
         accounted_loader = getattr(self, "_received_inventory_accounted_source_cert_keys", None)
         accounted_keys = accounted_keys if accounted_keys is not None else accounted_loader() if callable(accounted_loader) else set()
-        prior_profit_titles_by_cert: dict[str, str] = {}
-        for profit_record in [self._normalize_profit_record(row) for row in self._load_profit_ledger()]:
-            profit_cert = scan_to_cert(profit_record.get("cert_number"))
-            profit_title = str(profit_record.get("card_title") or "").strip()
-            if profit_cert and profit_title and profit_cert not in prior_profit_titles_by_cert:
-                prior_profit_titles_by_cert[profit_cert] = profit_title
         candidates: list[dict[str, object]] = []
         for row in rows:
             cert = scan_to_cert(row.get("cert_number"))
@@ -5205,9 +4659,7 @@ class CardPipelineApp(tk.Tk):
                 continue
             if ("", row_identity) in accounted_keys:
                 continue
-            card_title = str(row.get("card_title") or "").strip()
-            if not card_title and cert:
-                card_title = prior_profit_titles_by_cert.get(cert, "")
+            card_title = str(row.get("card_title") or "")
             title_identity = CardPipelineApp._received_inventory_title_identity(self, card_title)
             if not cert and title_identity and (path.name.lower(), f"title:{title_identity}") in accounted_keys:
                 continue
@@ -5584,581 +5036,6 @@ class CardPipelineApp(tk.Tk):
             return False
         return str(os.environ.get("LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC") or "").strip().lower() in {"1", "true", "yes", "on"}
 
-    def _ebay_auto_list_enabled(self) -> bool:
-        if load_dotenv:
-            load_dotenv(ROOT / ".env", override=False)
-        value = str(os.environ.get("LUCAS_ENABLE_EBAY_AUTO_LIST") or "1").strip().lower()
-        return value not in {"0", "false", "no", "off"}
-
-    def _load_ebay_listing_state(self) -> dict[str, object]:
-        if not EBAY_LISTING_STATE_PATH.exists():
-            return {"version": 1, "listings": {}}
-        try:
-            raw = json.loads(EBAY_LISTING_STATE_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            return {"version": 1, "listings": {}}
-        if not isinstance(raw, dict):
-            return {"version": 1, "listings": {}}
-        if not isinstance(raw.get("listings"), dict):
-            raw["listings"] = {}
-        raw.setdefault("version", 1)
-        return raw
-
-    def _save_ebay_listing_state(self, state: dict[str, object]) -> None:
-        EBAY_LISTING_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(EBAY_LISTING_STATE_PATH, state)
-
-    def _ebay_saved_listing_settings(self) -> dict[str, str]:
-        state = self._load_ebay_listing_state()
-        raw = state.get("settings")
-        if not isinstance(raw, dict):
-            return {}
-        allowed = {
-            "account",
-            "marketplace_id",
-            "currency",
-            "category_id",
-            "merchant_location_key",
-            "payment_policy_id",
-            "return_policy_id",
-            "fulfillment_policy_id",
-            "condition",
-            "listing_duration",
-            "format",
-            "quantity",
-            "price_multiplier",
-            "description_footer",
-            "template_inventory_key",
-        }
-        return {key: str(value).strip() for key, value in raw.items() if key in allowed and str(value).strip()}
-
-    def _save_ebay_listing_settings(self, settings: dict[str, str]) -> None:
-        state = self._load_ebay_listing_state()
-        state["settings"] = {str(key): str(value).strip() for key, value in settings.items() if str(value).strip()}
-        self._save_ebay_listing_state(state)
-
-    def _ebay_listing_setup_options(self) -> dict[str, list[dict[str, str]]]:
-        state = self._load_ebay_listing_state()
-        raw = state.get("setup_options")
-        result: dict[str, list[dict[str, str]]] = {
-            "payment_policy_id": [],
-            "return_policy_id": [],
-            "fulfillment_policy_id": [],
-            "merchant_location_key": [],
-        }
-        if not isinstance(raw, dict):
-            return result
-        for key in result:
-            values = raw.get(key)
-            if not isinstance(values, list):
-                continue
-            for value in values:
-                if not isinstance(value, dict):
-                    continue
-                option_id = str(value.get("id") or "").strip()
-                label = str(value.get("label") or option_id).strip()
-                if option_id:
-                    default = str(value.get("default") or "").strip()
-                    option = {"id": option_id, "label": label}
-                    if default:
-                        option["default"] = default
-                    result[key].append(option)
-        return result
-
-    def _save_ebay_listing_setup_options(self, options: dict[str, list[dict[str, str]]]) -> None:
-        state = self._load_ebay_listing_state()
-        clean: dict[str, list[dict[str, str]]] = {}
-        for key, values in options.items():
-            clean[key] = [
-                {
-                    "id": str(value.get("id") or "").strip(),
-                    "label": str(value.get("label") or value.get("id") or "").strip(),
-                    "default": str(value.get("default") or "").strip(),
-                }
-                for value in values
-                if isinstance(value, dict) and str(value.get("id") or "").strip()
-            ]
-        state["setup_options"] = clean
-        self._save_ebay_listing_state(state)
-
-    def _ebay_policy_label(self, policy: dict[str, object], id_key: str) -> str:
-        policy_id = str(policy.get(id_key) or "").strip()
-        name = str(policy.get("name") or "").strip()
-        return f"{name} ({policy_id})" if name and policy_id else name or policy_id
-
-    def _refresh_ebay_listing_setup_options(self, config: dict[str, str]) -> dict[str, list[dict[str, str]]]:
-        api_config = EbayConfig.from_env()
-        account = str(config.get("account") or "default").strip() or "default"
-        access_token = ebay_access_token_for_account(self.state.ebay_store_path(), api_config, account)
-        marketplace = urllib.parse.quote(str(config.get("marketplace_id") or "EBAY_US").strip() or "EBAY_US")
-
-        payment_response = ebay_account_request(api_config, access_token, "GET", f"payment_policy?marketplace_id={marketplace}")
-        return_response = ebay_account_request(api_config, access_token, "GET", f"return_policy?marketplace_id={marketplace}")
-        fulfillment_response = ebay_account_request(api_config, access_token, "GET", f"fulfillment_policy?marketplace_id={marketplace}")
-        location_response = ebay_inventory_request(api_config, access_token, "GET", "location", marketplace_id=str(config.get("marketplace_id") or "EBAY_US"))
-
-        def policy_is_default(policy: dict[str, object]) -> str:
-            category_types = policy.get("categoryTypes")
-            if isinstance(category_types, list) and any(isinstance(item, dict) and item.get("default") for item in category_types):
-                return "1"
-            return ""
-
-        options = {
-            "payment_policy_id": [
-                {"id": str(policy.get("paymentPolicyId") or "").strip(), "label": self._ebay_policy_label(policy, "paymentPolicyId"), "default": policy_is_default(policy)}
-                for policy in payment_response.get("paymentPolicies", [])
-                if isinstance(policy, dict)
-            ],
-            "return_policy_id": [
-                {"id": str(policy.get("returnPolicyId") or "").strip(), "label": self._ebay_policy_label(policy, "returnPolicyId"), "default": policy_is_default(policy)}
-                for policy in return_response.get("returnPolicies", [])
-                if isinstance(policy, dict)
-            ],
-            "fulfillment_policy_id": [
-                {"id": str(policy.get("fulfillmentPolicyId") or "").strip(), "label": self._ebay_policy_label(policy, "fulfillmentPolicyId"), "default": policy_is_default(policy)}
-                for policy in fulfillment_response.get("fulfillmentPolicies", [])
-                if isinstance(policy, dict)
-            ],
-            "merchant_location_key": [
-                {
-                    "id": str(location.get("merchantLocationKey") or "").strip(),
-                    "label": str(location.get("name") or location.get("merchantLocationKey") or "").strip(),
-                }
-                for location in location_response.get("locations", [])
-                if isinstance(location, dict)
-            ],
-        }
-        options = {key: [value for value in values if value.get("id")] for key, values in options.items()}
-        self._save_ebay_listing_setup_options(options)
-        saved_settings = self._ebay_saved_listing_settings()
-        changed = False
-        for key, values in options.items():
-            if saved_settings.get(key) or not values:
-                continue
-            selected = next((value for value in values if value.get("default")), values[0])
-            saved_settings[key] = str(selected.get("id") or "").strip()
-            changed = True
-        if changed:
-            self._save_ebay_listing_settings(saved_settings)
-        return options
-
-    def _ebay_media_token(self) -> str:
-        state = self._load_ebay_listing_state()
-        token = str(state.get("media_token") or "").strip()
-        if re.fullmatch(r"[A-Za-z0-9_-]{24,96}", token):
-            return token
-        token = secrets.token_urlsafe(24)
-        state["media_token"] = token
-        self._save_ebay_listing_state(state)
-        return token
-
-    def _ebay_env_config(self) -> dict[str, str]:
-        if load_dotenv:
-            load_dotenv(ROOT / ".env", override=False)
-        public_bridge = str(
-            os.environ.get("LUCAS_EBAY_PUBLIC_BRIDGE_URL")
-            or os.environ.get("LUCAS_PUBLIC_BRIDGE_URL")
-            or os.environ.get("LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL")
-            or ""
-        ).strip().rstrip("/")
-        if not public_bridge:
-            profile = "personal" if self._is_personal_lucas() else "team"
-            public_url = mobile_public_app_url(profile, getattr(self, "app_settings", {}))
-            if public_url:
-                parsed = urllib.parse.urlparse(public_url)
-                base_path = re.sub(r"/mobile/(?:team|personal)/?$", "", parsed.path.rstrip("/"))
-                public_bridge = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, base_path, "", "", "")).rstrip("/")
-        config = {
-            "account": str(os.environ.get("LUCAS_EBAY_ACCOUNT") or "default").strip() or "default",
-            "marketplace_id": str(os.environ.get("EBAY_MARKETPLACE_ID") or "EBAY_US").strip() or "EBAY_US",
-            "currency": str(os.environ.get("EBAY_CURRENCY") or "USD").strip() or "USD",
-            "category_id": str(os.environ.get("EBAY_DEFAULT_CATEGORY_ID") or "").strip(),
-            "merchant_location_key": str(os.environ.get("EBAY_MERCHANT_LOCATION_KEY") or "").strip(),
-            "payment_policy_id": str(os.environ.get("EBAY_PAYMENT_POLICY_ID") or "").strip(),
-            "return_policy_id": str(os.environ.get("EBAY_RETURN_POLICY_ID") or "").strip(),
-            "fulfillment_policy_id": str(os.environ.get("EBAY_FULFILLMENT_POLICY_ID") or "").strip(),
-            "condition": str(os.environ.get("EBAY_DEFAULT_CONDITION") or "USED").strip() or "USED",
-            "listing_duration": str(os.environ.get("EBAY_LISTING_DURATION") or "GTC").strip() or "GTC",
-            "format": str(os.environ.get("EBAY_LISTING_FORMAT") or "FIXED_PRICE").strip() or "FIXED_PRICE",
-            "quantity": str(os.environ.get("EBAY_LISTING_QUANTITY") or "1").strip() or "1",
-            "price_multiplier": str(os.environ.get("EBAY_LIST_PRICE_MULTIPLIER") or "1").strip() or "1",
-            "description_footer": "",
-            "template_inventory_key": "",
-            "public_photo_base_url": str(os.environ.get("LUCAS_EBAY_PUBLIC_PHOTO_BASE_URL") or "").strip().rstrip("/"),
-            "public_bridge_url": public_bridge,
-            "auto_publish": str(os.environ.get("LUCAS_EBAY_AUTO_PUBLISH") or "").strip().lower(),
-        }
-        settings_reader = getattr(self, "_ebay_saved_listing_settings", None)
-        saved_settings = settings_reader() if callable(settings_reader) else {}
-        for key, value in saved_settings.items():
-            if key in config:
-                config[key] = value
-        return config
-
-    def _ebay_inventory_active_records(self) -> list[dict[str, object]]:
-        rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-        return [
-            record
-            for record in rows
-            if str(record.get("status") or "Active").strip().lower() == "active"
-            and str(record.get("card_title") or "").strip()
-        ]
-
-    def _ebay_listing_identity(self, record: dict[str, object] | None) -> str:
-        if not isinstance(record, dict):
-            return ""
-        cert = scan_to_cert(record.get("cert_number"))
-        if cert and len(cert) >= 5:
-            return f"cert:{cert}"
-        item_id = str(record.get("item_id") or "").strip().lower()
-        if item_id:
-            return f"item:{re.sub(r'[^a-z0-9]+', '', item_id)}"
-        title = str(record.get("card_title") or record.get("title") or "").strip().lower()
-        title = re.sub(r"[^a-z0-9]+", " ", title)
-        title = re.sub(r"\s+", " ", title).strip()
-        return f"title:{title}" if title else ""
-
-    def _ebay_sku_for_record(self, record: dict[str, object]) -> str:
-        key = str(record.get("inventory_key") or self._ebay_listing_identity(record) or record.get("card_title") or "").strip()
-        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
-        cert = scan_to_cert(record.get("cert_number"))
-        prefix = cert if cert else re.sub(r"[^A-Za-z0-9]+", "", str(record.get("item_id") or ""))[:16]
-        prefix = prefix or "card"
-        return f"LUCAS-{prefix}-{digest}"[:50]
-
-    def _ebay_listing_title(self, record: dict[str, object]) -> str:
-        title = re.sub(r"\s+", " ", str(record.get("card_title") or "").strip())
-        return title[:80]
-
-    def _ebay_listing_price(self, record: dict[str, object], config: dict[str, str]) -> float | None:
-        for field in ("ebay_list_price", "list_price", "inventory_value", "estimated_payout", "cy_value", "card_ladder_value", "card_ladder_comps_average"):
-            value = self._money_value(record.get(field))
-            if value is not None and value > 0:
-                try:
-                    multiplier = float(config.get("price_multiplier") or "1")
-                except (TypeError, ValueError):
-                    multiplier = 1.0
-                return round(value * max(0.01, multiplier), 2)
-        return None
-
-    def _ebay_listing_description(self, record: dict[str, object], config: dict[str, str] | None = None) -> str:
-        lines = [self._ebay_listing_title(record), "", "Trading card from LUCAS inventory."]
-        cert = scan_to_cert(record.get("cert_number"))
-        if cert:
-            lines.append(f"Certification number: {cert}")
-        grader = str(record.get("grading_company") or record.get("grader") or "").strip()
-        grade = str(record.get("grade") or "").strip()
-        if grader or grade:
-            lines.append(f"Grade: {' '.join(part for part in (grader, grade) if part).strip()}")
-        notes = str(record.get("notes") or "").strip()
-        if notes:
-            lines.extend(["", notes[:800]])
-        footer = str((config or {}).get("description_footer") or "").strip()
-        if footer:
-            lines.extend(["", footer[:1200]])
-        return "\n".join(lines).strip()
-
-    def _ebay_listing_aspects(self, record: dict[str, object]) -> dict[str, list[str]]:
-        aspects: dict[str, list[str]] = {}
-        player = str(record.get("player") or record.get("subject") or "").strip()
-        sport = str(record.get("sport") or "").strip()
-        grader = str(record.get("grading_company") or record.get("grader") or "").strip()
-        grade = str(record.get("grade") or "").strip()
-        if player:
-            aspects["Player/Athlete"] = [player]
-        if sport:
-            aspects["Sport"] = [sport]
-        if grader:
-            aspects["Professional Grader"] = [grader]
-            aspects["Graded"] = ["Yes"]
-        if grade:
-            aspects["Grade"] = [grade]
-        raw_aspects = str(os.environ.get("EBAY_DEFAULT_ASPECTS_JSON") or "").strip()
-        if raw_aspects:
-            try:
-                configured = json.loads(raw_aspects)
-                if isinstance(configured, dict):
-                    for key, value in configured.items():
-                        values = value if isinstance(value, list) else [value]
-                        clean_values = [str(item).strip() for item in values if str(item).strip()]
-                        if clean_values:
-                            aspects[str(key)] = clean_values
-            except json.JSONDecodeError:
-                pass
-        return aspects or {"Type": ["Sports Trading Card"]}
-
-    def _ebay_inventory_photo_url(self, path: Path, config: dict[str, str]) -> str:
-        bridge_url = config.get("public_bridge_url", "").strip().rstrip("/")
-        bridge_state = getattr(self, "state", None)
-        if bridge_url and bridge_state is not None and hasattr(bridge_state, "ebay_media_path"):
-            photo_id = self._inventory_photo_encoded_id(path)
-            return f"{bridge_url}{bridge_state.ebay_media_path(photo_id, path.name)}"
-        base_url = config.get("public_photo_base_url", "").strip().rstrip("/")
-        if not base_url:
-            return ""
-        try:
-            relative = self._inventory_photo_relative_path(path)
-        except Exception:
-            relative = None
-        if relative is None:
-            relative = Path(path.name)
-        return f"{base_url}/{urllib.parse.quote(relative.as_posix())}"
-
-    def ebay_inventory_media_response(self, photo_id: str) -> tuple[bytes, str] | None:
-        if not self._ebay_auto_list_enabled():
-            return None
-        return self._inventory_photo_media_response(photo_id)
-
-    def _ebay_item_payload(self, item: dict[str, object], config: dict[str, str]) -> dict[str, object]:
-        record = item.get("record") if isinstance(item.get("record"), dict) else {}
-        return {
-            "availability": {"shipToLocationAvailability": {"quantity": int(item.get("quantity") or 1)}},
-            "condition": str(config.get("condition") or "USED"),
-            "product": {
-                "title": self._ebay_listing_title(record),
-                "description": self._ebay_listing_description(record, config),
-                "aspects": self._ebay_listing_aspects(record),
-                "imageUrls": item.get("photo_urls") if isinstance(item.get("photo_urls"), list) else [],
-            },
-        }
-
-    def _ebay_offer_payload(self, item: dict[str, object], config: dict[str, str]) -> dict[str, object]:
-        return {
-            "sku": str(item.get("sku") or ""),
-            "marketplaceId": config["marketplace_id"],
-            "format": config["format"],
-            "availableQuantity": int(item.get("quantity") or 1),
-            "categoryId": config["category_id"],
-            "merchantLocationKey": config["merchant_location_key"],
-            "listingDescription": str(item.get("description") or ""),
-            "listingDuration": config["listing_duration"],
-            "listingPolicies": {
-                "paymentPolicyId": config["payment_policy_id"],
-                "returnPolicyId": config["return_policy_id"],
-                "fulfillmentPolicyId": config["fulfillment_policy_id"],
-            },
-            "pricingSummary": {
-                "price": {
-                    "value": f"{float(item.get('price') or 0):.2f}",
-                    "currency": config["currency"],
-                }
-            },
-        }
-
-    def _ebay_listing_plan(self) -> dict[str, object]:
-        state = self._load_ebay_listing_state()
-        listings = state.get("listings") if isinstance(state.get("listings"), dict) else {}
-        config = self._ebay_env_config()
-        account_status = ebay_account_status(self.state.ebay_store_path())
-        connected_accounts = account_status.get("accounts") if isinstance(account_status.get("accounts"), list) else []
-        configured_account = str(config.get("account") or "default").strip() or "default"
-        connected_account_names = {
-            str(account.get("account") or "").strip()
-            for account in connected_accounts
-            if isinstance(account, dict)
-            and (
-                str(account.get("connection_mode") or "").strip().lower() == "broker"
-                or CardPipelineApp._ebay_direct_oauth_allowed(self)
-            )
-        }
-        active_records = self._ebay_inventory_active_records()
-        active_by_key = {str(record.get("inventory_key") or ""): record for record in active_records if str(record.get("inventory_key") or "")}
-        active_identities = {self._ebay_listing_identity(record) for record in active_records if self._ebay_listing_identity(record)}
-        to_list: list[dict[str, object]] = []
-        already_listed = 0
-        needs_review: list[dict[str, object]] = []
-        stale: list[dict[str, object]] = []
-        required_config = [
-            "category_id",
-            "merchant_location_key",
-            "payment_policy_id",
-            "return_policy_id",
-            "fulfillment_policy_id",
-        ]
-        missing_config = [name for name in required_config if not str(config.get(name) or "").strip()]
-        if configured_account not in connected_account_names:
-            missing_config.append("connect_ebay")
-        try:
-            quantity = max(1, int(config.get("quantity") or "1"))
-        except (TypeError, ValueError):
-            quantity = 1
-
-        for key, entry in listings.items():
-            if not isinstance(entry, dict):
-                continue
-            identity = str(entry.get("inventory_identity") or "").strip()
-            if key not in active_by_key and (not identity or identity not in active_identities):
-                stale.append({"inventory_key": key, **entry})
-
-        for key, record in active_by_key.items():
-            entry = listings.get(key) if isinstance(listings.get(key), dict) else {}
-            status = str(entry.get("status") or "").strip().lower()
-            if status == "listed" and entry.get("listing_id"):
-                already_listed += 1
-                continue
-            price = self._ebay_listing_price(record, config)
-            if price is None:
-                price = self._money_value(entry.get("price"))
-            paths = self._inventory_photo_paths_for_record(record)
-            if hasattr(self, "_instagram_inventory_photo_is_postable"):
-                paths = [path for path in paths if self._instagram_inventory_photo_is_postable(path)]
-            urls = [self._ebay_inventory_photo_url(path, config) for path in paths[:12]]
-            urls = [url for url in urls if url.lower().startswith("https://")]
-            existing_offer_id = str(entry.get("offer_id") or "").strip() if status == "offer_created" else ""
-            issues = [issue for issue in missing_config if issue == "connect_ebay"] if existing_offer_id else list(missing_config)
-            if price is None:
-                issues.append("price")
-            if not urls and not existing_offer_id:
-                issues.append("https_photo")
-            sku = self._ebay_sku_for_record(record)
-            item = {
-                "inventory_key": key,
-                "inventory_identity": self._ebay_listing_identity(record),
-                "record": record,
-                "sku": sku,
-                "existing_offer_id": existing_offer_id,
-                "title": self._ebay_listing_title(record),
-                "description": self._ebay_listing_description(record, config),
-                "price": price,
-                "quantity": quantity,
-                "photo_urls": urls,
-                "photo_count": len(urls),
-                "issues": issues,
-                "action": "Drafted" if status == "offer_created" and str(entry.get("offer_id") or "").strip() else "Ready",
-            }
-            if issues:
-                needs_review.append(item)
-            else:
-                to_list.append(item)
-
-        return {
-            "config": config,
-            "account_status": account_status,
-            "active_count": len(active_records),
-            "listed_count": already_listed,
-            "to_list": to_list,
-            "needs_review": needs_review,
-            "stale": stale,
-            "missing_config": missing_config,
-        }
-
-    def _ebay_create_or_publish_item(self, item: dict[str, object], config: dict[str, str], publish: bool) -> dict[str, object]:
-        api_config = EbayConfig.from_env()
-        account = str(config.get("account") or "default")
-        account_record = ebay_account_record(self.state.ebay_store_path(), account)
-        if not CardPipelineApp._ebay_record_is_connected(self, account_record):
-            raise EbayOAuthError("Connect eBay with the bundled LUCAS login before drafting or publishing listings.")
-        access_token = ebay_access_token_for_account(self.state.ebay_store_path(), api_config, account)
-        sku = str(item.get("sku") or "").strip()
-        if not sku:
-            raise EbayOAuthError("Missing SKU.")
-        existing_offer_id = str(item.get("existing_offer_id") or "").strip()
-        if existing_offer_id:
-            listing_id = ""
-            if publish:
-                publish_response = ebay_inventory_request(
-                    api_config,
-                    access_token,
-                    "POST",
-                    f"offer/{urllib.parse.quote(existing_offer_id, safe='')}/publish",
-                    {},
-                    marketplace_id=config["marketplace_id"],
-                )
-                listing_id = str(publish_response.get("listingId") or publish_response.get("listing_id") or "").strip()
-                if not listing_id:
-                    raise EbayOAuthError(f"eBay did not return a listingId after publishing offer {existing_offer_id}.")
-            return {"offer_id": existing_offer_id, "listing_id": listing_id, "sku": sku}
-        ebay_inventory_request(
-            api_config,
-            access_token,
-            "PUT",
-            f"inventory_item/{urllib.parse.quote(sku, safe='')}",
-            self._ebay_item_payload(item, config),
-            marketplace_id=config["marketplace_id"],
-        )
-        offer_response = ebay_inventory_request(
-            api_config,
-            access_token,
-            "POST",
-            "offer",
-            self._ebay_offer_payload(item, config),
-            marketplace_id=config["marketplace_id"],
-        )
-        offer_id = str(offer_response.get("offerId") or offer_response.get("offer_id") or "").strip()
-        if not offer_id:
-            raise EbayOAuthError(f"eBay created inventory item {sku} but did not return an offerId.")
-        listing_id = ""
-        if publish:
-            publish_response = ebay_inventory_request(
-                api_config,
-                access_token,
-                "POST",
-                f"offer/{urllib.parse.quote(offer_id, safe='')}/publish",
-                {},
-                marketplace_id=config["marketplace_id"],
-            )
-            listing_id = str(publish_response.get("listingId") or publish_response.get("listing_id") or "").strip()
-            if not listing_id:
-                raise EbayOAuthError(f"eBay did not return a listingId after publishing offer {offer_id}.")
-        return {"offer_id": offer_id, "listing_id": listing_id, "sku": sku}
-
-    def _ebay_listing_sync_worker(self, items: list[dict[str, object]], config: dict[str, str], publish: bool) -> None:
-        started = time.perf_counter()
-        state = self._load_ebay_listing_state()
-        listings = state.setdefault("listings", {})
-        if not isinstance(listings, dict):
-            listings = {}
-            state["listings"] = listings
-        created = 0
-        published = 0
-        errors: list[str] = []
-        for item in items:
-            if not isinstance(item, dict) or item.get("issues"):
-                continue
-            key = str(item.get("inventory_key") or "")
-            title = str(item.get("title") or key)
-            try:
-                result = self._ebay_create_or_publish_item(item, config, publish)
-                entry = {
-                    "status": "listed" if publish else "offer_created",
-                    "inventory_identity": str(item.get("inventory_identity") or ""),
-                    "sku": result["sku"],
-                    "offer_id": result["offer_id"],
-                    "listing_id": result["listing_id"],
-                    "title": title,
-                    "price": item.get("price"),
-                    "photo_urls": item.get("photo_urls") if isinstance(item.get("photo_urls"), list) else [],
-                    "created_at": datetime.now().isoformat(timespec="seconds"),
-                }
-                listings[key] = entry
-                self._save_ebay_listing_state(state)
-                created += 1
-                if publish:
-                    published += 1
-            except Exception as error:
-                error_text = str(error)
-                errors.append(f"{title}: {error_text[:240]}")
-                if key:
-                    listings[key] = {
-                        "status": "list_error",
-                        "inventory_identity": str(item.get("inventory_identity") or ""),
-                        "sku": str(item.get("sku") or ""),
-                        "title": title,
-                        "price": item.get("price"),
-                        "error": error_text[:1000],
-                        "error_at": datetime.now().isoformat(timespec="seconds"),
-                    }
-                    self._save_ebay_listing_state(state)
-                self.events.put(("status", f"eBay skipped {title[:60]}: {error_text[:120]}"))
-        action = "published" if publish else "drafted"
-        self._append_activity(
-            "eBay Auto List",
-            f"eBay auto list {action} {created} offer(s), live listings {published}, errors {len(errors)}.",
-            {"created": created, "published": published, "errors": errors[:5]},
-        )
-        self.events.put(("status", f"eBay auto list {action} {created}, live {published}, errors {len(errors)}."))
-        record_performance_event("ebay.auto_list", started, f"created={created} published={published} errors={len(errors)}", force=True)
-
     def _instagram_background_tunnel_enabled(self) -> bool:
         value = str(os.environ.get("LUCAS_INSTAGRAM_BACKGROUND_TUNNEL") or "").strip().lower()
         if value in {"0", "false", "no", "off"}:
@@ -6507,7 +5384,7 @@ class CardPipelineApp(tk.Tk):
         return urllib.parse.unquote(match.group(1)) if match else ""
 
     def _instagram_cover_photo_path(self, paths: list[Path]) -> Path | None:
-        if not paths:
+        if not available_paths:
             return None
         return instagram_inventory_photo_order(paths)[0]
 
@@ -6765,7 +5642,7 @@ class CardPipelineApp(tk.Tk):
             paths = instagram_inventory_photo_order(self._inventory_photo_paths_for_record(record))
             if hasattr(self, "_instagram_inventory_photo_is_postable"):
                 paths = [path for path in paths if self._instagram_inventory_photo_is_postable(path)]
-            if not paths:
+            if not available_paths:
                 missing_photos.append(record)
                 continue
             cover_photo = paths[0]
@@ -7225,22 +6102,13 @@ class CardPipelineApp(tk.Tk):
         if not self._personal_instagram_sync_enabled():
             messagebox.showinfo("Instagram Sync", "Personal Instagram sync is disabled on this LUCAS install.")
             return
-        plan: dict[str, object] = {
-            "to_post": [],
-            "to_remove": [],
-            "missing_photos": [],
-            "active_count": 0,
-            "posted_count": 0,
-            "config": self._instagram_env_config(),
-        }
+        plan = self._instagram_inventory_plan()
         popup = tk.Toplevel(self)
         popup.title("Instagram Inventory Sync")
         popup.configure(bg="#1f1f1f")
         popup.transient(self)
         popup.geometry("980x660")
         popup.minsize(900, 600)
-        popup.lift()
-        popup.focus_force()
 
         frame = ttk.Frame(popup, style="Panel.TFrame", padding=(14, 12))
         frame.pack(fill=tk.BOTH, expand=True)
@@ -7276,13 +6144,7 @@ class CardPipelineApp(tk.Tk):
 
         def reload_plan() -> None:
             nonlocal plan
-            summary_var.set("Loading Instagram inventory plan...")
-            popup.update_idletasks()
-            try:
-                plan = self._instagram_inventory_plan()
-            except Exception as error:
-                summary_var.set(f"Could not load Instagram inventory plan: {error}")
-                return
+            plan = self._instagram_inventory_plan()
             post_items.clear()
             remove_items.clear()
             tree.delete(*tree.get_children())
@@ -7432,8 +6294,7 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(delete_actions, text="Mark Deleted", command=mark_manual_deleted, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
         table_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
-        summary_var.set("Opening Instagram Inventory Sync...")
-        popup.after(50, reload_plan)
+        reload_plan()
 
     def _instagram_api_json(self, endpoint: str, params: dict[str, object] | None = None, method: str = "GET") -> dict[str, object]:
         params = dict(params or {})
@@ -7745,23 +6606,6 @@ class CardPipelineApp(tk.Tk):
                     photo_paths = item.get("photo_paths") if isinstance(item.get("photo_paths"), list) else []
                     if not photo_paths:
                         photo_paths = [item.get("photo_path")]
-                    current_photo_paths: list[Path] = []
-                    current_photo_path_source = getattr(self, "_inventory_photo_paths_for_record", None)
-                    if callable(current_photo_path_source):
-                        current_photo_paths = instagram_inventory_photo_order(current_photo_path_source(current_record))
-                    if current_photo_paths and hasattr(self, "_instagram_inventory_photo_is_postable"):
-                        current_photo_paths = [
-                            path for path in current_photo_paths if self._instagram_inventory_photo_is_postable(path)
-                        ]
-                    if current_photo_paths:
-                        refreshed_urls = [
-                            self._instagram_inventory_photo_url(path, plan["config"])
-                            for path in current_photo_paths[:10]
-                        ]
-                        refreshed_urls = instagram_ready_photo_urls({"photo_urls": refreshed_urls})
-                        if refreshed_urls:
-                            photo_paths = current_photo_paths[: len(refreshed_urls)]
-                            photo_urls = refreshed_urls
                     photo_ids = [
                         self._instagram_inventory_photo_id(Path(str(path or "")))
                         for path in photo_paths[: len(photo_urls)]
@@ -7890,9 +6734,9 @@ class CardPipelineApp(tk.Tk):
         kept = [record for record in ledger if str(record.get("inventory_key") or "") not in moved_keys]
         if len(kept) != len(ledger):
             self._save_inventory_ledger(kept)
-            mark_sold_photos = getattr(self, "_mark_inventory_photo_files_for_sold_records", None)
-            if callable(mark_sold_photos):
-                mark_sold_photos(removed, "company_sheet_move")
+            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
+            if callable(cleanup):
+                cleanup(removed, kept)
 
     def _safe_inventory_photo_path(self, path_value: object) -> Path | None:
         safe_candidates = getattr(self, "_inventory_photo_safe_candidates", None)
@@ -8019,105 +6863,6 @@ class CardPipelineApp(tk.Tk):
             except OSError:
                 pass
         return purged
-
-    def _mark_inventory_photo_files_for_sold_records(
-        self,
-        sold_records: list[dict[str, object]],
-        sale_context: str = "inventory_sold",
-    ) -> int:
-        if not sold_records:
-            return 0
-        safe_candidates = getattr(self, "_inventory_photo_safe_candidates", None)
-
-        def photo_safe_candidates(value: object) -> list[Path]:
-            if callable(safe_candidates):
-                return safe_candidates(value)
-            path = self._safe_inventory_photo_path(value)
-            return [path] if path else []
-
-        state = self._load_inventory_photo_state()
-        photos = state.setdefault("photos", {})
-        sold_at = datetime.now().isoformat(timespec="seconds")
-        changed = 0
-        archived_paths: list[str] = []
-        remaining_records = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-        still_used: set[str] = set()
-        for remaining in remaining_records:
-            for remaining_path_value in remaining.get("photo_paths") or []:
-                still_used.add(str(remaining_path_value))
-                for candidate in photo_safe_candidates(remaining_path_value):
-                    still_used.add(str(candidate))
-                    try:
-                        still_used.add(str(candidate.resolve()))
-                    except Exception:
-                        pass
-        for record in sold_records:
-            inventory_key = str(record.get("inventory_key") or "").strip()
-            cert = scan_to_cert(record.get("cert_number"))
-            for path_value in record.get("photo_paths") or []:
-                for path in photo_safe_candidates(path_value):
-                    if not path.exists() or not path.is_file():
-                        continue
-                    try:
-                        resolved_path = str(path.resolve())
-                    except Exception:
-                        resolved_path = str(path)
-                    if str(path_value) in still_used or str(path) in still_used or resolved_path in still_used:
-                        continue
-                    try:
-                        stat = path.stat()
-                        sha = self._inventory_photo_file_hash(path)
-                    except Exception:
-                        continue
-                    archive_path_text = ""
-                    try:
-                        archive_path = self._archive_deleted_file(
-                            path,
-                            DELETED_INVENTORY_PHOTOS_DIR,
-                            "inventory_photo_sold",
-                            {
-                                "inventory_key": inventory_key,
-                                "cert_number": cert,
-                                "card_title": record.get("card_title") or "",
-                                "source_sheet": record.get("source_sheet") or "",
-                                "sale_context": sale_context,
-                            },
-                        )
-                        archive_path_text = str(archive_path)
-                        archived_paths.append(archive_path_text)
-                    except Exception:
-                        continue
-                    existing = photos.get(sha) if isinstance(photos.get(sha), dict) else {}
-                    linked_keys = {str(key).strip() for key in (existing.get("linked_keys") or []) if str(key).strip()}
-                    if inventory_key:
-                        linked_keys.add(inventory_key)
-                    certs = {scan_to_cert(value) for value in (existing.get("certs") or []) if scan_to_cert(value)}
-                    if cert:
-                        certs.add(cert)
-                    relative = self._inventory_photo_storage_value(path)
-                    photos[sha] = {
-                        **existing,
-                        "path": str(path),
-                        "relative_path": relative,
-                        "filename": path.name,
-                        "size": stat.st_size,
-                        "modified": int(stat.st_mtime),
-                        "sha256": sha,
-                        "certs": sorted(certs),
-                        "linked_keys": sorted(linked_keys),
-                        "status": "archived_from_album",
-                        "sold_at": sold_at,
-                        "sale_context": sale_context,
-                        "archived_at": sold_at,
-                        "archive_path": archive_path_text,
-                        "last_seen": sold_at,
-                    }
-                    changed += 1
-        if changed:
-            self._save_inventory_photo_state(state)
-        if archived_paths:
-            self._append_activity("Inventory Photo Archive", f"Archived {len(archived_paths)} sold inventory photo file(s) for {DELETED_ARCHIVE_RETENTION_DAYS} days.", {"paths": archived_paths[:20]})
-        return changed
 
     def _delete_inventory_photo_files_for_removed_records(
         self,
@@ -8315,9 +7060,9 @@ class CardPipelineApp(tk.Tk):
         changed = len(ledger) - len(kept)
         if changed:
             self._save_inventory_ledger(kept)
-            mark_sold_photos = getattr(self, "_mark_inventory_photo_files_for_sold_records", None)
-            if callable(mark_sold_photos):
-                mark_sold_photos(removed, "inventory_sold")
+            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
+            if callable(cleanup):
+                cleanup(removed, kept)
         return changed
 
     def _general_sold_sheet_name(self, person: str) -> str:
@@ -9859,7 +8604,7 @@ class CardPipelineApp(tk.Tk):
     def _inventory_photo_paths_for_record(self, record: dict[str, object] | None) -> list[Path]:
         if not record:
             return []
-        paths: list[Path] = []
+        available_paths: list[Path] = []
         seen: set[str] = set()
         for value in record.get("photo_paths") or []:
             path = self._resolve_inventory_photo_path(value)
@@ -10054,21 +8799,6 @@ class CardPipelineApp(tk.Tk):
         shutil.copy2(source_path, destination)
         return destination
 
-    def _inventory_photo_path_keys(self, path: Path) -> set[str]:
-        keys = {str(path), path.name}
-        try:
-            keys.add(str(path.resolve()))
-        except Exception:
-            pass
-        storage = self._inventory_photo_storage_value(path)
-        if storage:
-            keys.add(storage)
-        relative = self._inventory_photo_relative_path(path)
-        if relative and not relative.is_absolute() and ".." not in relative.parts:
-            keys.add(relative.as_posix())
-            keys.add(str(relative))
-        return {key for key in keys if key}
-
     def _inventory_photo_used_path_keys(self, rows: list[dict[str, object]] | None = None) -> set[str]:
         rows = rows if rows is not None else [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         used: set[str] = set()
@@ -10197,76 +8927,6 @@ class CardPipelineApp(tk.Tk):
             return False
         photo_certs = {scan_to_cert(cert) for cert in (existing.get("certs") or []) if scan_to_cert(cert)}
         return bool(photo_certs & sold_certs)
-
-    def _inventory_photo_source_mirror_candidates(self, source: Path, shared: Path) -> list[Path]:
-        source_images = self._inventory_photo_paths(source)
-        if not source_images:
-            return []
-
-        inventory_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
-        active_rows = [
-            record
-            for record in inventory_rows
-            if str(record.get("status") or "").strip().lower() == "active"
-        ]
-        active_photo_paths = self._inventory_photo_used_path_keys(active_rows)
-        active_photo_hashes = self._inventory_photo_used_hashes(active_rows)
-        inventory_photo_paths = self._inventory_photo_used_path_keys(inventory_rows)
-        inventory_photo_hashes = self._inventory_photo_used_hashes(inventory_rows)
-        state_used_names, state_used_paths, state_used_hashes = self._inventory_photo_state_used_keys()
-        sold_photo_source = getattr(self, "_sold_inventory_photo_used_keys", None)
-        sold_photo_paths, sold_photo_hashes = sold_photo_source() if callable(sold_photo_source) else (set(), set())
-        sold_certs_source = getattr(self, "_sold_inventory_cert_numbers", None)
-        sold_certs = sold_certs_source() if callable(sold_certs_source) else set()
-        state = self._load_inventory_photo_state()
-        photos = state.get("photos") if isinstance(state, dict) else {}
-        photos = photos if isinstance(photos, dict) else {}
-
-        candidates: list[Path] = []
-        seen: set[str] = set()
-        for source_path in source_images:
-            keys = self._inventory_photo_path_keys(source_path)
-            try:
-                relative = source_path.relative_to(source)
-                keys.add(relative.as_posix())
-                destination = shared / relative
-                keys.update(self._inventory_photo_path_keys(destination))
-            except Exception:
-                pass
-
-            unique_key = ""
-            try:
-                unique_key = self._inventory_photo_file_hash(source_path)
-            except Exception:
-                pass
-
-            if (keys & active_photo_paths) or (unique_key and unique_key in active_photo_hashes):
-                resolved_key = unique_key or next(iter(keys), str(source_path))
-                if resolved_key not in seen:
-                    seen.add(resolved_key)
-                    candidates.append(source_path)
-                continue
-
-            existing_state = photos.get(unique_key) if unique_key and isinstance(photos.get(unique_key), dict) else {}
-            if existing_state and self._inventory_photo_state_matches_sold_cert(existing_state, sold_certs):
-                continue
-            if source_path.name in state_used_names:
-                continue
-            if keys & inventory_photo_paths or keys & state_used_paths or keys & sold_photo_paths:
-                continue
-            if unique_key and (
-                unique_key in inventory_photo_hashes
-                or unique_key in state_used_hashes
-                or unique_key in sold_photo_hashes
-            ):
-                continue
-
-            resolved_key = unique_key or next(iter(keys), str(source_path))
-            if resolved_key in seen:
-                continue
-            seen.add(resolved_key)
-            candidates.append(source_path)
-        return sorted(candidates, key=lambda item: str(item).lower())
 
     def _inventory_unattached_photo_paths(self) -> list[Path]:
         used = self._inventory_photo_used_path_keys()
@@ -13737,9 +12397,6 @@ class CardPipelineApp(tk.Tk):
             menu.add_separator()
             menu.add_command(label="Instagram Inventory Sync", command=self.open_instagram_inventory_sync)
         menu.add_separator()
-        menu.add_command(label="Connect eBay", command=self.open_ebay_connection_helper)
-        if self._ebay_auto_list_enabled():
-            menu.add_command(label="eBay Auto List", command=self.open_ebay_auto_list)
         menu.add_command(label="Mobile Help", command=self.open_mobile_connection_helper)
         try:
             menu.tk_popup(anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height())
@@ -17459,29 +16116,6 @@ class CardPipelineApp(tk.Tk):
             return
         self.inventory_status_var.set(message)
 
-    def _inventory_photo_scan_override_key(self, folder: Path) -> str:
-        try:
-            return str(Path(folder).expanduser().resolve(strict=False))
-        except Exception:
-            return str(Path(folder).expanduser())
-
-    def _set_inventory_photo_scan_paths(self, folder: Path, paths: list[Path] | None) -> None:
-        overrides = getattr(self, "_inventory_photo_scan_path_overrides", None)
-        if not isinstance(overrides, dict):
-            overrides = {}
-            self._inventory_photo_scan_path_overrides = overrides
-        key = self._inventory_photo_scan_override_key(folder)
-        if paths is None:
-            overrides.pop(key, None)
-            return
-        overrides[key] = list(paths)
-
-    def _pop_inventory_photo_scan_paths(self, folder: Path) -> list[Path] | None:
-        overrides = getattr(self, "_inventory_photo_scan_path_overrides", None)
-        if not isinstance(overrides, dict):
-            return None
-        return overrides.pop(self._inventory_photo_scan_override_key(folder), None)
-
     def _prepare_inventory_photo_scan_folder(self, manual: bool = False, background: bool = False) -> Path | None:
         source = self._inventory_photo_source_folder()
         shared = self._inventory_photo_shared_folder()
@@ -17492,7 +16126,6 @@ class CardPipelineApp(tk.Tk):
                 source_is_shared = source == shared
             if source_is_shared:
                 shared.mkdir(parents=True, exist_ok=True)
-                self._set_inventory_photo_scan_paths(shared, self._inventory_photo_source_mirror_candidates(shared, shared))
                 return shared
             if manual:
                 messagebox.showerror("Photo folder missing", f"Inventory photo folder does not exist:\n{source}")
@@ -17505,17 +16138,15 @@ class CardPipelineApp(tk.Tk):
             source_resolved = source
             shared_resolved = shared
         if source_resolved == shared_resolved:
-            self._set_inventory_photo_scan_paths(shared, self._inventory_photo_source_mirror_candidates(shared, shared))
             return shared
         try:
-            source_images = self._inventory_photo_source_mirror_candidates(source, shared)
+            source_images = self._inventory_photo_paths(source)
             total = len(source_images)
             shared.mkdir(parents=True, exist_ok=True)
             copied = 0
             skipped = 0
-            scan_paths: list[Path] = []
             if not total:
-                self._inventory_photo_status(f"No active or unassigned inventory photos found in {source}. Scanning {shared}...", background=background)
+                self._inventory_photo_status(f"No inventory photos found in {source}. Scanning {shared}...", background=background)
                 if not background:
                     self.update_idletasks()
             for index, source_path in enumerate(source_images, start=1):
@@ -17526,7 +16157,6 @@ class CardPipelineApp(tk.Tk):
                 if relative.is_absolute() or ".." in relative.parts:
                     relative = Path(source_path.name)
                 destination = shared / relative
-                scan_paths.append(destination)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 self._inventory_photo_status(f"Mirroring inventory photos: {index}/{total} {source_path.name}", background=background)
                 if background:
@@ -17543,7 +16173,6 @@ class CardPipelineApp(tk.Tk):
                         pass
                 shutil.copy2(source_path, destination)
                 copied += 1
-            self._set_inventory_photo_scan_paths(shared, scan_paths)
             self._inventory_photo_status(f"Mirrored {copied} photo(s) to shared folder; skipped {skipped}. Scanning {shared}...", background=background)
             if background:
                 self.events.put(("status", f"Mirrored inventory photos to {shared}."))
@@ -17644,16 +16273,9 @@ class CardPipelineApp(tk.Tk):
                 paths.append(path)
         return sorted(paths, key=lambda item: str(item).lower())
 
-    def _inventory_photo_files(self, folder: Path, paths: list[Path] | None = None) -> list[dict[str, object]]:
+    def _inventory_photo_files(self, folder: Path) -> list[dict[str, object]]:
         images: list[dict[str, object]] = []
-        if paths is not None:
-            allowed = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
-            paths = [
-                Path(path).expanduser()
-                for path in paths
-                if Path(path).expanduser().is_file() and Path(path).expanduser().suffix.lower() in allowed
-            ]
-        elif hasattr(self, "_inventory_photo_paths"):
+        if hasattr(self, "_inventory_photo_paths"):
             paths = self._inventory_photo_paths(folder)
         else:
             allowed = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
@@ -17996,8 +16618,6 @@ class CardPipelineApp(tk.Tk):
             return False
         status = str(existing.get("status") or "").strip()
         linked_keys = [str(key).strip() for key in (existing.get("linked_keys") or []) if str(key).strip()]
-        if status == "sold_inventory":
-            return True
         if status not in {"linked", "missing_from_album", "archived_from_album"} or not linked_keys:
             return False
         for key in linked_keys:
@@ -18152,38 +16772,13 @@ class CardPipelineApp(tk.Tk):
         state = self._load_inventory_photo_state()
         photos = state.setdefault("photos", {})
         try:
-            pop_scan_paths = getattr(self, "_pop_inventory_photo_scan_paths", None)
-            scan_paths = pop_scan_paths(folder) if callable(pop_scan_paths) else None
-            if scan_paths is None:
-                candidate_source = getattr(self, "_inventory_photo_source_mirror_candidates", None)
-                if callable(candidate_source):
-                    scan_paths = candidate_source(folder, folder)
-            images = self._inventory_photo_files(folder, scan_paths)
+            images = self._inventory_photo_files(folder)
             total = len(images)
             if not background:
                 self.events.put(("inventory_photo_status", f"Inventory photo scan starting in {folder}: 0/{total} file(s)."))
             current_hashes = {str(image.get("sha256") or "") for image in images}
             for sha, record in list(photos.items()):
                 if sha and sha not in current_hashes and isinstance(record, dict) and not record.get("removed_at"):
-                    existing_values = [
-                        record.get("path"),
-                        record.get("relative_path"),
-                        record.get("filename"),
-                    ]
-                    existing_candidates: list[Path] = []
-                    for value in existing_values:
-                        if not str(value or "").strip():
-                            continue
-                        record_path = Path(str(value)).expanduser()
-                        existing_candidates.append(record_path)
-                        if not record_path.is_absolute():
-                            existing_candidates.append(folder / record_path)
-                    path_candidate_source = getattr(self, "_inventory_photo_path_candidates", None)
-                    if callable(path_candidate_source):
-                        for value in existing_values:
-                            existing_candidates.extend(path_candidate_source(value))
-                    if any(candidate.exists() for candidate in existing_candidates):
-                        continue
                     record["status"] = "missing_from_album"
                     record["removed_at"] = datetime.now().isoformat(timespec="seconds")
             rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
@@ -18918,36 +17513,6 @@ class CardPipelineApp(tk.Tk):
         normalized_ref = (row_ref[0].strip().lower(), row_ref[1].strip().lower(), int(row_ref[2]))
         return normalized_ref in marked_row_refs
 
-    def _hydrate_marked_receive_rows_from_cert_refs(
-        self,
-        rows: list[WorkbookRow],
-        row_ref_certs: dict[tuple[str, str, int], str],
-    ) -> int:
-        if not rows or not row_ref_certs:
-            return 0
-        normalized_certs = {
-            (str(sheet_file).strip().lower(), str(sheet_name).strip().lower(), int(row_index)): scan_to_cert(cert)
-            for (sheet_file, sheet_name, row_index), cert in row_ref_certs.items()
-            if scan_to_cert(cert)
-        }
-        hydrated = 0
-        for row in rows:
-            if scan_to_cert(row.cert_number):
-                continue
-            row_ref = self._receive_row_ref(row)
-            if not row_ref:
-                continue
-            cert = normalized_certs.get((row_ref[0].strip().lower(), row_ref[1].strip().lower(), int(row_ref[2])))
-            if not cert:
-                continue
-            row.cert_number = cert
-            row.item_id = ""
-            row.status = "Received"
-            if row.notes in {"Missing cert", "Missing cert or grader"}:
-                row.notes = ""
-            hydrated += 1
-        return hydrated
-
     def _match_all_review_rows(self) -> None:
         for row in self.review_rows:
             match = self._incoming_match(row.cert_number) if scan_to_cert(row.cert_number) else self._incoming_raw_match(
@@ -19095,8 +17660,6 @@ class CardPipelineApp(tk.Tk):
                 files_updated = int(result.get("files_updated") or 0)
                 marked_certs = set(result.get("certs_marked") or set())
                 marked_row_refs = set(result.get("row_refs_marked") or set())
-                row_ref_certs = dict(result.get("row_ref_certs") or {})
-                hydrated_receive_certs = self._hydrate_marked_receive_rows_from_cert_refs(self.review_rows, row_ref_certs)
                 certs_marked = len(marked_certs)
                 raw_rows_marked = len(marked_row_refs)
                 company_rows_added = 0
@@ -19175,8 +17738,6 @@ class CardPipelineApp(tk.Tk):
             f"Updated sheet files: {files_updated}",
             f"Matched certs: {certs_marked}/{len(certs)}",
         ]
-        if hydrated_receive_certs:
-            summary_lines.append(f"Recovered certs from row refs: {hydrated_receive_certs}")
         if row_refs:
             summary_lines.append(f"Matched raw rows: {raw_rows_marked}/{len(row_refs)}")
         if moved_received:
@@ -19205,7 +17766,6 @@ class CardPipelineApp(tk.Tk):
                 "total_certs": len(certs),
                 "raw_rows_marked": raw_rows_marked,
                 "total_raw_rows": len(row_refs),
-                "hydrated_receive_certs": hydrated_receive_certs,
                 "company_rows_added": company_rows_added,
                 "inventory_rows_added": inventory_rows_added,
                 "receive_rows_cleared": cleared_receive_rows,

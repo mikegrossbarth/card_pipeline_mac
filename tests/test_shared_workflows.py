@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import http.client
 import json
 import os
 import queue
@@ -11,8 +10,6 @@ import threading
 import time
 import types
 import unittest
-import urllib.error
-import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -35,8 +32,6 @@ import bridge_server
 import cardladder_ocr
 import google_sheets_import
 import lucas_diagnostics
-import ebay_api
-import ebay_broker_server
 from comp_engine.workbook_io import WorkbookRow
 from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, normalize_cert, parse_money as intake_parse_money, scan_to_cert, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
@@ -190,492 +185,6 @@ class SharedStateTests(unittest.TestCase):
                     os.environ["REQUESTS_CA_BUNDLE"] = old_requests_bundle
                 else:
                     os.environ.pop("REQUESTS_CA_BUNDLE", None)
-
-    def test_ebay_refresh_token_request_uses_production_oauth_endpoint(self) -> None:
-        class FakeResponse:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-            def read(self):
-                return b'{"access_token":"access-123","expires_in":7200}'
-
-        config = ebay_api.EbayConfig(
-            env="production",
-            client_id="client",
-            client_secret="secret",
-            runame="RuName",
-            scopes=("https://api.ebay.com/oauth/api_scope/sell.inventory",),
-        )
-        with patch("ebay_api.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
-            result = ebay_api.refresh_access_token(config, "refresh-123")
-
-        self.assertEqual(result["access_token"], "access-123")
-        request = urlopen.call_args.args[0]
-        self.assertEqual(request.full_url, ebay_api.PRODUCTION_TOKEN_URL)
-        self.assertEqual(request.headers["Authorization"], "Basic Y2xpZW50OnNlY3JldA==")
-        body = urllib.parse.parse_qs(request.data.decode("utf-8"))
-        self.assertEqual(body["grant_type"], ["refresh_token"])
-        self.assertEqual(body["refresh_token"], ["refresh-123"])
-        self.assertEqual(body["scope"], ["https://api.ebay.com/oauth/api_scope/sell.inventory"])
-
-    def test_ebay_env_update_replaces_existing_token_without_printing_secret(self) -> None:
-        with TemporaryDirectory() as tmp:
-            env_path = Path(tmp) / ".env"
-            env_path.write_text("EBAY_REFRESH_TOKEN=old\nOTHER=value\n", encoding="utf-8")
-
-            ebay_api.update_env_values(env_path, {"EBAY_REFRESH_TOKEN": "new-token", "EBAY_ACCESS_TOKEN": "access-token"})
-
-            text = env_path.read_text(encoding="utf-8")
-        self.assertIn("EBAY_REFRESH_TOKEN=new-token", text)
-        self.assertIn("EBAY_ACCESS_TOKEN=access-token", text)
-        self.assertIn("OTHER=value", text)
-        self.assertNotIn("EBAY_REFRESH_TOKEN=old", text)
-
-    def test_ebay_connect_state_and_token_store_are_per_account(self) -> None:
-        with TemporaryDirectory() as tmp:
-            config = ebay_api.EbayConfig(
-                env="production",
-                client_id="client",
-                client_secret="secret",
-                runame="RuName",
-                scopes=("https://api.ebay.com/oauth/api_scope/sell.inventory",),
-            )
-            state_value = ebay_api.encode_connect_state("mikey", "personal")
-            parsed_state = ebay_api.decode_connect_state(state_value)
-            self.assertEqual(parsed_state["account"], "mikey")
-            self.assertEqual(parsed_state["profile"], "personal")
-            relay_state = ebay_api.decode_connect_state(
-                ebay_api.encode_connect_state("mikey", "personal", "http://127.0.0.1:8765/ebay/oauth/callback")
-            )
-            self.assertEqual(relay_state["local_callback"], "http://127.0.0.1:8765/ebay/oauth/callback")
-
-            url = ebay_api.build_authorization_url(config, state_value)
-            parsed = urllib.parse.urlparse(url)
-            query = urllib.parse.parse_qs(parsed.query)
-            self.assertEqual(parsed.geturl().split("?", 1)[0], ebay_api.PRODUCTION_AUTHORIZE_URL)
-            self.assertEqual(query["client_id"], ["client"])
-            self.assertEqual(query["redirect_uri"], ["RuName"])
-            self.assertEqual(query["response_type"], ["code"])
-            self.assertEqual(query["state"], [state_value])
-
-            store_path = Path(tmp) / "ebay_accounts.json"
-            ebay_api.save_ebay_account_token(
-                store_path,
-                "mikey",
-                config,
-                {"refresh_token": "refresh-secret", "access_token": "access-secret", "expires_in": 7200},
-            )
-            saved = json.loads(store_path.read_text(encoding="utf-8"))
-            self.assertEqual(saved["accounts"]["mikey"]["refresh_token"], "refresh-secret")
-            status = ebay_api.ebay_account_status(store_path)
-            self.assertEqual(status["accounts"][0]["account"], "mikey")
-            self.assertNotEqual(status["accounts"][0]["refresh_token"], "refresh-secret")
-
-    def test_ebay_listing_plan_requires_ready_price_config_and_https_photo(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            photo = root / "front.jpg"
-            photo.write_bytes(b"fake-jpeg")
-            store_path = root / "ebay_accounts.json"
-            store_path.write_text(
-                '{"accounts":{"default":{"connection_mode":"broker","connection_token":"lucas-link-secret","broker_url":"https://connect.lucas.example/ebay"}}}',
-                encoding="utf-8",
-            )
-
-            bridge_state = bridge_server.BridgeState()
-            bridge_state.ebay_token_store_path = str(store_path)
-
-            class EbayPlanDummy:
-                state = bridge_state
-                _ebay_listing_plan = app.CardPipelineApp._ebay_listing_plan
-                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
-                _ebay_env_config = app.CardPipelineApp._ebay_env_config
-                _ebay_inventory_active_records = app.CardPipelineApp._ebay_inventory_active_records
-                _ebay_listing_identity = app.CardPipelineApp._ebay_listing_identity
-                _ebay_listing_price = app.CardPipelineApp._ebay_listing_price
-                _ebay_listing_title = app.CardPipelineApp._ebay_listing_title
-                _ebay_listing_description = app.CardPipelineApp._ebay_listing_description
-                _ebay_sku_for_record = app.CardPipelineApp._ebay_sku_for_record
-                _ebay_inventory_photo_url = app.CardPipelineApp._ebay_inventory_photo_url
-                _inventory_photo_encoded_id = app.CardPipelineApp._inventory_photo_encoded_id
-                _inventory_photo_storage_value = lambda self, path: str(path)
-                _money_value = app.CardPipelineApp._money_value
-                _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
-
-                def _load_inventory_ledger(self):
-                    return [
-                        {
-                            "inventory_key": "card-1",
-                            "status": "Active",
-                            "card_title": "2024 Topps Chrome Test Card PSA 10",
-                            "cert_number": "12345678",
-                            "inventory_value": 99.99,
-                        }
-                    ]
-
-                def _inventory_photo_paths_for_record(self, _record):
-                    return [photo]
-
-            env = {
-                "EBAY_DEFAULT_CATEGORY_ID": "183050",
-                "EBAY_MERCHANT_LOCATION_KEY": "main",
-                "EBAY_PAYMENT_POLICY_ID": "pay",
-                "EBAY_RETURN_POLICY_ID": "return",
-                "EBAY_FULFILLMENT_POLICY_ID": "ship",
-                "LUCAS_EBAY_PUBLIC_BRIDGE_URL": "https://lucas.example.com",
-            }
-            with patch.dict(app.os.environ, env, clear=False), patch.object(app, "EBAY_LISTING_STATE_PATH", root / "ebay_listing_state.json"):
-                plan = EbayPlanDummy()._ebay_listing_plan()
-
-            self.assertEqual(plan["active_count"], 1)
-            self.assertEqual(len(plan["to_list"]), 1)
-            self.assertEqual(plan["to_list"][0]["price"], 99.99)
-            self.assertEqual(plan["to_list"][0]["photo_count"], 1)
-            self.assertEqual(plan["needs_review"], [])
-
-    def test_ebay_saved_listing_settings_override_env_and_description_footer(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            state_path = root / "ebay_listing_state.json"
-
-            class SettingsDummy:
-                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
-                _save_ebay_listing_state = app.CardPipelineApp._save_ebay_listing_state
-                _ebay_saved_listing_settings = app.CardPipelineApp._ebay_saved_listing_settings
-                _save_ebay_listing_settings = app.CardPipelineApp._save_ebay_listing_settings
-                _ebay_env_config = app.CardPipelineApp._ebay_env_config
-                _ebay_listing_title = app.CardPipelineApp._ebay_listing_title
-                _ebay_listing_description = app.CardPipelineApp._ebay_listing_description
-                _is_personal_lucas = lambda self: True
-                app_settings = {}
-
-            dummy = SettingsDummy()
-            with patch.object(app, "EBAY_LISTING_STATE_PATH", state_path), patch.dict(
-                app.os.environ,
-                {
-                    "EBAY_DEFAULT_CATEGORY_ID": "env-category",
-                    "EBAY_PAYMENT_POLICY_ID": "env-payment",
-                    "EBAY_RETURN_POLICY_ID": "env-return",
-                    "EBAY_FULFILLMENT_POLICY_ID": "env-ship",
-                },
-                clear=False,
-            ):
-                dummy._save_ebay_listing_settings(
-                    {
-                        "category_id": "saved-category",
-                        "payment_policy_id": "saved-payment",
-                        "description_footer": "Ships securely from Mikey's Cards.",
-                    }
-                )
-                config = dummy._ebay_env_config()
-                description = dummy._ebay_listing_description({"card_title": "Test Card", "cert_number": "12345678"}, config)
-
-            self.assertEqual(config["category_id"], "saved-category")
-            self.assertEqual(config["payment_policy_id"], "saved-payment")
-            self.assertEqual(config["return_policy_id"], "env-return")
-            self.assertIn("Ships securely from Mikey's Cards.", description)
-
-    def test_ebay_listing_plan_requires_lucas_connected_account_not_env_token(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            photo = root / "front.jpg"
-            photo.write_bytes(b"fake-jpeg")
-            bridge_state = bridge_server.BridgeState()
-            bridge_state.ebay_token_store_path = str(root / "missing_ebay_accounts.json")
-
-            class EbayPlanDummy:
-                state = bridge_state
-                _ebay_listing_plan = app.CardPipelineApp._ebay_listing_plan
-                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
-                _ebay_env_config = app.CardPipelineApp._ebay_env_config
-                _ebay_inventory_active_records = app.CardPipelineApp._ebay_inventory_active_records
-                _ebay_listing_identity = app.CardPipelineApp._ebay_listing_identity
-                _ebay_listing_price = app.CardPipelineApp._ebay_listing_price
-                _ebay_listing_title = app.CardPipelineApp._ebay_listing_title
-                _ebay_listing_description = app.CardPipelineApp._ebay_listing_description
-                _ebay_sku_for_record = app.CardPipelineApp._ebay_sku_for_record
-                _ebay_inventory_photo_url = app.CardPipelineApp._ebay_inventory_photo_url
-                _inventory_photo_encoded_id = app.CardPipelineApp._inventory_photo_encoded_id
-                _inventory_photo_storage_value = lambda self, path: str(path)
-                _money_value = app.CardPipelineApp._money_value
-                _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
-
-                def _load_inventory_ledger(self):
-                    return [
-                        {
-                            "inventory_key": "card-1",
-                            "status": "Active",
-                            "card_title": "2024 Topps Chrome Test Card PSA 10",
-                            "cert_number": "12345678",
-                            "inventory_value": 99.99,
-                        }
-                    ]
-
-                def _inventory_photo_paths_for_record(self, _record):
-                    return [photo]
-
-            env = {
-                "EBAY_DEFAULT_CATEGORY_ID": "183050",
-                "EBAY_MERCHANT_LOCATION_KEY": "main",
-                "EBAY_PAYMENT_POLICY_ID": "pay",
-                "EBAY_RETURN_POLICY_ID": "return",
-                "EBAY_FULFILLMENT_POLICY_ID": "ship",
-                "LUCAS_EBAY_PUBLIC_BRIDGE_URL": "https://lucas.example.com",
-                "EBAY_REFRESH_TOKEN": "env-token-should-not-count",
-            }
-            with patch.dict(app.os.environ, env, clear=False), patch.object(app, "EBAY_LISTING_STATE_PATH", root / "ebay_listing_state.json"):
-                plan = EbayPlanDummy()._ebay_listing_plan()
-
-            self.assertEqual(plan["to_list"], [])
-            self.assertEqual(len(plan["needs_review"]), 1)
-            self.assertIn("connect_ebay", plan["needs_review"][0]["issues"])
-
-    def test_ebay_inventory_request_uses_inventory_endpoint_and_marketplace_header(self) -> None:
-        class FakeResponse:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-            def read(self):
-                return b'{"offerId":"offer-123"}'
-
-        config = ebay_api.EbayConfig(env="production", client_id="client", client_secret="secret", runame="RuName")
-        with patch("ebay_api.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
-            result = ebay_api.ebay_inventory_request(config, "access", "POST", "offer", {"sku": "sku-1"}, marketplace_id="EBAY_US")
-
-        self.assertEqual(result["offerId"], "offer-123")
-        request = urlopen.call_args.args[0]
-        self.assertEqual(request.full_url, f"{ebay_api.PRODUCTION_INVENTORY_URL}/offer")
-        self.assertEqual(request.headers["Authorization"], "Bearer access")
-        self.assertEqual(request.headers["X-ebay-c-marketplace-id"], "EBAY_US")
-
-    def test_ebay_access_token_for_account_requires_store_by_default(self) -> None:
-        with TemporaryDirectory() as tmp:
-            config = ebay_api.EbayConfig(env="production", client_id="client", client_secret="secret", runame="RuName")
-            with patch.dict(ebay_api.os.environ, {"EBAY_REFRESH_TOKEN": "env-refresh", "EBAY_ACCESS_TOKEN": "env-access"}, clear=False):
-                with self.assertRaises(ebay_api.EbayOAuthError):
-                    ebay_api.ebay_access_token_for_account(Path(tmp) / "missing.json", config, "default")
-
-    def test_ebay_broker_connection_token_can_supply_access_token(self) -> None:
-        with TemporaryDirectory() as tmp:
-            store_path = Path(tmp) / "ebay_accounts.json"
-            record = ebay_api.save_ebay_broker_account(
-                store_path,
-                "default",
-                "https://connect.lucas.example/ebay",
-                "lucas-link-secret",
-                seller_username="mikeycards",
-            )
-            self.assertEqual(record["connection_mode"], "broker")
-            status = ebay_api.ebay_account_status(store_path)
-            self.assertEqual(status["accounts"][0]["connection_mode"], "broker")
-            self.assertEqual(status["accounts"][0]["seller_username"], "mikeycards")
-            self.assertNotEqual(status["accounts"][0]["connection_token"], "lucas-link-secret")
-
-            class FakeResponse:
-                def __enter__(self):
-                    return self
-
-                def __exit__(self, *_args):
-                    return False
-
-                def read(self):
-                    return b'{"access_token":"access-from-broker"}'
-
-            config = ebay_api.EbayConfig(env="production", client_id="", client_secret="", runame="")
-            with patch("ebay_api.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
-                token = ebay_api.ebay_access_token_for_account(store_path, config, "default")
-
-            self.assertEqual(token, "access-from-broker")
-            request = urlopen.call_args.args[0]
-            self.assertEqual(request.full_url, "https://connect.lucas.example/ebay/token")
-            self.assertIn("lucas-link-secret", request.data.decode("utf-8"))
-
-    def test_ebay_broker_state_is_signed_and_callback_is_local_only(self) -> None:
-        payload = {
-            "kind": ebay_broker_server.BROKER_STATE_KIND,
-            "account": "default",
-            "callback": "http://127.0.0.1:8765/ebay/broker/callback",
-            "created_at": 1787544385,
-        }
-        with patch.dict(ebay_broker_server.os.environ, {"LUCAS_EBAY_BROKER_STATE_SECRET": "state-secret"}, clear=False):
-            state = ebay_broker_server._encode_state(payload)
-            self.assertEqual(ebay_broker_server._decode_state(state)["account"], "default")
-            tampered = ("A" if state[0] != "A" else "B") + state[1:]
-            self.assertEqual(ebay_broker_server._decode_state(tampered), {})
-
-        self.assertTrue(ebay_broker_server._callback_allowed("http://127.0.0.1:8765/ebay/broker/callback"))
-        self.assertTrue(ebay_broker_server._callback_allowed("http://localhost:8765/ebay/broker/callback"))
-        self.assertFalse(ebay_broker_server._callback_allowed("https://lucas.mikeyscards.com/ebay/broker/callback"))
-        self.assertFalse(ebay_broker_server._callback_allowed("http://192.168.1.10:8765/ebay/broker/callback"))
-
-    def test_ebay_policy_import_auto_selects_default_setup_values(self) -> None:
-        with TemporaryDirectory() as tmp:
-            state_path = Path(tmp) / "ebay_listing_state.json"
-            bridge_state = bridge_server.BridgeState()
-            bridge_state.ebay_token_store_path = str(Path(tmp) / "ebay_accounts.json")
-
-            class PolicyDummy:
-                state = bridge_state
-                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
-                _save_ebay_listing_state = app.CardPipelineApp._save_ebay_listing_state
-                _ebay_saved_listing_settings = app.CardPipelineApp._ebay_saved_listing_settings
-                _save_ebay_listing_settings = app.CardPipelineApp._save_ebay_listing_settings
-                _save_ebay_listing_setup_options = app.CardPipelineApp._save_ebay_listing_setup_options
-                _ebay_policy_label = app.CardPipelineApp._ebay_policy_label
-                _refresh_ebay_listing_setup_options = app.CardPipelineApp._refresh_ebay_listing_setup_options
-
-            def fake_account_request(_api_config, _access_token, _method, path):
-                if path.startswith("payment_policy"):
-                    return {"paymentPolicies": [{"name": "Immediate Payment", "paymentPolicyId": "pay-1", "categoryTypes": [{"default": True}]}]}
-                if path.startswith("return_policy"):
-                    return {"returnPolicies": [{"name": "No returns", "returnPolicyId": "return-1", "categoryTypes": [{"default": True}]}]}
-                if path.startswith("fulfillment_policy"):
-                    return {"fulfillmentPolicies": [{"name": "Standard shipping", "fulfillmentPolicyId": "ship-1", "categoryTypes": [{"default": True}]}]}
-                return {}
-
-            with patch.object(app, "EBAY_LISTING_STATE_PATH", state_path), \
-                patch("app.EbayConfig.from_env", return_value=ebay_api.EbayConfig(env="production", client_id="", client_secret="", runame="")), \
-                patch("app.ebay_access_token_for_account", return_value="access"), \
-                patch("app.ebay_account_request", side_effect=fake_account_request), \
-                patch("app.ebay_inventory_request", return_value={"locations": [{"merchantLocationKey": "main", "name": "Main warehouse"}]}):
-                imported = PolicyDummy()._refresh_ebay_listing_setup_options({"account": "default", "marketplace_id": "EBAY_US"})
-                settings = PolicyDummy()._ebay_saved_listing_settings()
-
-            self.assertEqual(imported["payment_policy_id"][0]["label"], "Immediate Payment (pay-1)")
-            self.assertEqual(settings["payment_policy_id"], "pay-1")
-            self.assertEqual(settings["return_policy_id"], "return-1")
-            self.assertEqual(settings["fulfillment_policy_id"], "ship-1")
-            self.assertEqual(settings["merchant_location_key"], "main")
-
-    def test_ebay_env_config_uses_mobile_public_url_for_photo_bridge(self) -> None:
-        dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
-        dummy.app_settings = {"mobile_public_url": "https://lucas.example.com/mobile/personal"}
-        dummy._is_personal_lucas = lambda: True
-        env = {
-            "LUCAS_EBAY_PUBLIC_BRIDGE_URL": "",
-            "LUCAS_PUBLIC_BRIDGE_URL": "",
-            "LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL": "",
-        }
-        with patch.dict(app.os.environ, env, clear=False):
-            config = app.CardPipelineApp._ebay_env_config(dummy)
-        self.assertEqual(config["public_bridge_url"], "https://lucas.example.com")
-
-    def test_set_pipeline_root_moves_ebay_listing_state_path(self) -> None:
-        original_root = app.CARD_PIPELINE_DIR
-        original_working = app.WORKING_SHEETS_DIR
-        with TemporaryDirectory() as tmp:
-            try:
-                app.set_pipeline_root(Path(tmp))
-                self.assertEqual(app.EBAY_LISTING_STATE_PATH, Path(tmp) / "ebay_listing_state.json")
-            finally:
-                app.set_pipeline_root(original_root, original_working)
-
-    def test_ebay_media_token_is_persisted_in_listing_state(self) -> None:
-        with TemporaryDirectory() as tmp:
-            state_path = Path(tmp) / "ebay_listing_state.json"
-
-            class EbayTokenDummy:
-                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
-                _save_ebay_listing_state = app.CardPipelineApp._save_ebay_listing_state
-                _ebay_media_token = app.CardPipelineApp._ebay_media_token
-
-            with patch.object(app, "EBAY_LISTING_STATE_PATH", state_path):
-                first = EbayTokenDummy()._ebay_media_token()
-                second = EbayTokenDummy()._ebay_media_token()
-
-            self.assertEqual(first, second)
-            self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["media_token"], first)
-
-    def test_ebay_listing_plan_can_resume_saved_offer(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            store_path = root / "ebay_accounts.json"
-            store_path.write_text(
-                '{"accounts":{"default":{"connection_mode":"broker","connection_token":"lucas-link-secret","broker_url":"https://connect.lucas.example/ebay"}}}',
-                encoding="utf-8",
-            )
-            state_path = root / "ebay_listing_state.json"
-            state_path.write_text(
-                json.dumps(
-                    {
-                        "version": 1,
-                        "listings": {
-                            "card-1": {
-                                "status": "offer_created",
-                                "offer_id": "offer-123",
-                                "sku": "LUCAS-12345678",
-                                "price": 99.99,
-                            }
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            bridge_state = bridge_server.BridgeState()
-            bridge_state.ebay_token_store_path = str(store_path)
-
-            class EbayPlanDummy:
-                state = bridge_state
-                app_settings = {"mobile_public_url": "https://lucas.example.com/mobile/personal"}
-                _ebay_listing_plan = app.CardPipelineApp._ebay_listing_plan
-                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
-                _ebay_env_config = app.CardPipelineApp._ebay_env_config
-                _ebay_inventory_active_records = app.CardPipelineApp._ebay_inventory_active_records
-                _ebay_listing_identity = app.CardPipelineApp._ebay_listing_identity
-                _ebay_listing_price = app.CardPipelineApp._ebay_listing_price
-                _ebay_listing_title = app.CardPipelineApp._ebay_listing_title
-                _ebay_listing_description = app.CardPipelineApp._ebay_listing_description
-                _ebay_sku_for_record = app.CardPipelineApp._ebay_sku_for_record
-                _ebay_inventory_photo_url = app.CardPipelineApp._ebay_inventory_photo_url
-                _money_value = app.CardPipelineApp._money_value
-                _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
-                _is_personal_lucas = lambda self: True
-
-                def _load_inventory_ledger(self):
-                    return [{"inventory_key": "card-1", "status": "Active", "card_title": "2024 Topps Chrome Test Card PSA 10", "cert_number": "12345678"}]
-
-                def _inventory_photo_paths_for_record(self, _record):
-                    return []
-
-            with patch.object(app, "EBAY_LISTING_STATE_PATH", state_path), patch.dict(app.os.environ, {}, clear=False):
-                plan = EbayPlanDummy()._ebay_listing_plan()
-
-            self.assertEqual(len(plan["to_list"]), 1)
-            self.assertEqual(plan["to_list"][0]["action"], "Drafted")
-            self.assertEqual(plan["to_list"][0]["existing_offer_id"], "offer-123")
-            self.assertEqual(plan["to_list"][0]["issues"], [])
-
-    def test_ebay_existing_offer_publish_does_not_create_duplicate_offer(self) -> None:
-        with TemporaryDirectory() as tmp:
-            store_path = Path(tmp) / "ebay_accounts.json"
-            store_path.write_text(
-                '{"accounts":{"default":{"connection_mode":"broker","connection_token":"lucas-link-secret","broker_url":"https://connect.lucas.example/ebay"}}}',
-                encoding="utf-8",
-            )
-            bridge_state = bridge_server.BridgeState()
-            bridge_state.ebay_token_store_path = str(store_path)
-
-            class EbayPublishDummy:
-                state = bridge_state
-                _ebay_create_or_publish_item = app.CardPipelineApp._ebay_create_or_publish_item
-
-            config = {"account": "default", "marketplace_id": "EBAY_US"}
-            item = {"sku": "LUCAS-12345678", "existing_offer_id": "offer-123"}
-            api_config = ebay_api.EbayConfig(env="production", client_id="client", client_secret="secret", runame="RuName")
-            with patch("app.EbayConfig.from_env", return_value=api_config), \
-                patch("app.ebay_access_token_for_account", return_value="access"), \
-                patch("app.ebay_inventory_request", return_value={"listingId": "listing-456"}) as inventory_request:
-                result = EbayPublishDummy()._ebay_create_or_publish_item(item, config, publish=True)
-
-            self.assertEqual(result["listing_id"], "listing-456")
-            self.assertEqual(inventory_request.call_count, 1)
-            self.assertIn("offer/offer-123/publish", inventory_request.call_args.args[3])
 
     def test_shared_lock_serializes_concurrent_writers(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -3174,27 +2683,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn('$("profitPeriod").value = "Month";', script)
         self.assertIn('$("profitGraph").value = "Overall Profit";', script)
 
-    def test_mobile_app_verifies_profile_before_showing_cached_inventory(self) -> None:
-        script = (ROOT / "mobile_app" / "app.js").read_text(encoding="utf-8")
-
-        self.assertIn("async function verifyMobileProfile()", script)
-        self.assertIn('const PROFILE_STORAGE_KEY = "lucasMobileProfile";', script)
-        self.assertIn("function payloadMatchesProfile(payload)", script)
-        self.assertIn("localStorage.removeItem(key);", script)
-        self.assertIn("payload: { ...payload, profile: APP_PROFILE }", script)
-        self.assertIn("clearProfileCaches();", script)
-        startup = script[script.index("if (state.pin) {", script.index("function bind()")) :]
-        self.assertLess(
-            startup.index("verifyMobileProfile().then((profileOk)"),
-            startup.index("const cached = cachedInventoryWrapper();"),
-        )
-
-    def test_mobile_service_worker_cache_is_profile_scoped(self) -> None:
-        script = (ROOT / "mobile_app" / "sw.js").read_text(encoding="utf-8")
-
-        self.assertIn("lucas-mobile-shell-v25-", script)
-        self.assertIn('${profileMatch ? profileMatch[1] : "default"}', script)
-
     def test_bridge_keeps_default_mobile_port_stable(self) -> None:
         bridge = app.BridgeServer(app.BridgeState())
 
@@ -3224,28 +2712,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         finally:
             bridge.stop()
 
-    def test_instagram_media_head_miss_is_not_cacheable(self) -> None:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-
-        state = app.BridgeState()
-        state.instagram_media_resolver = lambda photo_id: None
-        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
-        bridge.start()
-        self.assertTrue(bridge.started, bridge.error)
-        try:
-            request = urllib.request.Request(
-                f"http://127.0.0.1:{port}{state.instagram_media_path('missing', 'front.jpg')}",
-                method="HEAD",
-            )
-            with self.assertRaises(urllib.error.HTTPError) as raised:
-                urllib.request.urlopen(request, timeout=5)
-            self.assertEqual(raised.exception.code, 404)
-            self.assertEqual(raised.exception.headers.get("cache-control"), "no-store")
-        finally:
-            bridge.stop()
-
     def test_mobile_bridge_port_uses_profile_specific_defaults(self) -> None:
         self.assertEqual(app.mobile_bridge_port({}, Path("lucas_settings.json")), 8765)
         self.assertEqual(
@@ -3262,200 +2728,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_mobile_bridge_port_can_be_overridden(self) -> None:
         with patch.dict(app.os.environ, {"LUCAS_MOBILE_PORT": "8777"}):
             self.assertEqual(app.mobile_bridge_port({}, Path("lucas_settings.json")), 8777)
-
-    def test_mobile_bridge_config_reports_server_profile(self) -> None:
-        state = app.BridgeState()
-        state.mobile_profile = "personal"
-        state.mobile_data_root = "/tmp/LUCAS_PERSONAL"
-        state.mobile_settings_path = "/tmp/lucas_settings.michael.json"
-        state.mobile_profile_error = ""
-
-        config = state.mobile_config()
-        self.assertEqual(config["profile"], "personal")
-        self.assertEqual(config["dataRoot"], "/tmp/LUCAS_PERSONAL")
-        self.assertEqual(config["settingsPath"], "/tmp/lucas_settings.michael.json")
-        self.assertEqual(config["profileError"], "")
-
-    def test_personal_mobile_rejects_team_data_root(self) -> None:
-        error = app.mobile_profile_data_root_error(
-            "personal",
-            Path("C:/Users/user/Documents/card_pipeline/CARD_PIPELINE"),
-            Path("C:/Users/user/Documents/card_pipeline/lucas_settings.michael.json"),
-        )
-
-        self.assertIn("wrong data root", error)
-        self.assertIn("LUCAS_PERSONAL", error)
-
-    def test_mobile_bridge_rejects_mismatched_profile_url(self) -> None:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-
-        state = app.BridgeState()
-        state.mobile_profile = "team"
-        state.mobile_pin_provider = lambda: "123456"
-        state.mobile_inventory_search = lambda payload: {"ok": True, "items": ["should-not-run"]}
-        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
-        bridge.start()
-        self.assertTrue(bridge.started, bridge.error)
-        try:
-            request = urllib.request.Request(
-                f"http://127.0.0.1:{port}/mobile/personal/api/inventory/search",
-                data=b'{"pin":"123456"}',
-                headers={"content-type": "application/json"},
-                method="POST",
-            )
-            with self.assertRaises(urllib.error.HTTPError) as caught:
-                urllib.request.urlopen(request, timeout=5)
-            self.assertEqual(caught.exception.code, 409)
-            payload = json.loads(caught.exception.read().decode("utf-8"))
-            self.assertEqual(payload["profile"], "team")
-            self.assertEqual(payload["requestedProfile"], "personal")
-            self.assertIn("not personal", payload["error"])
-        finally:
-            bridge.stop()
-
-    def test_mobile_bridge_redirects_unprofiled_mobile_path_to_server_profile(self) -> None:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-
-        state = app.BridgeState()
-        state.mobile_profile = "personal"
-        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
-        bridge.start()
-        self.assertTrue(bridge.started, bridge.error)
-        try:
-            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-            connection.request("GET", "/mobile")
-            response = connection.getresponse()
-            response.read()
-            self.assertEqual(response.status, 302)
-            self.assertEqual(response.getheader("location"), "/mobile/personal")
-            self.assertEqual(response.getheader("cache-control"), "no-store")
-            connection.close()
-        finally:
-            bridge.stop()
-
-    def test_mobile_bridge_serves_profile_shell_without_browser_cache(self) -> None:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-
-        state = app.BridgeState()
-        state.mobile_profile = "personal"
-        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
-        bridge.start()
-        self.assertTrue(bridge.started, bridge.error)
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/mobile/personal", timeout=5) as response:
-                body = response.read().decode("utf-8")
-                self.assertEqual(response.status, 200)
-                self.assertEqual(response.headers.get("cache-control"), "no-store")
-                self.assertIn("<h1>LUCAS Personal</h1>", body)
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/mobile/personal/app.js", timeout=5) as response:
-                self.assertEqual(response.status, 200)
-                self.assertEqual(response.headers.get("cache-control"), "no-store")
-        finally:
-            bridge.stop()
-
-    def test_bridge_serves_ebay_oauth_and_privacy_pages(self) -> None:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.bind(("127.0.0.1", 0))
-            except PermissionError as error:
-                self.skipTest(f"local socket bind denied: {error}")
-            port = sock.getsockname()[1]
-
-        state = app.BridgeState()
-        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
-        bridge.start()
-        self.assertTrue(bridge.started, bridge.error)
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/privacy", timeout=5) as response:
-                body = response.read().decode("utf-8")
-                self.assertEqual(response.status, 200)
-                self.assertEqual(response.headers.get("cache-control"), "no-store")
-                self.assertIn("LUCAS Privacy", body)
-
-            with self.assertRaises(urllib.error.HTTPError) as context:
-                urllib.request.urlopen(f"http://127.0.0.1:{port}/ebay/oauth/callback?code=test-code&state=test-state", timeout=5)
-            body = context.exception.read().decode("utf-8")
-            self.assertEqual(context.exception.code, 400)
-            self.assertIn("eBay Not Connected", body)
-            self.assertNotIn("test-code", body)
-            self.assertNotIn("test-state", body)
-        finally:
-            bridge.stop()
-
-    def test_bridge_broker_callback_saves_bundled_ebay_connection(self) -> None:
-        with TemporaryDirectory() as tmp:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                try:
-                    sock.bind(("127.0.0.1", 0))
-                except PermissionError as error:
-                    self.skipTest(f"local socket bind denied: {error}")
-                port = sock.getsockname()[1]
-
-            store_path = Path(tmp) / "ebay_accounts.json"
-            state = app.BridgeState()
-            state.ebay_token_store_path = str(store_path)
-            bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
-            bridge.start()
-            self.assertTrue(bridge.started, bridge.error)
-            try:
-                query = urllib.parse.urlencode(
-                    {
-                        "connection_token": "lucas-connection-secret",
-                        "account": "default",
-                        "seller_username": "mikeycards",
-                        "broker_url": "https://connect.lucas.example/ebay",
-                        "marketplace_id": "EBAY_US",
-                    }
-                )
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/ebay/broker/callback?{query}", timeout=5) as response:
-                    body = response.read().decode("utf-8")
-                    self.assertEqual(response.status, 200)
-                    self.assertIn("eBay Ready in LUCAS", body)
-
-                record = ebay_api.ebay_account_record(store_path, "default")
-                self.assertEqual(record["connection_mode"], "broker")
-                self.assertEqual(record["seller_username"], "mikeycards")
-                self.assertEqual(record["broker_url"], "https://connect.lucas.example/ebay")
-                self.assertEqual(record["connection_token"], "lucas-connection-secret")
-            finally:
-                bridge.stop()
-
-    def test_bridge_serves_ebay_media_with_head_support(self) -> None:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.bind(("127.0.0.1", 0))
-            except PermissionError as error:
-                self.skipTest(f"local socket bind denied: {error}")
-            port = sock.getsockname()[1]
-
-        state = app.BridgeState()
-        state.ebay_media_resolver = lambda photo_id: (b"image-bytes", "image/jpeg") if photo_id == "photo-1" else None
-        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
-        bridge.start()
-        self.assertTrue(bridge.started, bridge.error)
-        try:
-            path = f"/ebay/media/{state.ebay_media_token}/photo-1/front.jpg"
-            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-            connection.request("HEAD", path)
-            response = connection.getresponse()
-            response.read()
-            self.assertEqual(response.status, 200)
-            self.assertEqual(response.getheader("content-type"), "image/jpeg")
-            self.assertEqual(response.getheader("content-length"), str(len(b"image-bytes")))
-            connection.close()
-
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as response:
-                self.assertEqual(response.status, 200)
-                self.assertEqual(response.headers.get("content-type"), "image/jpeg")
-                self.assertEqual(response.read(), b"image-bytes")
-        finally:
-            bridge.stop()
 
     def test_mobile_public_app_url_requires_https_and_appends_profile(self) -> None:
         self.assertEqual(
@@ -3484,70 +2756,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 "https://team-env.example.com/mobile/team",
             )
 
-    def test_ebay_connect_url_uses_bundled_broker_by_default(self) -> None:
-        dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
-        dummy.app_settings = {"mobile_public_url": "https://lucas.mikeyscards.com/mobile/personal"}
-        dummy.bridge = type("Bridge", (), {"port": 8765})()
-        dummy._is_personal_lucas = lambda: True
-
-        with patch.dict(app.os.environ, {"LUCAS_EBAY_BROKER_URL": "https://connect.lucas.example/ebay"}, clear=False):
-            url = app.CardPipelineApp._ebay_connect_url(dummy, "mikey")
-
-        parsed = urllib.parse.urlparse(url)
-        query = urllib.parse.parse_qs(parsed.query)
-        self.assertEqual(f"{parsed.scheme}://{parsed.netloc}{parsed.path}", "https://connect.lucas.example/ebay/connect")
-        self.assertEqual(query["profile"], ["personal"])
-        self.assertEqual(query["account"], ["mikey"])
-        self.assertEqual(query["app"], ["lucas-desktop"])
-        self.assertEqual(query["callback"], ["http://127.0.0.1:8765/ebay/broker/callback"])
-
-    def test_ebay_connect_url_can_use_direct_oauth_for_internal_testing(self) -> None:
-        dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
-        dummy.app_settings = {"mobile_public_url": "https://lucas.mikeyscards.com/mobile/personal"}
-        dummy.bridge = type("Bridge", (), {"port": 8765})()
-        dummy._is_personal_lucas = lambda: True
-
-        with patch.dict(app.os.environ, {"LUCAS_EBAY_INTERNAL_DIRECT_OAUTH": "1"}, clear=False):
-            self.assertEqual(
-                app.CardPipelineApp._ebay_connect_url(dummy, "mikey"),
-                "http://127.0.0.1:8765/ebay/connect?profile=personal&account=mikey",
-            )
-
-    def test_ebay_connection_helper_reports_existing_connection_before_reconnect(self) -> None:
-        with TemporaryDirectory() as tmp:
-            store_path = Path(tmp) / "ebay_accounts.json"
-            store_path.write_text(
-                json.dumps(
-                    {
-                        "accounts": {
-                            "default": {
-                                "account": "default",
-                                "env": "production",
-                                "refresh_token": "refresh-secret",
-                                "connected_at": 1787543291,
-                                "updated_at": 1787544385,
-                            }
-                        }
-                    }
-                ),
-                encoding="utf-8",
-            )
-            dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
-            dummy.state = bridge_server.BridgeState()
-            dummy.state.ebay_token_store_path = str(store_path)
-            dummy.events = queue.Queue()
-            dummy._ebay_env_config = lambda: {"account": "default"}
-            dummy._ebay_connect_url = lambda: "http://127.0.0.1:8766/ebay/connect?profile=personal&account=default"
-
-            with patch("app.messagebox.askyesno", return_value=False) as ask, patch("app.webbrowser.open") as browser_open:
-                app.CardPipelineApp.open_ebay_connection_helper(dummy)
-
-            self.assertTrue(ask.called)
-            self.assertIn("Account: Primary eBay Account", ask.call_args.args[1])
-            self.assertNotIn("Account: default", ask.call_args.args[1])
-            self.assertIn("Saved in:", ask.call_args.args[1])
-            browser_open.assert_not_called()
-
     def test_bridge_rejects_untrusted_browser_origin(self) -> None:
         self.assertFalse(bridge_server.request_origin_allowed("https://example.com", "127.0.0.1:8765"))
         self.assertFalse(bridge_server.request_origin_allowed("file://local", "127.0.0.1:8765"))
@@ -3563,36 +2771,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertFalse(bridge_server.is_loopback_address("192.168.1.246"))
         self.assertIn("/status", bridge_server.BRIDGE_LOCAL_ONLY_PATH_PREFIXES)
         self.assertIn("/result/cardladder", bridge_server.BRIDGE_LOCAL_ONLY_PATH_PREFIXES)
-
-    def test_ebay_public_oauth_callback_requires_local_relay_target(self) -> None:
-        state_value = ebay_api.encode_connect_state(
-            account="default",
-            profile="personal",
-            local_callback="http://127.0.0.1:8766/ebay/oauth/callback",
-        )
-        target = bridge_server.ebay_oauth_local_relay_target(
-            "lucas.mikeyscards.com",
-            "http://127.0.0.1:8766/ebay/oauth/callback",
-            "auth-code",
-            state_value,
-        )
-        self.assertEqual(
-            target,
-            "http://127.0.0.1:8766/ebay/oauth/callback?code=auth-code&state=" + urllib.parse.quote(state_value),
-        )
-        self.assertEqual(
-            bridge_server.ebay_oauth_local_relay_target("lucas.mikeyscards.com", "", "auth-code", state_value),
-            "",
-        )
-        self.assertEqual(
-            bridge_server.ebay_oauth_local_relay_target(
-                "127.0.0.1",
-                "http://127.0.0.1:8766/ebay/oauth/callback",
-                "auth-code",
-                state_value,
-            ),
-            "",
-        )
 
     def test_add_comp_row_does_not_deadlock_on_bridge_state_lock(self) -> None:
         class FakeTree:
@@ -3984,59 +3162,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(saved["Cards"].cell(2, received_col).value, "X")
             finally:
                 saved.close()
-
-    def test_mark_received_row_ref_reports_cert_found_in_workbook_row(self) -> None:
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "Mixed Lot.xlsx"
-            workbook = Workbook()
-            sheet = workbook.active
-            sheet.title = "Cards"
-            sheet.append(["Cert #", "Grader", "Card", "Purchase"])
-            sheet.append(["63710659", "PSA", "1996 Topps 138 Kobe Bryant PSA 10", 2200])
-            workbook.save(path)
-
-            result = mark_received_in_workbooks([path], set(), {("Mixed Lot.xlsx", "Cards", 2)})
-
-            self.assertEqual(result["rows_marked"], 1)
-            self.assertEqual(result["certs_marked"], {"63710659"})
-            self.assertEqual(result["row_refs_marked"], {("mixed lot.xlsx", "cards", 2)})
-            self.assertEqual(result["row_ref_certs"], {("mixed lot.xlsx", "cards", 2): "63710659"})
-
-    def test_receive_row_ref_hydration_prevents_certed_row_from_becoming_raw_inventory(self) -> None:
-        class Dummy:
-            _receive_row_ref = app.CardPipelineApp._receive_row_ref
-            _hydrate_marked_receive_rows_from_cert_refs = app.CardPipelineApp._hydrate_marked_receive_rows_from_cert_refs
-            _inventory_record_from_row = app.CardPipelineApp._inventory_record_from_row
-            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
-            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
-            _inventory_record_key = app.CardPipelineApp._inventory_record_key
-            _money_value = app.CardPipelineApp._money_value
-
-        dummy = Dummy()
-        row = WorkbookRow(
-            excel_row=2,
-            cert_number="",
-            item_id="RAW-MIKEY-20260814-0003",
-            grader="PSA",
-            card_title="1996 Topps 138 Kobe Bryant PSA 10",
-            existing_value=2200,
-        )
-        setattr(row, "_receive_sheet", "Mixed Lot.xlsx")
-        setattr(row, "_receive_workbook_sheet", "Cards")
-        setattr(row, "_receive_workbook_row", 2)
-
-        hydrated = dummy._hydrate_marked_receive_rows_from_cert_refs(
-            [row],
-            {("mixed lot.xlsx", "cards", 2): "63710659"},
-        )
-        record = dummy._inventory_record_from_row(row, "Mikey", source_sheet="Mixed Lot.xlsx", source="Manual")
-
-        self.assertEqual(hydrated, 1)
-        self.assertEqual(row.cert_number, "63710659")
-        self.assertEqual(row.item_id, "")
-        self.assertEqual(record["item_type"], "Graded")
-        self.assertEqual(record["cert_number"], "63710659")
-        self.assertEqual(record["item_id"], "")
 
     def test_receive_index_matches_raw_rows_by_unique_title_and_keeps_row_ref(self) -> None:
         class FieldVar:
@@ -7482,7 +6607,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
             _inventory_identity_keys = app.CardPipelineApp._inventory_identity_keys
             _sold_inventory_identity_keys = app.CardPipelineApp._sold_inventory_identity_keys
-            _source_specific_inventory_identity_keys = app.CardPipelineApp._source_specific_inventory_identity_keys
             _active_inventory_rows_excluding_sold_profit = app.CardPipelineApp._active_inventory_rows_excluding_sold_profit
             _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
@@ -7515,55 +6639,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
                 ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
                 self.assertEqual([row.get("cert_number") or row.get("item_id") for row in ledger], ["111", "333"])
-            finally:
-                app.INVENTORY_LEDGER_PATH = old_inventory
-                app.PROFIT_LEDGER_PATH = old_profit
-
-    def test_inventory_refresh_keeps_buyback_from_new_source_after_prior_sale(self) -> None:
-        class InventoryDummy:
-            _money_value = app.CardPipelineApp._money_value
-            _inventory_record_key = app.CardPipelineApp._inventory_record_key
-            _profit_record_key = app.CardPipelineApp._profit_record_key
-            _profit_record_date = app.CardPipelineApp._profit_record_date
-            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
-            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
-            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
-            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
-            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
-            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
-            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
-            _inventory_identity_keys = app.CardPipelineApp._inventory_identity_keys
-            _sold_inventory_identity_keys = app.CardPipelineApp._sold_inventory_identity_keys
-            _source_specific_inventory_identity_keys = app.CardPipelineApp._source_specific_inventory_identity_keys
-            _active_inventory_rows_excluding_sold_profit = app.CardPipelineApp._active_inventory_rows_excluding_sold_profit
-            _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
-            _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
-            _inventory_cl_comp_delta = app.CardPipelineApp._inventory_cl_comp_delta
-            _format_inventory_cl_comp_delta = app.CardPipelineApp._format_inventory_cl_comp_delta
-            refresh_inventory_tab = app.CardPipelineApp.refresh_inventory_tab
-
-            def __init__(self):
-                self.inventory_filter_after_id = None
-
-        with TemporaryDirectory() as tmp:
-            old_inventory = app.INVENTORY_LEDGER_PATH
-            old_profit = app.PROFIT_LEDGER_PATH
-            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
-            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
-            dummy = InventoryDummy()
-            try:
-                dummy._save_inventory_ledger([
-                    dummy._normalize_inventory_record({"assigned_person": "Mikey", "cert_number": "0012219217", "grader": "BGS", "card_title": "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5", "source_sheet": "phillip_works_8_17_26.xlsx", "status": "Active"}),
-                ])
-                dummy._save_profit_ledger([
-                    dummy._normalize_profit_record({"assigned_person": "Mikey", "cert_number": "0012219217", "grader": "BGS", "card_title": "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5", "company": "Mikey General Sold", "source_sheet": "Mikey General Sold", "original_source_sheet": "national_day_1_graded_entry.xlsx", "purchase_price": 10150, "sale_price": 13000, "date_added": "2026-07-30", "status": "Sold from inventory"}),
-                ])
-
-                dummy.refresh_inventory_tab()
-
-                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
-                self.assertEqual([row.get("cert_number") for row in ledger], ["0012219217"])
-                self.assertEqual(ledger[0].get("source_sheet"), "phillip_works_8_17_26.xlsx")
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.PROFIT_LEDGER_PATH = old_profit
@@ -8654,69 +7729,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             try:
                 records = dummy._received_inventory_candidate_records()
                 self.assertEqual([record["cert_number"] for record in records], ["111"])
-            finally:
-                app.RECEIVED_SHEETS_DIR = old_received
-                app.INCOMING_SHEETS_DIR = old_incoming
-                app.WORKING_SHEETS_DIR = old_working
-
-    def test_received_inventory_reconcile_allows_buyback_from_new_source_after_sale(self) -> None:
-        class ReconcileDummy:
-            _money_value = app.CardPipelineApp._money_value
-            _profit_record_date = app.CardPipelineApp._profit_record_date
-            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
-            _profit_record_key = app.CardPipelineApp._profit_record_key
-            _inventory_record_key = app.CardPipelineApp._inventory_record_key
-            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
-            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
-            _company_sheet_source_cert_keys = lambda self: set()
-            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
-            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
-            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
-            _received_inventory_candidate_records = app.CardPipelineApp._received_inventory_candidate_records
-            _home_sheet_key = app.CardPipelineApp._home_sheet_key
-            _inventory_deleted_source_cert_keys = lambda self: set()
-            _is_personal_lucas = lambda self: False
-            _personal_default_person = app.CardPipelineApp._personal_default_person
-
-            def _load_inventory_ledger(self):
-                return []
-
-            def _load_profit_ledger(self):
-                return [
-                    {
-                        "record_type": "sale",
-                        "source_sheet": "Mikey General Sold",
-                        "original_source_sheet": "Original Buy.xlsx",
-                        "cert_number": "0012219217",
-                        "card_title": "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5",
-                        "purchase_price": 10150,
-                        "sale_price": 13000,
-                    }
-                ]
-
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            received_dir = root / "RECEIVED SHEETS"
-            received_dir.mkdir()
-            workbook = Workbook()
-            sheet = workbook.active
-            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Source"])
-            sheet.append(["0012219217", "BGS", "", 11200, "Manual"])
-            workbook.save(received_dir / "Buyback.xlsx")
-
-            old_received = app.RECEIVED_SHEETS_DIR
-            old_incoming = app.INCOMING_SHEETS_DIR
-            old_working = app.WORKING_SHEETS_DIR
-            app.RECEIVED_SHEETS_DIR = received_dir
-            app.INCOMING_SHEETS_DIR = root / "INCOMING SHEETS"
-            app.WORKING_SHEETS_DIR = root / "WORKING SHEETS"
-            dummy = ReconcileDummy()
-            dummy.home_sheet_markers = {"Received|Buyback.xlsx": {"assigned_person": "Mikey"}}
-            try:
-                records = dummy._received_inventory_candidate_records()
-                self.assertEqual([record["cert_number"] for record in records], ["0012219217"])
-                self.assertEqual(records[0]["card_title"], "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5")
-                self.assertEqual(records[0]["purchase_price"], 11200.0)
             finally:
                 app.RECEIVED_SHEETS_DIR = old_received
                 app.INCOMING_SHEETS_DIR = old_incoming
@@ -10072,8 +9084,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
             _profit_record_key = app.CardPipelineApp._profit_record_key
-            _profit_record_date = app.CardPipelineApp._profit_record_date
-            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
@@ -10326,345 +9336,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 "Topps Archives Active/card.jpg",
             },
         )
-
-    def test_inventory_photo_mirror_only_keeps_active_or_unassigned_source_photos(self) -> None:
-        class PhotoDummy:
-            _money_value = app.CardPipelineApp._money_value
-            _inventory_record_key = app.CardPipelineApp._inventory_record_key
-            _profit_record_key = app.CardPipelineApp._profit_record_key
-            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
-            _profit_record_date = app.CardPipelineApp._profit_record_date
-            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
-            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
-            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
-            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
-            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
-            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
-            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
-            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
-            _inventory_photo_path_is_archived = app.CardPipelineApp._inventory_photo_path_is_archived
-            _inventory_photo_paths = app.CardPipelineApp._inventory_photo_paths
-            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
-            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
-            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
-            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
-            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
-            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
-            _inventory_photo_path_keys = app.CardPipelineApp._inventory_photo_path_keys
-            _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
-            _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
-            _inventory_photo_state_used_keys = app.CardPipelineApp._inventory_photo_state_used_keys
-            _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
-            _sold_inventory_photo_used_keys = app.CardPipelineApp._sold_inventory_photo_used_keys
-            _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
-            _inventory_photo_source_mirror_candidates = app.CardPipelineApp._inventory_photo_source_mirror_candidates
-
-        with TemporaryDirectory() as tmp:
-            old_pipeline = app.CARD_PIPELINE_DIR
-            old_inventory = app.INVENTORY_LEDGER_PATH
-            old_profit = app.PROFIT_LEDGER_PATH
-            old_photo_dir = app.INVENTORY_PHOTOS_DIR
-            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
-            app.CARD_PIPELINE_DIR = Path(tmp)
-            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
-            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
-            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "shared" / "INVENTORY PHOTOS"
-            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
-            source = Path(tmp) / "icloud" / "INVENTORY PHOTOS"
-            shared = app.INVENTORY_PHOTOS_DIR
-            source.mkdir(parents=True)
-            shared.mkdir(parents=True)
-            paths = {
-                "active.jpg": b"active image",
-                "fresh.jpg": b"fresh image",
-                "no-match.jpg": b"retry image",
-                "old-linked.jpg": b"old linked image",
-                "sold-path.jpg": b"sold path image",
-                "sold-state.jpg": b"sold state image",
-                "inactive.jpg": b"inactive image",
-            }
-            for name, contents in paths.items():
-                (source / name).write_bytes(contents)
-            archive_photo = source / "sold photos" / "archived.jpg"
-            archive_photo.parent.mkdir(parents=True)
-            archive_photo.write_bytes(b"archived image")
-
-            dummy = PhotoDummy()
-            dummy.app_settings = {"inventory_photo_folder": str(source)}
-            dummy._save_inventory_ledger(
-                [
-                    {"inventory_key": "active-key", "status": "Active", "card_title": "Active Card", "photo_paths": ["active.jpg"]},
-                    {"inventory_key": "inactive-key", "status": "Sold", "card_title": "Inactive Card", "photo_paths": ["inactive.jpg"]},
-                ]
-            )
-            dummy._save_profit_ledger(
-                [
-                    {"cert_number": "11111111", "card_title": "Sold Path Card", "sale_price": 20, "photo_paths": ["sold-path.jpg"]},
-                ]
-            )
-            old_linked_sha = dummy._inventory_photo_file_hash(source / "old-linked.jpg")
-            sold_state_sha = dummy._inventory_photo_file_hash(source / "sold-state.jpg")
-            no_match_sha = dummy._inventory_photo_file_hash(source / "no-match.jpg")
-            app.INVENTORY_PHOTO_STATE_PATH.write_text(
-                json.dumps(
-                    {
-                        "version": 1,
-                        "photos": {
-                            old_linked_sha: {
-                                "path": str(source / "old-linked.jpg"),
-                                "filename": "old-linked.jpg",
-                                "linked_keys": ["old-key"],
-                                "status": "linked",
-                            },
-                            sold_state_sha: {
-                                "path": str(source / "sold-state.jpg"),
-                                "filename": "sold-state.jpg",
-                                "linked_keys": [],
-                                "status": "sold_inventory",
-                            },
-                            no_match_sha: {
-                                "path": str(source / "no-match.jpg"),
-                                "filename": "no-match.jpg",
-                                "linked_keys": [],
-                                "status": "no_matching_inventory",
-                            },
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            try:
-                found = {path.name for path in dummy._inventory_photo_source_mirror_candidates(source, shared)}
-                self.assertEqual(found, {"active.jpg", "fresh.jpg", "no-match.jpg"})
-            finally:
-                app.CARD_PIPELINE_DIR = old_pipeline
-                app.INVENTORY_LEDGER_PATH = old_inventory
-                app.PROFIT_LEDGER_PATH = old_profit
-                app.INVENTORY_PHOTOS_DIR = old_photo_dir
-                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
-
-    def test_inventory_photo_scan_worker_uses_prepared_filtered_paths(self) -> None:
-        class PhotoDummy:
-            _money_value = app.CardPipelineApp._money_value
-            _inventory_record_key = app.CardPipelineApp._inventory_record_key
-            _profit_record_key = app.CardPipelineApp._profit_record_key
-            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
-            _profit_record_date = app.CardPipelineApp._profit_record_date
-            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
-            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
-            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
-            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
-            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
-            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
-            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
-            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
-            _inventory_photo_scan_override_key = app.CardPipelineApp._inventory_photo_scan_override_key
-            _set_inventory_photo_scan_paths = app.CardPipelineApp._set_inventory_photo_scan_paths
-            _pop_inventory_photo_scan_paths = app.CardPipelineApp._pop_inventory_photo_scan_paths
-            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
-            _inventory_photo_files = app.CardPipelineApp._inventory_photo_files
-            _inventory_photo_certs_from_cards = app.CardPipelineApp._inventory_photo_certs_from_cards
-            _active_inventory_keys_by_cert = app.CardPipelineApp._active_inventory_keys_by_cert
-            _link_inventory_photo_to_keys = app.CardPipelineApp._link_inventory_photo_to_keys
-            _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
-            _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
-            _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
-            _match_text_tokens = app.CardPipelineApp._match_text_tokens
-            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
-            _compact_match_text = app.CardPipelineApp._compact_match_text
-            _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
-            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
-            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
-            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
-            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
-            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
-            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
-            _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
-            _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
-            _inventory_record_references_photo = app.CardPipelineApp._inventory_record_references_photo
-            _inventory_photo_scan_can_skip = app.CardPipelineApp._inventory_photo_scan_can_skip
-            _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
-            _sold_inventory_photo_used_keys = app.CardPipelineApp._sold_inventory_photo_used_keys
-            _inventory_photo_image_matches_sold_photo = app.CardPipelineApp._inventory_photo_image_matches_sold_photo
-            _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
-            _inventory_photo_base64 = lambda self, path: "stub"
-            _inventory_photo_scan_group_nearby_unmatched = app.CardPipelineApp._inventory_photo_scan_group_nearby_unmatched
-            _inventory_photo_scan_worker = app.CardPipelineApp._inventory_photo_scan_worker
-
-        with TemporaryDirectory() as tmp:
-            old_pipeline = app.CARD_PIPELINE_DIR
-            old_inventory = app.INVENTORY_LEDGER_PATH
-            old_profit = app.PROFIT_LEDGER_PATH
-            old_photo_dir = app.INVENTORY_PHOTOS_DIR
-            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
-            app.CARD_PIPELINE_DIR = Path(tmp)
-            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
-            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
-            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
-            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
-            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
-            scan_photo = app.INVENTORY_PHOTOS_DIR / "scan-me.jpg"
-            stale_photo = app.INVENTORY_PHOTOS_DIR / "stale-sold.jpg"
-            scan_photo.write_bytes(b"scan me")
-            stale_photo.write_bytes(b"stale sold")
-
-            dummy = PhotoDummy()
-            dummy.app_settings = {}
-            dummy.inventory_photo_client = object()
-            dummy.events = __import__("queue").Queue()
-            dummy._save_inventory_ledger([])
-            dummy._save_profit_ledger([])
-            stale_sha = dummy._inventory_photo_file_hash(stale_photo)
-            app.INVENTORY_PHOTO_STATE_PATH.write_text(
-                json.dumps(
-                    {
-                        "version": 1,
-                        "photos": {
-                            stale_sha: {
-                                "path": str(stale_photo),
-                                "filename": stale_photo.name,
-                                "linked_keys": ["old-key"],
-                                "status": "linked",
-                            }
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            dummy._set_inventory_photo_scan_paths(app.INVENTORY_PHOTOS_DIR, [scan_photo])
-            try:
-                with patch.object(app, "identify_cards_sync", return_value=[]):
-                    dummy._inventory_photo_scan_worker(app.INVENTORY_PHOTOS_DIR)
-                statuses = []
-                while not dummy.events.empty():
-                    event, payload = dummy.events.get()
-                    if event == "inventory_photo_status":
-                        statuses.append(payload)
-                self.assertTrue(any("0/1 file(s)" in status for status in statuses))
-                self.assertTrue(any("Inventory photo scan: 1/1" in status and "scan-me.jpg" in status for status in statuses), statuses)
-                state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
-                self.assertIn(stale_sha, state["photos"])
-                self.assertEqual(state["photos"][stale_sha]["status"], "linked")
-                self.assertIsNone(getattr(dummy, "_inventory_photo_scan_path_overrides", {}).get(dummy._inventory_photo_scan_override_key(app.INVENTORY_PHOTOS_DIR)))
-            finally:
-                app.CARD_PIPELINE_DIR = old_pipeline
-                app.INVENTORY_LEDGER_PATH = old_inventory
-                app.PROFIT_LEDGER_PATH = old_profit
-                app.INVENTORY_PHOTOS_DIR = old_photo_dir
-                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
-
-    def test_inventory_photo_scan_worker_filters_shared_folder_without_prepared_paths(self) -> None:
-        class PhotoDummy:
-            _money_value = app.CardPipelineApp._money_value
-            _inventory_record_key = app.CardPipelineApp._inventory_record_key
-            _profit_record_key = app.CardPipelineApp._profit_record_key
-            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
-            _profit_record_date = app.CardPipelineApp._profit_record_date
-            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
-            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
-            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
-            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
-            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
-            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
-            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
-            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
-            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
-            _inventory_photo_path_is_archived = app.CardPipelineApp._inventory_photo_path_is_archived
-            _inventory_photo_paths = app.CardPipelineApp._inventory_photo_paths
-            _inventory_photo_files = app.CardPipelineApp._inventory_photo_files
-            _inventory_photo_certs_from_cards = app.CardPipelineApp._inventory_photo_certs_from_cards
-            _active_inventory_keys_by_cert = app.CardPipelineApp._active_inventory_keys_by_cert
-            _link_inventory_photo_to_keys = app.CardPipelineApp._link_inventory_photo_to_keys
-            _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
-            _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
-            _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
-            _match_text_tokens = app.CardPipelineApp._match_text_tokens
-            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
-            _compact_match_text = app.CardPipelineApp._compact_match_text
-            _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
-            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
-            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
-            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
-            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
-            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
-            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
-            _inventory_photo_path_keys = app.CardPipelineApp._inventory_photo_path_keys
-            _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
-            _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
-            _inventory_photo_state_used_keys = app.CardPipelineApp._inventory_photo_state_used_keys
-            _inventory_record_references_photo = app.CardPipelineApp._inventory_record_references_photo
-            _inventory_photo_scan_can_skip = app.CardPipelineApp._inventory_photo_scan_can_skip
-            _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
-            _sold_inventory_photo_used_keys = app.CardPipelineApp._sold_inventory_photo_used_keys
-            _inventory_photo_image_matches_sold_photo = app.CardPipelineApp._inventory_photo_image_matches_sold_photo
-            _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
-            _inventory_photo_source_mirror_candidates = app.CardPipelineApp._inventory_photo_source_mirror_candidates
-            _inventory_photo_base64 = lambda self, path: "stub"
-            _inventory_photo_scan_group_nearby_unmatched = app.CardPipelineApp._inventory_photo_scan_group_nearby_unmatched
-            _inventory_photo_scan_worker = app.CardPipelineApp._inventory_photo_scan_worker
-
-        with TemporaryDirectory() as tmp:
-            old_pipeline = app.CARD_PIPELINE_DIR
-            old_inventory = app.INVENTORY_LEDGER_PATH
-            old_profit = app.PROFIT_LEDGER_PATH
-            old_photo_dir = app.INVENTORY_PHOTOS_DIR
-            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
-            app.CARD_PIPELINE_DIR = Path(tmp)
-            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
-            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
-            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
-            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
-            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
-            active = app.INVENTORY_PHOTOS_DIR / "active.jpg"
-            fresh = app.INVENTORY_PHOTOS_DIR / "fresh.jpg"
-            no_match = app.INVENTORY_PHOTOS_DIR / "no-match.jpg"
-            old_linked = app.INVENTORY_PHOTOS_DIR / "old-linked.jpg"
-            inactive = app.INVENTORY_PHOTOS_DIR / "inactive.jpg"
-            sold_path = app.INVENTORY_PHOTOS_DIR / "sold-path.jpg"
-            for path in (active, fresh, no_match, old_linked, inactive, sold_path):
-                path.write_bytes(path.name.encode("utf-8"))
-
-            dummy = PhotoDummy()
-            dummy.app_settings = {}
-            dummy.inventory_photo_client = object()
-            dummy.events = queue.Queue()
-            dummy._save_inventory_ledger(
-                [
-                    {"inventory_key": "active-key", "status": "Active", "cert_number": "123", "card_title": "Active", "photo_paths": [active.name]},
-                    {"inventory_key": "inactive-key", "status": "Sold", "cert_number": "456", "card_title": "Inactive", "photo_paths": [inactive.name]},
-                ]
-            )
-            dummy._save_profit_ledger([{"cert_number": "789", "card_title": "Sold Path", "sale_price": 10, "photo_paths": [sold_path.name]}])
-            old_linked_sha = dummy._inventory_photo_file_hash(old_linked)
-            no_match_sha = dummy._inventory_photo_file_hash(no_match)
-            dummy._save_inventory_photo_state(
-                {
-                    "version": 1,
-                    "photos": {
-                        old_linked_sha: {"filename": old_linked.name, "relative_path": old_linked.name, "linked_keys": ["old-key"], "status": "linked"},
-                        no_match_sha: {"filename": no_match.name, "relative_path": no_match.name, "linked_keys": [], "status": "no_matching_inventory"},
-                    },
-                }
-            )
-            try:
-                with patch.object(app, "identify_cards_sync", return_value=[]) as identify:
-                    dummy._inventory_photo_scan_worker(app.INVENTORY_PHOTOS_DIR)
-                self.assertEqual(identify.call_count, 2)
-                statuses = []
-                while not dummy.events.empty():
-                    event, payload = dummy.events.get()
-                    if event == "inventory_photo_status":
-                        statuses.append(payload)
-                self.assertTrue(any("0/3 file(s)" in status for status in statuses), statuses)
-                state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
-                self.assertEqual(state["photos"][old_linked_sha]["status"], "linked")
-                self.assertNotIn("removed_at", state["photos"][old_linked_sha])
-            finally:
-                app.CARD_PIPELINE_DIR = old_pipeline
-                app.INVENTORY_LEDGER_PATH = old_inventory
-                app.PROFIT_LEDGER_PATH = old_profit
-                app.INVENTORY_PHOTOS_DIR = old_photo_dir
-                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
     def test_inventory_photo_scan_retries_previous_no_match_but_skips_active_link(self) -> None:
         class PhotoDummy:
@@ -11115,8 +9786,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
             _profit_record_key = app.CardPipelineApp._profit_record_key
-            _profit_record_date = app.CardPipelineApp._profit_record_date
-            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
@@ -11203,7 +9872,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
-    def test_inventory_sold_archives_photo_file_and_marks_state_archived(self) -> None:
+    def test_inventory_sold_archives_unshared_photo_file_for_two_weeks(self) -> None:
         class PhotoSoldDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -11211,21 +9880,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
-            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
-            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
-            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
-            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
-            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
-            _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
             _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
-            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
             _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
             _unique_deleted_archive_path = app.CardPipelineApp._unique_deleted_archive_path
             _archive_deleted_file = app.CardPipelineApp._archive_deleted_file
             _purge_expired_deleted_archive = app.CardPipelineApp._purge_expired_deleted_archive
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
-            _mark_inventory_photo_files_for_sold_records = app.CardPipelineApp._mark_inventory_photo_files_for_sold_records
+            _delete_inventory_photo_files_for_removed_records = app.CardPipelineApp._delete_inventory_photo_files_for_removed_records
             _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
             _append_activity = lambda self, action, summary, details=None: None
 
@@ -11255,12 +9917,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertFalse(photo.exists())
                 archived = list(app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card.jpg"))
                 self.assertEqual(len(archived), 1)
-                state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
-                state_record = next(iter(state["photos"].values()))
-                self.assertEqual(state_record["status"], "archived_from_album")
-                self.assertEqual(state_record["sale_context"], "inventory_sold")
-                self.assertEqual(state_record["linked_keys"], [record["inventory_key"]])
-                self.assertEqual(state_record["archive_path"], str(archived[0]))
+                metadata_path = archived[0].with_name("card.jpg.archive.json")
+                self.assertTrue(metadata_path.exists())
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                self.assertEqual(metadata["original_path"], str(photo))
+                self.assertEqual(metadata["reason"], "inventory_photo_removed")
+                self.assertEqual(metadata["retention_days"], 14)
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
@@ -11297,7 +9959,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             self.assertEqual(exported[0].read_bytes(), b"front")
             self.assertEqual(exported[1].read_bytes(), b"back")
 
-    def test_inventory_delete_archives_matching_source_and_shared_photo_files(self) -> None:
+    def test_inventory_sold_archives_matching_source_and_shared_photo_files(self) -> None:
         class PhotoSoldDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -11307,7 +9969,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
-            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
             _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
@@ -11318,6 +9979,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
             _delete_inventory_photo_files_for_removed_records = app.CardPipelineApp._delete_inventory_photo_files_for_removed_records
+            _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
             _append_activity = lambda self, action, summary, details=None: None
 
         with TemporaryDirectory() as tmp:
@@ -11344,8 +10006,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
             dummy.app_settings = {"inventory_photo_folder": str(source_dir)}
             record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "123", "card_title": "Test", "status": "Active", "photo_paths": [str(shared_photo)]})
+            dummy._save_inventory_ledger([record])
             try:
-                self.assertEqual(dummy._delete_inventory_photo_files_for_removed_records([record], []), 2)
+                self.assertEqual(dummy._mark_inventory_record_sold(str(record["inventory_key"]), "Arena Club", 10), 1)
                 self.assertFalse(shared_photo.exists())
                 self.assertFalse(source_photo.exists())
                 archived = sorted(path.name for path in app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card*.jpg"))
@@ -11390,7 +10053,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
-            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
             _restore_inventory_photo_files_for_records = app.CardPipelineApp._restore_inventory_photo_files_for_records
@@ -11438,7 +10100,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
-            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
             _restore_inventory_photo_files_for_records = app.CardPipelineApp._restore_inventory_photo_files_for_records
@@ -11490,7 +10151,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
-            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
@@ -12720,7 +11380,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
             _inventory_photo_encoded_id = app.CardPipelineApp._inventory_photo_encoded_id
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
-            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
             _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
             mobile_inventory_photo_response = app.CardPipelineApp.mobile_inventory_photo_response
@@ -12760,94 +11419,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertIsNone(state.get_mobile_inventory_photo(None, {"pin": ["bad"]}, "abc"))
         self.assertEqual(state.get_mobile_inventory_photo(None, {"pin": ["123456"]}, "abc"), (b"jpg-bytes", "image/jpeg"))
-
-    def test_mobile_photo_upload_requires_pin_and_callback(self) -> None:
-        state = app.BridgeState()
-        state.mobile_pin_provider = lambda: "123456"
-        state.mobile_photo_upload = lambda payload: {"ok": True, "saved": 1}
-
-        self.assertEqual(state.upload_mobile_photos({"pin": "123456"})["saved"], 1)
-        self.assertFalse(state.upload_mobile_photos({"pin": "bad"})["ok"])
-
-    def test_mobile_photo_upload_saves_under_person_for_desktop_scan(self) -> None:
-        class MobileUploadDummy:
-            _money_value = app.CardPipelineApp._money_value
-            _inventory_record_key = app.CardPipelineApp._inventory_record_key
-            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
-            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
-            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
-            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
-            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
-            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
-            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
-            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
-            _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
-            _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
-            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
-            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
-            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
-            _mobile_image_parts = app.CardPipelineApp._mobile_image_parts
-            _mobile_photo_upload_images = app.CardPipelineApp._mobile_photo_upload_images
-            _mobile_photo_upload_owner = app.CardPipelineApp._mobile_photo_upload_owner
-            _mobile_photo_upload_folder = app.CardPipelineApp._mobile_photo_upload_folder
-            _record_mobile_photo_upload_state = app.CardPipelineApp._record_mobile_photo_upload_state
-            mobile_photo_upload = app.CardPipelineApp.mobile_photo_upload
-
-            def _is_personal_lucas(self):
-                return False
-
-            def _personal_default_person(self):
-                return "Mikey"
-
-            def _canonical_person_choice(self, person):
-                return str(person or "").strip()
-
-        with TemporaryDirectory() as tmp:
-            old_inventory = app.INVENTORY_LEDGER_PATH
-            old_photo_dir = app.INVENTORY_PHOTOS_DIR
-            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
-            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
-            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
-            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
-            try:
-                dummy = MobileUploadDummy()
-                dummy.app_settings = {}
-                dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
-                dummy.events = queue.Queue()
-                kevin_record = dummy._normalize_inventory_record(
-                    {"assigned_person": "Kevin Hambone", "cert_number": "12345678", "card_title": "Kevin Card", "status": "Active"}
-                )
-                tyler_record = dummy._normalize_inventory_record(
-                    {"assigned_person": "Tyler Hamlin", "cert_number": "87654321", "card_title": "Tyler Card", "status": "Active"}
-                )
-                dummy._save_inventory_ledger([kevin_record, tyler_record])
-
-                result = dummy.mobile_photo_upload(
-                    {
-                        "client_id": "phone-one",
-                        "assigned_person": "Kevin Hambone",
-                        "images": [{"name": "front.jpg", "image": "data:image/jpeg;base64,anBnLWJ5dGVz"}],
-                    }
-                )
-
-                self.assertTrue(result["ok"])
-                self.assertEqual(result["saved"], 1)
-                self.assertEqual(result["linked"], 0)
-                saved = list((app.INVENTORY_PHOTOS_DIR / "mobile" / "team" / "kevin-hambone").rglob("*.jpg"))
-                self.assertEqual(len(saved), 1)
-                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
-                kevin_after = next(record for record in ledger if record["assigned_person"] == "Kevin Hambone")
-                tyler_after = next(record for record in ledger if record["assigned_person"] == "Tyler Hamlin")
-                self.assertEqual(kevin_after["photo_paths"], [])
-                self.assertEqual(tyler_after["photo_paths"], [])
-                state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
-                state_record = next(iter(state["photos"].values()))
-                self.assertEqual(state_record["status"], "pending_scan")
-                self.assertEqual(state_record["linked_keys"], [])
-            finally:
-                app.INVENTORY_LEDGER_PATH = old_inventory
-                app.INVENTORY_PHOTOS_DIR = old_photo_dir
-                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
     def test_instagram_publish_retries_until_media_ready(self) -> None:
         class InstagramDummy:
@@ -13222,76 +11793,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         )
 
         self.assertEqual(urls, ["https://example.test/front.jpg", "https://example.test/back.jpg"])
-
-    def test_instagram_inventory_sync_refreshes_stale_preview_photo_url(self) -> None:
-        class InstagramDummy:
-            _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
-            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
-            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
-            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
-            _instagram_inventory_photo_id = app.CardPipelineApp._instagram_inventory_photo_id
-            _inventory_photo_encoded_id = app.CardPipelineApp._inventory_photo_encoded_id
-
-            def __init__(self):
-                self.state = {"version": 1, "posts": {}}
-                self.events = queue.Queue()
-                self.activities = []
-                self.image_urls = []
-
-            def _load_instagram_inventory_state(self):
-                return self.state
-
-            def _save_instagram_inventory_state(self, state):
-                self.state = state
-
-            def _instagram_inventory_active_records(self):
-                return [
-                    {"inventory_key": "card-key", "status": "Active", "card_title": "Current Card", "item_id": "RAW-CURRENT"}
-                ]
-
-            def _inventory_photo_paths_for_record(self, record):
-                return [Path("/tmp/current-front.jpg")]
-
-            def _inventory_photo_storage_value(self, path):
-                return path.name
-
-            def _instagram_inventory_photo_url(self, path, config):
-                return f"https://example.test/instagram/media/current-token/{path.name}"
-
-            def _instagram_api_json(self, endpoint, params=None, method="GET"):
-                if method == "POST" and params and params.get("image_url"):
-                    self.image_urls.append(params["image_url"])
-                    return {"id": "creation-current"}
-                if endpoint == "media-current":
-                    return {"permalink": "https://instagram.test/p/current"}
-                return {}
-
-            def _instagram_publish_media_with_retry(self, user_id, creation_id, caption):
-                return {"id": "media-current"}
-
-            def _append_activity(self, action, summary, details):
-                self.activities.append((action, summary, details))
-
-        dummy = InstagramDummy()
-        dummy._instagram_inventory_sync_worker(
-            {
-                "config": {"user_id": "178"},
-                "to_post": [
-                    {
-                        "inventory_key": "card-key",
-                        "record": {"inventory_key": "card-key", "status": "Active", "card_title": "Current Card", "item_id": "RAW-CURRENT"},
-                        "caption": "Current Card",
-                        "photo_path": "/tmp/stale-front.jpg",
-                        "photo_url": "https://example.test/instagram/media/stale-token/stale-front.jpg",
-                    }
-                ],
-                "to_remove": [],
-            }
-        )
-
-        self.assertEqual(dummy.image_urls, ["https://example.test/instagram/media/current-token/current-front.jpg"])
-        self.assertEqual(dummy.state["posts"]["card-key"]["photo_url"], "https://example.test/instagram/media/current-token/current-front.jpg")
-        self.assertIn("posted 1", dummy.activities[-1][1])
 
     def test_instagram_inventory_sync_continues_after_single_post_error(self) -> None:
         class InstagramDummy:
