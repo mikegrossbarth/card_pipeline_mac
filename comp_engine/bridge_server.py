@@ -28,9 +28,11 @@ from ebay_api import (
     build_authorization_url,
     decode_connect_state,
     ebay_account_status,
+    ebay_broker_url,
     ebay_token_store_path,
     encode_connect_state,
     exchange_authorization_code,
+    save_ebay_broker_account,
     save_ebay_account_token,
 )
 
@@ -1402,6 +1404,9 @@ class BridgeServer:
                 if parsed.path == "/ebay/oauth/callback":
                     self._send_ebay_oauth_callback(parsed)
                     return
+                if parsed.path == "/ebay/broker/callback":
+                    self._send_ebay_broker_callback(parsed)
+                    return
                 if parsed.path == "/ebay/oauth/declined":
                     self._send_ebay_oauth_declined(parsed)
                     return
@@ -1766,6 +1771,63 @@ class BridgeServer:
                 self.send_header("content-length", "0")
                 self.end_headers()
 
+            def _send_ebay_broker_callback(self, parsed) -> None:
+                query = parse_qs(parsed.query)
+                error = str(query.get("error", [""])[0] or "").strip()
+                if error:
+                    self._send_page(
+                        "eBay Connection Failed",
+                        f"""
+<h1>eBay Connection Failed</h1>
+<p>{html.escape(str(query.get("error_description", [error])[0] or error))}</p>
+<p>You can close this tab and try Connect eBay again from LUCAS.</p>
+""",
+                        status=400,
+                    )
+                    return
+                token = str(
+                    query.get("connection_token", [""])[0]
+                    or query.get("lucas_connection_token", [""])[0]
+                    or query.get("token", [""])[0]
+                    or ""
+                ).strip()
+                if not token:
+                    self._send_page(
+                        "Missing eBay Connection",
+                        """
+<h1>Missing eBay Connection</h1>
+<p>The LUCAS eBay service returned to this app, but did not include a connection token. Try Connect eBay again.</p>
+""",
+                        status=400,
+                    )
+                    return
+                account = str(query.get("account", ["default"])[0] or "default").strip() or "default"
+                seller_username = str(query.get("seller_username", [""])[0] or query.get("seller", [""])[0] or "").strip()
+                marketplace_id = str(query.get("marketplace_id", ["EBAY_US"])[0] or "EBAY_US").strip() or "EBAY_US"
+                broker = str(query.get("broker_url", [""])[0] or ebay_broker_url()).strip().rstrip("/")
+                try:
+                    save_ebay_broker_account(state.ebay_store_path(), account, broker, token, seller_username=seller_username, marketplace_id=marketplace_id)
+                except EbayOAuthError as error:
+                    self._send_page(
+                        "eBay Connection Failed",
+                        f"""
+<h1>eBay Connection Failed</h1>
+<p>{html.escape(str(error))}</p>
+<p>You can close this tab and try Connect eBay again.</p>
+""",
+                        status=400,
+                    )
+                    return
+                display = seller_username or ("Primary eBay Account" if account == "default" else account)
+                self._send_page(
+                    "eBay Ready in LUCAS",
+                    f"""
+<h1>eBay Ready in LUCAS</h1>
+<p>LUCAS connected seller account <strong>{html.escape(display)}</strong>.</p>
+<p>You can close this tab, return to LUCAS, and upload cards to eBay.</p>
+""",
+                )
+
             def _send_ebay_oauth_callback(self, parsed) -> None:
                 query = parse_qs(parsed.query)
                 error = str(query.get("error", [""])[0] or "").strip()
@@ -1835,20 +1897,20 @@ class BridgeServer:
                         "eBay Saved in LUCAS",
                         f"""
 <h1>eBay Saved in LUCAS</h1>
-<p>LUCAS saved eBay account <strong>{html.escape(account)}</strong> to this local app.</p>
+<p>LUCAS saved eBay account <strong>{html.escape('Primary eBay Account' if account == 'default' else account)}</strong> to this local app.</p>
 <p>Saved to <code>{html.escape(str(state.ebay_store_path()))}</code></p>
 <p>You can close this tab and return to LUCAS.</p>
 """,
                     )
                     return
                 self._send_page(
-                    "eBay Authorization Received",
+                    "eBay Not Connected",
                     f"""
-<h1>eBay Authorization Received</h1>
-<p>LUCAS received the one-time eBay authorization code. Keep this page open until LUCAS exchanges it for a refresh token.</p>
-<code>{html.escape(code)}</code>
-{f'<p>State: {html.escape(state_value)}</p>' if state_value else ''}
+<h1>eBay Not Connected</h1>
+<p>This eBay sign-in did not include the local LUCAS return address, so LUCAS could not save the seller account.</p>
+<p>Return to LUCAS and press Connect eBay again. The working flow opens the bundled LUCAS eBay login page first.</p>
 """,
+                    status=400,
                 )
 
             def _send_ebay_oauth_declined(self, parsed) -> None:
