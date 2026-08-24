@@ -36,7 +36,6 @@ import cardladder_ocr
 import google_sheets_import
 import lucas_diagnostics
 import ebay_api
-import ebay_broker_server
 from comp_engine.workbook_io import WorkbookRow
 from intake_io import append_company_sheet_rows, company_weekly_sheet_name, ensure_company_weekly_sheets, mark_received_in_workbooks, normalize_cert, parse_money as intake_parse_money, scan_to_cert, read_company_profit_records, read_simple_spreadsheet, write_pipeline_output, write_working_sheet
 from shared_state import atomic_write_json, local_identity, read_json, shared_lock
@@ -495,46 +494,6 @@ class SharedStateTests(unittest.TestCase):
             request = urlopen.call_args.args[0]
             self.assertEqual(request.full_url, "https://connect.lucas.example/ebay/token")
             self.assertIn("lucas-link-secret", request.data.decode("utf-8"))
-
-    def test_ebay_broker_state_is_signed_and_callback_accepts_hosted_lucas(self) -> None:
-        payload = {
-            "kind": ebay_broker_server.BROKER_STATE_KIND,
-            "account": "default",
-            "callback": "https://lucas.mikeyscards.com/mobile/ebay/broker/callback",
-            "created_at": 1787544385,
-        }
-        with patch.dict(ebay_broker_server.os.environ, {"LUCAS_EBAY_BROKER_STATE_SECRET": "state-secret"}, clear=False):
-            state = ebay_broker_server._encode_state(payload)
-            self.assertEqual(ebay_broker_server._decode_state(state)["account"], "default")
-            tampered = ("A" if state[0] != "A" else "B") + state[1:]
-            self.assertEqual(ebay_broker_server._decode_state(tampered), {})
-
-        self.assertTrue(ebay_broker_server._callback_allowed("http://127.0.0.1:8765/ebay/broker/callback"))
-        self.assertTrue(ebay_broker_server._callback_allowed("http://localhost:8765/ebay/broker/callback"))
-        self.assertTrue(ebay_broker_server._callback_allowed("https://lucas.mikeyscards.com/mobile/ebay/broker/callback"))
-        self.assertFalse(ebay_broker_server._callback_allowed("https://lucas.mikeyscards.com/ebay/broker/callback"))
-        self.assertFalse(ebay_broker_server._callback_allowed("http://192.168.1.10:8765/ebay/broker/callback"))
-
-    def test_ebay_broker_mount_routes_support_root_and_ebay_prefix(self) -> None:
-        handler = ebay_broker_server.EbayBrokerHandler
-        self.assertEqual(handler._route_path(None, "/"), "/")
-        self.assertEqual(handler._route_path(None, "/health"), "/health")
-        self.assertEqual(handler._route_path(None, "/ebay"), "/")
-        self.assertEqual(handler._route_path(None, "/ebay/"), "/")
-        self.assertEqual(handler._route_path(None, "/ebay/connect"), "/connect")
-        self.assertEqual(handler._route_path(None, "/ebay/callback"), "/callback")
-        self.assertEqual(handler._route_path(None, "/ebay/token"), "/token")
-
-    def test_ebay_broker_store_defaults_are_versioned(self) -> None:
-        with TemporaryDirectory() as tmp:
-            store_path = Path(tmp) / "broker.json"
-            with patch.dict(ebay_broker_server.os.environ, {"LUCAS_EBAY_BROKER_STORE_PATH": str(store_path)}, clear=False):
-                self.assertEqual(ebay_broker_server._load_store(), {"version": 1, "connections": {}})
-                ebay_broker_server._save_store({"connections": {"link": {"account": "default"}}})
-                saved = ebay_broker_server._load_store()
-
-        self.assertEqual(saved["version"], 1)
-        self.assertEqual(saved["connections"]["link"]["account"], "default")
 
     def test_ebay_policy_import_auto_selects_default_setup_values(self) -> None:
         with TemporaryDirectory() as tmp:
