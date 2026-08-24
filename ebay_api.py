@@ -16,6 +16,8 @@ PRODUCTION_TOKEN_URL = "https://api.ebay.com/identity/v1/oauth2/token"
 SANDBOX_TOKEN_URL = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
 PRODUCTION_AUTHORIZE_URL = "https://auth.ebay.com/oauth2/authorize"
 SANDBOX_AUTHORIZE_URL = "https://auth.sandbox.ebay.com/oauth2/authorize"
+PRODUCTION_INVENTORY_URL = "https://api.ebay.com/sell/inventory/v1"
+SANDBOX_INVENTORY_URL = "https://api.sandbox.ebay.com/sell/inventory/v1"
 CONNECT_STATE_KIND = "lucas_ebay_connect"
 DEFAULT_SCOPES = (
     "https://api.ebay.com/oauth/api_scope",
@@ -43,6 +45,10 @@ class EbayConfig:
     @property
     def authorize_url(self) -> str:
         return SANDBOX_AUTHORIZE_URL if self.env.lower() == "sandbox" else PRODUCTION_AUTHORIZE_URL
+
+    @property
+    def inventory_url(self) -> str:
+        return SANDBOX_INVENTORY_URL if self.env.lower() == "sandbox" else PRODUCTION_INVENTORY_URL
 
     @classmethod
     def from_env(cls) -> "EbayConfig":
@@ -119,7 +125,7 @@ def exchange_authorization_code(config: EbayConfig, authorization_code: str) -> 
     )
 
 
-def encode_connect_state(account: str = "", profile: str = "") -> str:
+def encode_connect_state(account: str = "", profile: str = "", local_callback: str = "") -> str:
     payload = {
         "kind": CONNECT_STATE_KIND,
         "account": str(account or "default").strip() or "default",
@@ -127,6 +133,9 @@ def encode_connect_state(account: str = "", profile: str = "") -> str:
         "nonce": secrets.token_urlsafe(16),
         "created_at": int(time.time()),
     }
+    callback = str(local_callback or "").strip()
+    if callback:
+        payload["local_callback"] = callback
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
@@ -175,6 +184,46 @@ def refresh_access_token(config: EbayConfig, refresh_token: str, scopes: tuple[s
     return _oauth_post(config, payload)
 
 
+def ebay_inventory_request(
+    config: EbayConfig,
+    access_token: str,
+    method: str,
+    path: str,
+    payload: dict[str, object] | None = None,
+    marketplace_id: str = "EBAY_US",
+    timeout: int = 45,
+) -> dict[str, object]:
+    token = str(access_token or "").strip()
+    if not token:
+        raise EbayOAuthError("Missing eBay access token.")
+    url = config.inventory_url.rstrip("/") + "/" + path.lstrip("/")
+    body = json.dumps(payload or {}).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Content-Language": "en-US",
+            "X-EBAY-C-MARKETPLACE-ID": marketplace_id,
+        },
+        method=method.upper(),
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as error:
+        raw_error = error.read().decode("utf-8", errors="replace")
+        raise EbayOAuthError(raw_error or str(error)) from error
+    except urllib.error.URLError as error:
+        raise EbayOAuthError(str(error)) from error
+    try:
+        return json.loads(raw) if raw else {}
+    except json.JSONDecodeError as error:
+        raise EbayOAuthError(f"eBay returned invalid JSON: {raw[:200]}") from error
+
+
 def ebay_token_store_path(data_root: object = None) -> Path:
     configured = str(os.environ.get("EBAY_TOKEN_STORE_PATH") or "").strip()
     if configured:
@@ -209,6 +258,11 @@ def save_ebay_account_token(
     access_token = str(token_result.get("access_token") or "").strip()
     account_key = str(account or "default").strip() or "default"
     now = int(time.time())
+    access_expires_in = token_result.get("expires_in")
+    try:
+        access_expires_at = now + int(access_expires_in)
+    except (TypeError, ValueError):
+        access_expires_at = None
     data = load_ebay_accounts(path)
     accounts = data.setdefault("accounts", {})
     if not isinstance(accounts, dict):
@@ -226,6 +280,7 @@ def save_ebay_account_token(
         "refresh_token_expires_in": token_result.get("refresh_token_expires_in"),
         "access_token": access_token,
         "access_token_expires_in": token_result.get("expires_in"),
+        "access_token_expires_at": access_expires_at,
         "connected_at": previous.get("connected_at") or now,
         "updated_at": now,
     }
@@ -235,6 +290,34 @@ def save_ebay_account_token(
     tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp.replace(path)
     return record
+
+
+def ebay_account_record(path: Path, account: str = "default") -> dict[str, object]:
+    data = load_ebay_accounts(path)
+    accounts = data.get("accounts") if isinstance(data, dict) else {}
+    if not isinstance(accounts, dict):
+        return {}
+    key = str(account or "default").strip() or "default"
+    record = accounts.get(key)
+    return dict(record) if isinstance(record, dict) else {}
+
+
+def ebay_access_token_for_account(path: Path, config: EbayConfig, account: str = "default", allow_env_fallback: bool = False) -> str:
+    record = ebay_account_record(path, account)
+    refresh_token = str(record.get("refresh_token") or (os.environ.get("EBAY_REFRESH_TOKEN") if allow_env_fallback else "") or "").strip()
+    if not refresh_token:
+        raise EbayOAuthError("Connect eBay first so LUCAS has a seller refresh token.")
+    now = int(time.time())
+    access_token = str(record.get("access_token") or (os.environ.get("EBAY_ACCESS_TOKEN") if allow_env_fallback else "") or "").strip()
+    expires_at = record.get("access_token_expires_at")
+    try:
+        if access_token and int(expires_at) > now + 300:
+            return access_token
+    except (TypeError, ValueError):
+        pass
+    token_result = refresh_access_token(config, refresh_token)
+    updated = save_ebay_account_token(path, str(record.get("account") or account or "default"), config, {**token_result, "refresh_token": refresh_token})
+    return str(updated.get("access_token") or "").strip()
 
 
 def ebay_account_status(path: Path) -> dict[str, object]:

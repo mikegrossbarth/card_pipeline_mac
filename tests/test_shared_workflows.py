@@ -12,6 +12,7 @@ import time
 import types
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -245,6 +246,10 @@ class SharedStateTests(unittest.TestCase):
             parsed_state = ebay_api.decode_connect_state(state_value)
             self.assertEqual(parsed_state["account"], "mikey")
             self.assertEqual(parsed_state["profile"], "personal")
+            relay_state = ebay_api.decode_connect_state(
+                ebay_api.encode_connect_state("mikey", "personal", "http://127.0.0.1:8765/ebay/oauth/callback")
+            )
+            self.assertEqual(relay_state["local_callback"], "http://127.0.0.1:8765/ebay/oauth/callback")
 
             url = ebay_api.build_authorization_url(config, state_value)
             parsed = urllib.parse.urlparse(url)
@@ -267,6 +272,266 @@ class SharedStateTests(unittest.TestCase):
             status = ebay_api.ebay_account_status(store_path)
             self.assertEqual(status["accounts"][0]["account"], "mikey")
             self.assertNotEqual(status["accounts"][0]["refresh_token"], "refresh-secret")
+
+    def test_ebay_listing_plan_requires_ready_price_config_and_https_photo(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            photo = root / "front.jpg"
+            photo.write_bytes(b"fake-jpeg")
+            store_path = root / "ebay_accounts.json"
+            store_path.write_text('{"accounts":{"default":{"refresh_token":"secret"}}}', encoding="utf-8")
+
+            bridge_state = bridge_server.BridgeState()
+            bridge_state.ebay_token_store_path = str(store_path)
+
+            class EbayPlanDummy:
+                state = bridge_state
+                _ebay_listing_plan = app.CardPipelineApp._ebay_listing_plan
+                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
+                _ebay_env_config = app.CardPipelineApp._ebay_env_config
+                _ebay_inventory_active_records = app.CardPipelineApp._ebay_inventory_active_records
+                _ebay_listing_identity = app.CardPipelineApp._ebay_listing_identity
+                _ebay_listing_price = app.CardPipelineApp._ebay_listing_price
+                _ebay_listing_title = app.CardPipelineApp._ebay_listing_title
+                _ebay_listing_description = app.CardPipelineApp._ebay_listing_description
+                _ebay_sku_for_record = app.CardPipelineApp._ebay_sku_for_record
+                _ebay_inventory_photo_url = app.CardPipelineApp._ebay_inventory_photo_url
+                _inventory_photo_encoded_id = app.CardPipelineApp._inventory_photo_encoded_id
+                _inventory_photo_storage_value = lambda self, path: str(path)
+                _money_value = app.CardPipelineApp._money_value
+                _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+
+                def _load_inventory_ledger(self):
+                    return [
+                        {
+                            "inventory_key": "card-1",
+                            "status": "Active",
+                            "card_title": "2024 Topps Chrome Test Card PSA 10",
+                            "cert_number": "12345678",
+                            "inventory_value": 99.99,
+                        }
+                    ]
+
+                def _inventory_photo_paths_for_record(self, _record):
+                    return [photo]
+
+            env = {
+                "EBAY_DEFAULT_CATEGORY_ID": "183050",
+                "EBAY_MERCHANT_LOCATION_KEY": "main",
+                "EBAY_PAYMENT_POLICY_ID": "pay",
+                "EBAY_RETURN_POLICY_ID": "return",
+                "EBAY_FULFILLMENT_POLICY_ID": "ship",
+                "LUCAS_EBAY_PUBLIC_BRIDGE_URL": "https://lucas.example.com",
+            }
+            with patch.dict(app.os.environ, env, clear=False), patch.object(app, "EBAY_LISTING_STATE_PATH", root / "ebay_listing_state.json"):
+                plan = EbayPlanDummy()._ebay_listing_plan()
+
+            self.assertEqual(plan["active_count"], 1)
+            self.assertEqual(len(plan["to_list"]), 1)
+            self.assertEqual(plan["to_list"][0]["price"], 99.99)
+            self.assertEqual(plan["to_list"][0]["photo_count"], 1)
+            self.assertEqual(plan["needs_review"], [])
+
+    def test_ebay_listing_plan_requires_lucas_connected_account_not_env_token(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            photo = root / "front.jpg"
+            photo.write_bytes(b"fake-jpeg")
+            bridge_state = bridge_server.BridgeState()
+            bridge_state.ebay_token_store_path = str(root / "missing_ebay_accounts.json")
+
+            class EbayPlanDummy:
+                state = bridge_state
+                _ebay_listing_plan = app.CardPipelineApp._ebay_listing_plan
+                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
+                _ebay_env_config = app.CardPipelineApp._ebay_env_config
+                _ebay_inventory_active_records = app.CardPipelineApp._ebay_inventory_active_records
+                _ebay_listing_identity = app.CardPipelineApp._ebay_listing_identity
+                _ebay_listing_price = app.CardPipelineApp._ebay_listing_price
+                _ebay_listing_title = app.CardPipelineApp._ebay_listing_title
+                _ebay_listing_description = app.CardPipelineApp._ebay_listing_description
+                _ebay_sku_for_record = app.CardPipelineApp._ebay_sku_for_record
+                _ebay_inventory_photo_url = app.CardPipelineApp._ebay_inventory_photo_url
+                _inventory_photo_encoded_id = app.CardPipelineApp._inventory_photo_encoded_id
+                _inventory_photo_storage_value = lambda self, path: str(path)
+                _money_value = app.CardPipelineApp._money_value
+                _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+
+                def _load_inventory_ledger(self):
+                    return [
+                        {
+                            "inventory_key": "card-1",
+                            "status": "Active",
+                            "card_title": "2024 Topps Chrome Test Card PSA 10",
+                            "cert_number": "12345678",
+                            "inventory_value": 99.99,
+                        }
+                    ]
+
+                def _inventory_photo_paths_for_record(self, _record):
+                    return [photo]
+
+            env = {
+                "EBAY_DEFAULT_CATEGORY_ID": "183050",
+                "EBAY_MERCHANT_LOCATION_KEY": "main",
+                "EBAY_PAYMENT_POLICY_ID": "pay",
+                "EBAY_RETURN_POLICY_ID": "return",
+                "EBAY_FULFILLMENT_POLICY_ID": "ship",
+                "LUCAS_EBAY_PUBLIC_BRIDGE_URL": "https://lucas.example.com",
+                "EBAY_REFRESH_TOKEN": "env-token-should-not-count",
+            }
+            with patch.dict(app.os.environ, env, clear=False), patch.object(app, "EBAY_LISTING_STATE_PATH", root / "ebay_listing_state.json"):
+                plan = EbayPlanDummy()._ebay_listing_plan()
+
+            self.assertEqual(plan["to_list"], [])
+            self.assertEqual(len(plan["needs_review"]), 1)
+            self.assertIn("connect_ebay", plan["needs_review"][0]["issues"])
+
+    def test_ebay_inventory_request_uses_inventory_endpoint_and_marketplace_header(self) -> None:
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"offerId":"offer-123"}'
+
+        config = ebay_api.EbayConfig(env="production", client_id="client", client_secret="secret", runame="RuName")
+        with patch("ebay_api.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+            result = ebay_api.ebay_inventory_request(config, "access", "POST", "offer", {"sku": "sku-1"}, marketplace_id="EBAY_US")
+
+        self.assertEqual(result["offerId"], "offer-123")
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, f"{ebay_api.PRODUCTION_INVENTORY_URL}/offer")
+        self.assertEqual(request.headers["Authorization"], "Bearer access")
+        self.assertEqual(request.headers["X-ebay-c-marketplace-id"], "EBAY_US")
+
+    def test_ebay_access_token_for_account_requires_store_by_default(self) -> None:
+        with TemporaryDirectory() as tmp:
+            config = ebay_api.EbayConfig(env="production", client_id="client", client_secret="secret", runame="RuName")
+            with patch.dict(ebay_api.os.environ, {"EBAY_REFRESH_TOKEN": "env-refresh", "EBAY_ACCESS_TOKEN": "env-access"}, clear=False):
+                with self.assertRaises(ebay_api.EbayOAuthError):
+                    ebay_api.ebay_access_token_for_account(Path(tmp) / "missing.json", config, "default")
+
+    def test_ebay_env_config_uses_mobile_public_url_for_photo_bridge(self) -> None:
+        dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
+        dummy.app_settings = {"mobile_public_url": "https://lucas.example.com/mobile/personal"}
+        dummy._is_personal_lucas = lambda: True
+        env = {
+            "LUCAS_EBAY_PUBLIC_BRIDGE_URL": "",
+            "LUCAS_PUBLIC_BRIDGE_URL": "",
+            "LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL": "",
+        }
+        with patch.dict(app.os.environ, env, clear=False):
+            config = app.CardPipelineApp._ebay_env_config(dummy)
+        self.assertEqual(config["public_bridge_url"], "https://lucas.example.com")
+
+    def test_set_pipeline_root_moves_ebay_listing_state_path(self) -> None:
+        original_root = app.CARD_PIPELINE_DIR
+        original_working = app.WORKING_SHEETS_DIR
+        with TemporaryDirectory() as tmp:
+            try:
+                app.set_pipeline_root(Path(tmp))
+                self.assertEqual(app.EBAY_LISTING_STATE_PATH, Path(tmp) / "ebay_listing_state.json")
+            finally:
+                app.set_pipeline_root(original_root, original_working)
+
+    def test_ebay_media_token_is_persisted_in_listing_state(self) -> None:
+        with TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "ebay_listing_state.json"
+
+            class EbayTokenDummy:
+                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
+                _save_ebay_listing_state = app.CardPipelineApp._save_ebay_listing_state
+                _ebay_media_token = app.CardPipelineApp._ebay_media_token
+
+            with patch.object(app, "EBAY_LISTING_STATE_PATH", state_path):
+                first = EbayTokenDummy()._ebay_media_token()
+                second = EbayTokenDummy()._ebay_media_token()
+
+            self.assertEqual(first, second)
+            self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["media_token"], first)
+
+    def test_ebay_listing_plan_can_resume_saved_offer(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_path = root / "ebay_accounts.json"
+            store_path.write_text('{"accounts":{"default":{"refresh_token":"secret"}}}', encoding="utf-8")
+            state_path = root / "ebay_listing_state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "listings": {
+                            "card-1": {
+                                "status": "offer_created",
+                                "offer_id": "offer-123",
+                                "sku": "LUCAS-12345678",
+                                "price": 99.99,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            bridge_state = bridge_server.BridgeState()
+            bridge_state.ebay_token_store_path = str(store_path)
+
+            class EbayPlanDummy:
+                state = bridge_state
+                app_settings = {"mobile_public_url": "https://lucas.example.com/mobile/personal"}
+                _ebay_listing_plan = app.CardPipelineApp._ebay_listing_plan
+                _load_ebay_listing_state = app.CardPipelineApp._load_ebay_listing_state
+                _ebay_env_config = app.CardPipelineApp._ebay_env_config
+                _ebay_inventory_active_records = app.CardPipelineApp._ebay_inventory_active_records
+                _ebay_listing_identity = app.CardPipelineApp._ebay_listing_identity
+                _ebay_listing_price = app.CardPipelineApp._ebay_listing_price
+                _ebay_listing_title = app.CardPipelineApp._ebay_listing_title
+                _ebay_listing_description = app.CardPipelineApp._ebay_listing_description
+                _ebay_sku_for_record = app.CardPipelineApp._ebay_sku_for_record
+                _ebay_inventory_photo_url = app.CardPipelineApp._ebay_inventory_photo_url
+                _money_value = app.CardPipelineApp._money_value
+                _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+                _is_personal_lucas = lambda self: True
+
+                def _load_inventory_ledger(self):
+                    return [{"inventory_key": "card-1", "status": "Active", "card_title": "2024 Topps Chrome Test Card PSA 10", "cert_number": "12345678"}]
+
+                def _inventory_photo_paths_for_record(self, _record):
+                    return []
+
+            with patch.object(app, "EBAY_LISTING_STATE_PATH", state_path), patch.dict(app.os.environ, {}, clear=False):
+                plan = EbayPlanDummy()._ebay_listing_plan()
+
+            self.assertEqual(len(plan["to_list"]), 1)
+            self.assertEqual(plan["to_list"][0]["action"], "Drafted")
+            self.assertEqual(plan["to_list"][0]["existing_offer_id"], "offer-123")
+            self.assertEqual(plan["to_list"][0]["issues"], [])
+
+    def test_ebay_existing_offer_publish_does_not_create_duplicate_offer(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "ebay_accounts.json"
+            store_path.write_text('{"accounts":{"default":{"refresh_token":"secret"}}}', encoding="utf-8")
+            bridge_state = bridge_server.BridgeState()
+            bridge_state.ebay_token_store_path = str(store_path)
+
+            class EbayPublishDummy:
+                state = bridge_state
+                _ebay_create_or_publish_item = app.CardPipelineApp._ebay_create_or_publish_item
+
+            config = {"account": "default", "marketplace_id": "EBAY_US"}
+            item = {"sku": "LUCAS-12345678", "existing_offer_id": "offer-123"}
+            api_config = ebay_api.EbayConfig(env="production", client_id="client", client_secret="secret", runame="RuName")
+            with patch("app.EbayConfig.from_env", return_value=api_config), \
+                patch("app.ebay_access_token_for_account", return_value="access"), \
+                patch("app.ebay_inventory_request", return_value={"listingId": "listing-456"}) as inventory_request:
+                result = EbayPublishDummy()._ebay_create_or_publish_item(item, config, publish=True)
+
+            self.assertEqual(result["listing_id"], "listing-456")
+            self.assertEqual(inventory_request.call_count, 1)
+            self.assertIn("offer/offer-123/publish", inventory_request.call_args.args[3])
 
     def test_shared_lock_serializes_concurrent_writers(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -2975,6 +3240,34 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         finally:
             bridge.stop()
 
+    def test_bridge_serves_ebay_media_with_head_support(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+
+        state = app.BridgeState()
+        state.ebay_media_resolver = lambda photo_id: (b"image-bytes", "image/jpeg") if photo_id == "photo-1" else None
+        bridge = app.BridgeServer(state, host="127.0.0.1", port=port)
+        bridge.start()
+        self.assertTrue(bridge.started, bridge.error)
+        try:
+            path = f"/ebay/media/{state.ebay_media_token}/photo-1/front.jpg"
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            connection.request("HEAD", path)
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("content-type"), "image/jpeg")
+            self.assertEqual(response.getheader("content-length"), str(len(b"image-bytes")))
+            connection.close()
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("content-type"), "image/jpeg")
+                self.assertEqual(response.read(), b"image-bytes")
+        finally:
+            bridge.stop()
+
     def test_mobile_public_app_url_requires_https_and_appends_profile(self) -> None:
         self.assertEqual(
             app.mobile_public_app_url("personal", {"mobile_public_url": "https://lucas.example.com"}),
@@ -3002,7 +3295,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 "https://team-env.example.com/mobile/team",
             )
 
-    def test_ebay_connect_url_uses_public_server_base_without_mobile_suffix(self) -> None:
+    def test_ebay_connect_url_uses_local_bridge_so_tokens_save_to_this_lucas(self) -> None:
         dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
         dummy.app_settings = {"mobile_public_url": "https://lucas.mikeyscards.com/mobile/personal"}
         dummy.bridge = type("Bridge", (), {"port": 8765})()
@@ -3010,8 +3303,41 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(
             app.CardPipelineApp._ebay_connect_url(dummy, "mikey"),
-            "https://lucas.mikeyscards.com/ebay/connect?profile=personal&account=mikey",
+            "http://127.0.0.1:8765/ebay/connect?profile=personal&account=mikey",
         )
+
+    def test_ebay_connection_helper_reports_existing_connection_before_reconnect(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "ebay_accounts.json"
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "accounts": {
+                            "default": {
+                                "account": "default",
+                                "env": "production",
+                                "refresh_token": "refresh-secret",
+                                "connected_at": 1787543291,
+                                "updated_at": 1787544385,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
+            dummy.state = bridge_server.BridgeState()
+            dummy.state.ebay_token_store_path = str(store_path)
+            dummy.events = queue.Queue()
+            dummy._ebay_env_config = lambda: {"account": "default"}
+            dummy._ebay_connect_url = lambda: "http://127.0.0.1:8766/ebay/connect?profile=personal&account=default"
+
+            with patch("app.messagebox.askyesno", return_value=False) as ask, patch("app.webbrowser.open") as browser_open:
+                app.CardPipelineApp.open_ebay_connection_helper(dummy)
+
+            self.assertTrue(ask.called)
+            self.assertIn("Saved in:", ask.call_args.args[1])
+            browser_open.assert_not_called()
 
     def test_bridge_rejects_untrusted_browser_origin(self) -> None:
         self.assertFalse(bridge_server.request_origin_allowed("https://example.com", "127.0.0.1:8765"))
@@ -3028,6 +3354,36 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertFalse(bridge_server.is_loopback_address("192.168.1.246"))
         self.assertIn("/status", bridge_server.BRIDGE_LOCAL_ONLY_PATH_PREFIXES)
         self.assertIn("/result/cardladder", bridge_server.BRIDGE_LOCAL_ONLY_PATH_PREFIXES)
+
+    def test_ebay_public_oauth_callback_requires_local_relay_target(self) -> None:
+        state_value = ebay_api.encode_connect_state(
+            account="default",
+            profile="personal",
+            local_callback="http://127.0.0.1:8766/ebay/oauth/callback",
+        )
+        target = bridge_server.ebay_oauth_local_relay_target(
+            "lucas.mikeyscards.com",
+            "http://127.0.0.1:8766/ebay/oauth/callback",
+            "auth-code",
+            state_value,
+        )
+        self.assertEqual(
+            target,
+            "http://127.0.0.1:8766/ebay/oauth/callback?code=auth-code&state=" + urllib.parse.quote(state_value),
+        )
+        self.assertEqual(
+            bridge_server.ebay_oauth_local_relay_target("lucas.mikeyscards.com", "", "auth-code", state_value),
+            "",
+        )
+        self.assertEqual(
+            bridge_server.ebay_oauth_local_relay_target(
+                "127.0.0.1",
+                "http://127.0.0.1:8766/ebay/oauth/callback",
+                "auth-code",
+                state_value,
+            ),
+            "",
+        )
 
     def test_add_comp_row_does_not_deadlock_on_bridge_state_lock(self) -> None:
         class FakeTree:

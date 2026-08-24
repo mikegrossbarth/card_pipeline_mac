@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, urlencode, unquote, urlparse
 
 from cardladder_ocr import extract_cl_value_from_data_url
 from cy_automation.cy_macos import CYMacOSAdapter
@@ -93,6 +93,21 @@ def request_origin_allowed(origin: str, host_header: str) -> bool:
     return is_loopback_address(parsed.hostname or "")
 
 
+def ebay_oauth_local_relay_target(host: str, local_callback: str, code: str, state_value: str) -> str:
+    request_host = str(host or "").strip()
+    if is_loopback_address(request_host):
+        return ""
+    parsed_callback = urlparse(str(local_callback or "").strip())
+    callback_is_local = (
+        parsed_callback.scheme == "http"
+        and is_loopback_address(parsed_callback.hostname or "")
+        and parsed_callback.path == "/ebay/oauth/callback"
+    )
+    if not callback_is_local:
+        return ""
+    return str(local_callback).strip() + "?" + urlencode({"code": str(code or ""), "state": str(state_value or "")})
+
+
 def fill_missing_category_from_title(row: WorkbookRow) -> None:
     if str(getattr(row, "category", "") or "").strip():
         return
@@ -153,6 +168,8 @@ class BridgeState:
         self.mobile_queue_sync: Callable[[dict], dict] | None = None
         self.mobile_inventory_photo_resolver: Callable[[str], tuple[bytes, str] | None] | None = None
         self.ebay_token_store_path = ""
+        self.ebay_media_token = uuid.uuid4().hex
+        self.ebay_media_resolver: Callable[[str], tuple[bytes, str] | None] | None = None
         self.instagram_media_token = uuid.uuid4().hex
         self.instagram_media_resolver: Callable[[str], tuple[bytes, str] | None] | None = None
         self.keep_note_sources: list[dict[str, str]] = []
@@ -327,6 +344,19 @@ class BridgeState:
         if not self.mobile_auth_ok(payload, query):
             return None
         resolver = self.mobile_inventory_photo_resolver
+        if resolver is None:
+            return None
+        return resolver(photo_id)
+
+    def ebay_media_path(self, photo_id: str, filename: str = "photo.jpg") -> str:
+        token = self.ebay_media_token
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", str(filename or "photo.jpg")).strip("-") or "photo.jpg"
+        return f"/ebay/media/{token}/{photo_id}/{safe_name}"
+
+    def get_ebay_media(self, token: str, photo_id: str) -> tuple[bytes, str] | None:
+        if not token or token != self.ebay_media_token:
+            return None
+        resolver = self.ebay_media_resolver
         if resolver is None:
             return None
         return resolver(photo_id)
@@ -1381,6 +1411,15 @@ class BridgeServer:
                 if parsed.path == "/ebay/status":
                     self._send_json(ebay_account_status(state.ebay_store_path()))
                     return
+                media_match = re.match(r"^/ebay/media/([^/]+)/([^/]+)(?:/[^/]*)?$", parsed.path)
+                if media_match:
+                    media = state.get_ebay_media(media_match.group(1), media_match.group(2))
+                    if media is None:
+                        self._send_json({"ok": False, "error": "not found"}, status=404)
+                        return
+                    body, content_type = media
+                    self._send_bytes(body, content_type, cache_control="public, max-age=3600")
+                    return
                 media_match = re.match(r"^/instagram/media/([^/]+)/([^/]+)(?:/[^/]*)?$", parsed.path)
                 if media_match:
                     media = state.get_instagram_media(media_match.group(1), media_match.group(2))
@@ -1456,6 +1495,15 @@ class BridgeServer:
                 parsed = urlparse(self.path)
                 if not self._request_allowed(parsed.path):
                     self._send_headers("application/json", 0, status=403)
+                    return
+                media_match = re.match(r"^/ebay/media/([^/]+)/([^/]+)(?:/[^/]*)?$", parsed.path)
+                if media_match:
+                    media = state.get_ebay_media(media_match.group(1), media_match.group(2))
+                    if media is None:
+                        self._send_headers("application/json", 0, status=404, cache_control="no-store")
+                        return
+                    body, content_type = media
+                    self._send_headers(content_type, len(body), cache_control="public, max-age=3600")
                     return
                 media_match = re.match(r"^/instagram/media/([^/]+)/([^/]+)(?:/[^/]*)?$", parsed.path)
                 if media_match:
@@ -1698,7 +1746,8 @@ class BridgeServer:
                 profile = str(query.get("profile", [state.mobile_profile or ""])[0] or "").strip().lower()
                 try:
                     config = EbayConfig.from_env()
-                    connect_state = encode_connect_state(account=account, profile=profile)
+                    local_callback = f"http://127.0.0.1:{self.server.server_port}/ebay/oauth/callback"
+                    connect_state = encode_connect_state(account=account, profile=profile, local_callback=local_callback)
                     target = build_authorization_url(config, connect_state)
                 except EbayOAuthError as error:
                     self._send_page(
@@ -1746,6 +1795,26 @@ class BridgeServer:
                     return
                 connect_state = decode_connect_state(state_value)
                 if connect_state:
+                    local_callback = str(connect_state.get("local_callback") or "").strip()
+                    host = urlparse(f"//{self.headers.get('host', '')}").hostname or ""
+                    target = ebay_oauth_local_relay_target(host, local_callback, code, state_value)
+                    if target:
+                        self.send_response(302)
+                        self.send_header("location", target)
+                        self.send_header("cache-control", "no-store")
+                        self.send_header("content-length", "0")
+                        self.end_headers()
+                        return
+                    if not is_loopback_address(host):
+                        self._send_page(
+                            "Open eBay Connect From LUCAS",
+                            """
+<h1>Open eBay Connect From LUCAS</h1>
+<p>This public callback cannot finish the connection by itself. Return to LUCAS, press Connect eBay, and complete sign-in from that browser tab.</p>
+""",
+                            status=400,
+                        )
+                        return
                     account = str(connect_state.get("account") or "default").strip() or "default"
                     try:
                         config = EbayConfig.from_env()
@@ -1763,10 +1832,11 @@ class BridgeServer:
                         )
                         return
                     self._send_page(
-                        "eBay Connected",
+                        "eBay Saved in LUCAS",
                         f"""
-<h1>eBay Connected</h1>
-<p>LUCAS connected eBay account <strong>{html.escape(account)}</strong>.</p>
+<h1>eBay Saved in LUCAS</h1>
+<p>LUCAS saved eBay account <strong>{html.escape(account)}</strong> to this local app.</p>
+<p>Saved to <code>{html.escape(str(state.ebay_store_path()))}</code></p>
 <p>You can close this tab and return to LUCAS.</p>
 """,
                     )

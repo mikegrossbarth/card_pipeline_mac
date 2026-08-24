@@ -346,11 +346,16 @@ C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\
 
 Latest broad bug-hunt verification:
 
+- 2026-08-23 Mac sync check: `git pull` on `mobile-shared-photo-upload` was already up to date; local `main` was fast-forwarded to `origin/main`; working tree was clean before note update. Windows-to-Mac fix notes were checked and the known code fixes are already present on Mac, including profile-specific mobile public URLs, scoped comp assignment refresh, paid received-sheet/Home delete parity, configurable company sheet resets, and visible Add Card feedback.
 - Fixed scoped comp/assignment refresh so a result payload only updates rows it actually contains; unrelated comp rows keep their existing best company/payout.
 - Synced Mac with the scoped comp assignment path, including bridge `updated_row_ids`, pending comp assignment ids, and missing `_refresh_comp_table`.
 - Restored Mac Home parity for paid received-sheet archiving after 14 days and Home right-click `Delete Sheet`; delete removes the sheet file and matching inventory ledger rows.
 - Added a regression test for the Card Ladder extension parser so an 8-line chunk containing the next sale row cannot assign row B's price to row A.
 - Confirmed assignment tests still cover unlicensed, DNB-over-threshold, GOAT Bonus 1, sport aliases, seller policies, and team half-profit payouts.
+- 2026-08-23 targeted Mac tests passed:
+  - `.venv/bin/python -m unittest tests.test_shared_workflows.AppSharedWorkflowLogicTests.test_mobile_public_app_url_requires_https_and_appends_profile -v`
+  - `.venv/bin/python -m unittest tests.test_shared_workflows.AppSharedWorkflowLogicTests.test_mobile_public_app_url_prefers_profile_setting_over_global_env -v`
+  - `.venv/bin/python -m unittest tests.test_shared_workflows.AppSharedWorkflowLogicTests.test_manual_inventory_add_accepts_cert_without_grader -v`
 
 Last full Mac result after recovery in this Windows Codex workspace: `120 tests OK`.
 Last Mac extension parser result: `extension parser regression ok`.
@@ -415,16 +420,15 @@ curl -sS http://127.0.0.1:8765/mobile/api/config
 curl -sS https://team-lucas.mikeyscards.com/mobile/api/config
 ```
 
-In-progress code/settings changes at stop:
+Code/settings status checked 2026-08-23:
 
-- `app.py` modified `mobile_public_app_url()` so profile-specific environment variables win before the old global one:
+- `app.py` already has `mobile_public_app_url()` profile-specific environment variable precedence before the old global one:
   - `LUCAS_PERSONAL_MOBILE_PUBLIC_URL`
   - `LUCAS_TEAM_MOBILE_PUBLIC_URL`
   - then `settings["mobile_public_url"]`
   - then old `LUCAS_MOBILE_PUBLIC_URL`
-- `tests/test_shared_workflows.py` has a new regression test `test_mobile_public_app_url_prefers_profile_setting_over_global_env`.
-- Tests had not been run after this change at stop.
-- Ignored local settings were changed:
+- `tests/test_shared_workflows.py` already has regression test `test_mobile_public_app_url_prefers_profile_setting_over_global_env`; targeted mobile URL tests passed on 2026-08-23.
+- Ignored local settings were confirmed on 2026-08-23:
   - `.env` has `LUCAS_MOBILE_PUBLIC_URL=https://lucas.mikeyscards.com`
   - `lucas_settings.michael.json` has `mobile_public_url=https://lucas.mikeyscards.com`
   - `lucas_settings.json` has `mobile_public_url=https://team-lucas.mikeyscards.com`
@@ -434,14 +438,14 @@ Recommended continuation:
 
 1. Verify Team local bridge on `8765` and public Team URL.
 2. If Team app is not serving, inspect `/Users/michaelgrossbarth/Library/Logs/lucas-team-app.err.log` and `/Users/michaelgrossbarth/Library/Logs/lucas-team-app.log`.
-3. Run targeted tests:
+3. Targeted mobile URL tests already passed on 2026-08-23; rerun only after changing mobile URL code:
 
 ```bash
 .venv/bin/python -m unittest tests.test_shared_workflows.AppSharedWorkflowLogicTests.test_mobile_public_app_url_requires_https_and_appends_profile -v
 .venv/bin/python -m unittest tests.test_shared_workflows.AppSharedWorkflowLogicTests.test_mobile_public_app_url_prefers_profile_setting_over_global_env -v
 ```
 
-4. Commit only tracked code/test changes if tests pass. Do not commit `.env`, tunnel credential JSON, or Mac-local LaunchAgent plist files.
+4. Commit only tracked code/test changes if new changes are made and tests pass. Do not commit `.env`, tunnel credential JSON, or Mac-local LaunchAgent plist files.
 
 ## New Chat Bootstrap
 
