@@ -40,8 +40,6 @@ For Personal/Michael LUCAS, run or double-click `Run Michael LUCAS.command`. To 
 
 That creates `LUCAS.app` in the project folder and refreshes `~/Desktop/LUCAS.app`. It launches this project path and local `.venv`. If launch fails, check `~/Desktop/LUCAS-launch.log`.
 
-For the production eBay connect/listing flow, see `docs/EBAY_BROKER_DEPLOYMENT.md`. Desktop LUCAS is broker-first for end users; local desktop OAuth is only for development with `LUCAS_EBAY_USE_LOCAL_OAUTH=1`.
-
 ## Local Configuration
 
 `.env` is intentionally local and should not be committed. A typical Mac setup with Google Drive for desktop looks like:

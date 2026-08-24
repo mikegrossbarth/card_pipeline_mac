@@ -42,12 +42,11 @@ def _load_store() -> dict[str, object]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"version": 1, "connections": {}}
+        return {"connections": {}}
     if not isinstance(data, dict):
-        return {"version": 1, "connections": {}}
+        return {"connections": {}}
     if not isinstance(data.get("connections"), dict):
         data["connections"] = {}
-    data.setdefault("version", 1)
     return data
 
 
@@ -108,44 +107,9 @@ def _send_json(handler: BaseHTTPRequestHandler, payload: dict[str, object], stat
     handler.send_response(status)
     handler.send_header("content-type", "application/json")
     handler.send_header("cache-control", "no-store")
-    handler.send_header("x-content-type-options", "nosniff")
     handler.send_header("content-length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
-
-
-def _send_page(handler: BaseHTTPRequestHandler, title: str, body: str, status: int = 200) -> None:
-    html = f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title>
-<style>
-body {{
-  margin: 0;
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: #0b141b;
-  color: #f3f4f6;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}}
-main {{ max-width: 680px; padding: 32px; }}
-h1 {{ font-size: 40px; margin: 0 0 16px; }}
-p {{ color: #cbd5e1; font-size: 18px; line-height: 1.5; }}
-</style>
-</head>
-<body><main>{body}</main></body>
-</html>
-""".encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("content-type", "text/html; charset=utf-8")
-    handler.send_header("cache-control", "no-store")
-    handler.send_header("x-content-type-options", "nosniff")
-    handler.send_header("content-length", str(len(html)))
-    handler.end_headers()
-    handler.wfile.write(html)
 
 
 class EbayBrokerHandler(BaseHTTPRequestHandler):
@@ -160,23 +124,8 @@ class EbayBrokerHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         route_path = self._route_path(parsed.path)
-        if route_path in {"/", ""}:
-            _send_page(
-                self,
-                "LUCAS eBay",
-                "<h1>LUCAS eBay</h1><p>This service securely connects eBay seller accounts to LUCAS.</p>",
-            )
-            return
-        if route_path in {"/health", "/status"}:
-            _send_json(
-                self,
-                {
-                    "ok": True,
-                    "service": "lucas-ebay-broker",
-                    "public_url": broker_public_url(),
-                    "mode": EbayConfig.from_env().env,
-                },
-            )
+        if route_path == "/health":
+            _send_json(self, {"ok": True, "service": "lucas-ebay-broker"})
             return
         if route_path == "/connect":
             self._send_connect(parsed)
@@ -260,8 +209,6 @@ class EbayBrokerHandler(BaseHTTPRequestHandler):
             "account": account,
             "profile": str(state.get("profile") or "").strip(),
             "refresh_token": refresh_token,
-            "scopes": list(config.scopes),
-            "env": config.env,
             "created_at": int(time.time()),
             "updated_at": int(time.time()),
         }
@@ -295,11 +242,6 @@ class EbayBrokerHandler(BaseHTTPRequestHandler):
         except EbayOAuthError as error:
             _send_json(self, {"ok": False, "error": str(error)}, status=502)
             return
-        record["updated_at"] = int(time.time())
-        try:
-            _save_store(data)
-        except OSError:
-            pass
         _send_json(
             self,
             {
