@@ -3308,12 +3308,12 @@ class CardPipelineApp(tk.Tk):
         profile = "personal" if self._is_personal_lucas() else "team"
         return f"http://{host}:{self.bridge.port}/mobile/{profile}"
 
-    def _ebay_direct_oauth_allowed(self) -> bool:
-        return str(os.environ.get("LUCAS_EBAY_DISABLE_LOCAL_OAUTH") or "").strip().lower() not in {"1", "true", "yes", "on"}
+    def _ebay_local_oauth_enabled(self) -> bool:
+        return str(os.environ.get("LUCAS_EBAY_USE_LOCAL_OAUTH") or "").strip().lower() in {"1", "true", "yes", "on"}
 
     def _ebay_connect_url(self, account: str = "default") -> str:
         profile = "personal" if self._is_personal_lucas() else "team"
-        if self._ebay_direct_oauth_allowed():
+        if self._ebay_local_oauth_enabled():
             base = f"http://127.0.0.1:{self.bridge.port}"
             return f"{base}/ebay/connect?{urllib.parse.urlencode({'profile': profile, 'account': account})}"
         local_callback = f"http://127.0.0.1:{self.bridge.port}/ebay/broker/callback"
@@ -3329,7 +3329,7 @@ class CardPipelineApp(tk.Tk):
     def _ebay_record_is_connected(self, record: dict[str, object]) -> bool:
         if str(record.get("connection_mode") or "").strip().lower() == "broker":
             return bool(str(record.get("connection_token") or "").strip())
-        return bool(str(record.get("refresh_token") or "").strip())
+        return bool(str(record.get("refresh_token") or "").strip()) and CardPipelineApp._ebay_local_oauth_enabled(self)
 
     def _ebay_account_display_name(self, account: str = "default", record: dict[str, object] | None = None) -> str:
         seller = str((record or {}).get("seller_username") or "").strip()
@@ -3344,7 +3344,7 @@ class CardPipelineApp(tk.Tk):
         if str(record.get("connection_mode") or "").strip().lower() == "broker" and str(record.get("connection_token") or "").strip():
             return "Bundled LUCAS eBay"
         if str(record.get("refresh_token") or "").strip():
-            return "Local LUCAS eBay"
+            return "Legacy Local eBay"
         if not str(record.get("connection_token") or "").strip():
             return "Not connected"
         return "Not connected"
@@ -3361,7 +3361,7 @@ class CardPipelineApp(tk.Tk):
                     return str(value or "").strip() or "unknown"
 
             connected = CardPipelineApp._ebay_record_is_connected(self, record)
-            prompt = "Reconnect this eBay account?" if connected else "Connect this eBay account?"
+            prompt = "Reconnect this eBay account?" if connected else "Replace this legacy local connection with the bundled eBay login?"
             details = "\n".join(
                 [
                     f"Account: {self._ebay_account_display_name(account, record)}",
@@ -5956,7 +5956,7 @@ class CardPipelineApp(tk.Tk):
             if isinstance(account, dict)
             and (
                 str(account.get("connection_mode") or "").strip().lower() == "broker"
-                or CardPipelineApp._ebay_direct_oauth_allowed(self)
+                or CardPipelineApp._ebay_local_oauth_enabled(self)
             )
         }
         active_records = self._ebay_inventory_active_records()
