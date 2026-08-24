@@ -1,0 +1,12 @@
+tunnel: YOUR_TUNNEL_ID
+credentials-file: /etc/cloudflared/YOUR_TUNNEL_ID.json
+
+ingress:
+  - hostname: lucas.mikeyscards.com
+    path: /ebay*
+    service: http://127.0.0.1:8788
+  - hostname: lucas.mikeyscards.com
+    service: http://127.0.0.1:8766
+  - hostname: team-lucas.mikeyscards.com
+    service: http://127.0.0.1:8765
+  - service: http_status:404
