@@ -3311,17 +3311,23 @@ class CardPipelineApp(tk.Tk):
     def _ebay_local_oauth_enabled(self) -> bool:
         return str(os.environ.get("LUCAS_EBAY_USE_LOCAL_OAUTH") or "").strip().lower() in {"1", "true", "yes", "on"}
 
+    def _ebay_broker_callback_url(self, profile: str) -> str:
+        public_url = mobile_public_app_url(profile, getattr(self, "app_settings", {}))
+        if public_url:
+            parsed = urllib.parse.urlparse(public_url)
+            return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "/mobile/ebay/broker/callback", "", "", ""))
+        return f"http://127.0.0.1:{self.bridge.port}/ebay/broker/callback"
+
     def _ebay_connect_url(self, account: str = "default") -> str:
         profile = "personal" if self._is_personal_lucas() else "team"
         if self._ebay_local_oauth_enabled():
             base = f"http://127.0.0.1:{self.bridge.port}"
             return f"{base}/ebay/connect?{urllib.parse.urlencode({'profile': profile, 'account': account})}"
-        local_callback = f"http://127.0.0.1:{self.bridge.port}/ebay/broker/callback"
         return ebay_broker_url() + "/connect?" + urllib.parse.urlencode(
             {
                 "profile": profile,
                 "account": account,
-                "callback": local_callback,
+                "callback": self._ebay_broker_callback_url(profile),
                 "app": "lucas-desktop",
             }
         )

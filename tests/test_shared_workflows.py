@@ -496,11 +496,11 @@ class SharedStateTests(unittest.TestCase):
             self.assertEqual(request.full_url, "https://connect.lucas.example/ebay/token")
             self.assertIn("lucas-link-secret", request.data.decode("utf-8"))
 
-    def test_ebay_broker_state_is_signed_and_callback_is_local_only(self) -> None:
+    def test_ebay_broker_state_is_signed_and_callback_accepts_hosted_lucas(self) -> None:
         payload = {
             "kind": ebay_broker_server.BROKER_STATE_KIND,
             "account": "default",
-            "callback": "http://127.0.0.1:8765/ebay/broker/callback",
+            "callback": "https://lucas.mikeyscards.com/mobile/ebay/broker/callback",
             "created_at": 1787544385,
         }
         with patch.dict(ebay_broker_server.os.environ, {"LUCAS_EBAY_BROKER_STATE_SECRET": "state-secret"}, clear=False):
@@ -511,6 +511,7 @@ class SharedStateTests(unittest.TestCase):
 
         self.assertTrue(ebay_broker_server._callback_allowed("http://127.0.0.1:8765/ebay/broker/callback"))
         self.assertTrue(ebay_broker_server._callback_allowed("http://localhost:8765/ebay/broker/callback"))
+        self.assertTrue(ebay_broker_server._callback_allowed("https://lucas.mikeyscards.com/mobile/ebay/broker/callback"))
         self.assertFalse(ebay_broker_server._callback_allowed("https://lucas.mikeyscards.com/ebay/broker/callback"))
         self.assertFalse(ebay_broker_server._callback_allowed("http://192.168.1.10:8765/ebay/broker/callback"))
 
@@ -3520,6 +3521,26 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(query["profile"], ["personal"])
         self.assertEqual(query["account"], ["mikey"])
         self.assertEqual(query["app"], ["lucas-desktop"])
+        self.assertEqual(query["callback"], ["https://lucas.mikeyscards.com/mobile/ebay/broker/callback"])
+
+    def test_ebay_connect_url_uses_local_callback_without_public_url(self) -> None:
+        dummy = app.CardPipelineApp.__new__(app.CardPipelineApp)
+        dummy.app_settings = {}
+        dummy.bridge = type("Bridge", (), {"port": 8765})()
+        dummy._is_personal_lucas = lambda: True
+
+        with patch.dict(
+            app.os.environ,
+            {
+                "LUCAS_EBAY_BROKER_URL": "https://connect.lucas.example/ebay",
+                "LUCAS_MOBILE_PUBLIC_URL": "",
+                "LUCAS_PERSONAL_MOBILE_PUBLIC_URL": "",
+            },
+            clear=False,
+        ):
+            url = app.CardPipelineApp._ebay_connect_url(dummy, "mikey")
+
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
         self.assertEqual(query["callback"], ["http://127.0.0.1:8765/ebay/broker/callback"])
 
     def test_ebay_connect_url_can_use_local_oauth_for_development(self) -> None:
