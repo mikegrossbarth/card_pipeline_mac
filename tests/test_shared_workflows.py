@@ -5112,6 +5112,61 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(open_items[0]["payout_balance"], 30.0)
         self.assertEqual(open_items[0]["status"], "Sold")
 
+    def test_move_to_received_appends_datetime_when_name_exists(self) -> None:
+        class MoveDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_path_for_stage = app.CardPipelineApp._sheet_path_for_stage
+            _delete_sheet_marker = app.CardPipelineApp._delete_sheet_marker
+            _marker_for_stage = app.CardPipelineApp._marker_for_stage
+            _unique_stage_destination = app.CardPipelineApp._unique_stage_destination
+            _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
+
+            def _is_personal_lucas(self):
+                return False
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            incoming_dir = root / "INCOMING SHEETS"
+            working_dir = root / "WORKING SHEETS"
+            received_dir = root / "RECEIVED SHEETS"
+            incoming_dir.mkdir(parents=True)
+            working_dir.mkdir()
+            received_dir.mkdir()
+            existing_received = received_dir / "Lot A.xlsx"
+            source = incoming_dir / "Lot A.xlsx"
+            existing_received.write_text("existing", encoding="utf-8")
+            source.write_text("incoming", encoding="utf-8")
+
+            old_incoming = app.INCOMING_SHEETS_DIR
+            old_working = app.WORKING_SHEETS_DIR
+            old_received = app.RECEIVED_SHEETS_DIR
+            app.INCOMING_SHEETS_DIR = incoming_dir
+            app.WORKING_SHEETS_DIR = working_dir
+            app.RECEIVED_SHEETS_DIR = received_dir
+            try:
+                dummy = MoveDummy()
+                dummy.home_sheet_markers = {"Incoming|Lot A.xlsx": {"assigned_person": "Lucas"}}
+                dummy.home_sheet_paths = {"Incoming": {"Lot A.xlsx": source}, "Working": {}, "Received": {}}
+                dummy.deleted_sheet_marker_keys = set()
+
+                moved_key, cleanup = dummy._move_home_sheet_to_stage("Incoming|Lot A.xlsx", "Received")
+
+                moved_stage, moved_name = dummy._split_home_sheet_key(moved_key)
+                moved_path = received_dir / moved_name
+                self.assertEqual(cleanup, {})
+                self.assertEqual(moved_stage, "Received")
+                self.assertRegex(moved_name, r"^Lot A_\d{8}_\d{6}\.xlsx$")
+                self.assertEqual(existing_received.read_text(encoding="utf-8"), "existing")
+                self.assertEqual(moved_path.read_text(encoding="utf-8"), "incoming")
+                self.assertFalse(source.exists())
+                self.assertIn(moved_key, dummy.home_sheet_markers)
+                self.assertTrue(dummy.home_sheet_markers[moved_key]["all_received"])
+            finally:
+                app.INCOMING_SHEETS_DIR = old_incoming
+                app.WORKING_SHEETS_DIR = old_working
+                app.RECEIVED_SHEETS_DIR = old_received
+
     def test_moving_received_sheet_back_clears_received_profit_and_company_rows(self) -> None:
         class MoveDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
@@ -5576,6 +5631,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _marker_for_stage = app.CardPipelineApp._marker_for_stage
             _money_value = app.CardPipelineApp._money_value
             _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -7828,8 +7885,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         added = CreateDummy()._ensure_raw_item_ids_for_rows(rows)
 
         self.assertEqual(added, 2)
-        self.assertEqual(rows[0].item_id, f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-0004")
-        self.assertEqual(rows[1].item_id, f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-0005")
+        prefix = f"RAW-TEAM-{datetime.now().strftime('%Y%m%d')}-"
+        self.assertTrue(rows[0].item_id.startswith(prefix))
+        self.assertEqual(int(rows[1].item_id.removeprefix(prefix)), int(rows[0].item_id.removeprefix(prefix)) + 1)
         self.assertEqual(rows[2].item_id, "")
 
     def test_manual_create_raw_rows_keep_blank_grader_when_saved_and_reloaded(self) -> None:

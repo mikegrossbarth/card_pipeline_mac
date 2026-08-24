@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import subprocess
 import time
 import uuid
 from contextlib import contextmanager
@@ -60,6 +61,7 @@ def shared_lock(root: Path, name: str, owner: dict[str, str] | None = None, time
     payload = {
         "token": token,
         "name": name,
+        "pid": os.getpid(),
         "user": owner.get("display_name") or "",
         "machine": owner.get("machine") or "",
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -71,7 +73,7 @@ def shared_lock(root: Path, name: str, owner: dict[str, str] | None = None, time
                 json.dump(payload, handle, indent=2, sort_keys=True)
             break
         except FileExistsError:
-            if is_stale_lock(lock_path, timeout):
+            if is_abandoned_local_lock(lock_path) or is_stale_lock(lock_path, timeout):
                 try:
                     lock_path.unlink()
                     continue
@@ -91,6 +93,28 @@ def shared_lock(root: Path, name: str, owner: dict[str, str] | None = None, time
                 lock_path.unlink()
         except OSError:
             pass
+
+
+def is_abandoned_local_lock(path: Path) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    machine = str(payload.get("machine") or "") if isinstance(payload, dict) else ""
+    pid = payload.get("pid") if isinstance(payload, dict) else None
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        local_host = socket.gethostname()
+    except Exception:
+        local_host = ""
+    if machine and local_host and machine.lower() != local_host.lower():
+        return False
+    try:
+        result = subprocess.run(["ps", "-p", str(pid)], capture_output=True, text=True, timeout=1, check=False)
+    except Exception:
+        return False
+    return result.returncode != 0
 
 
 def is_stale_lock(path: Path, timeout: float) -> bool:
