@@ -6901,13 +6901,22 @@ class CardPipelineApp(tk.Tk):
         if not self._personal_instagram_sync_enabled():
             messagebox.showinfo("Instagram Sync", "Personal Instagram sync is disabled on this LUCAS install.")
             return
-        plan = self._instagram_inventory_plan()
+        plan: dict[str, object] = {
+            "to_post": [],
+            "to_remove": [],
+            "missing_photos": [],
+            "active_count": 0,
+            "posted_count": 0,
+            "config": self._instagram_env_config(),
+        }
         popup = tk.Toplevel(self)
         popup.title("Instagram Inventory Sync")
         popup.configure(bg="#1f1f1f")
         popup.transient(self)
         popup.geometry("980x660")
         popup.minsize(900, 600)
+        popup.lift()
+        popup.focus_force()
 
         frame = ttk.Frame(popup, style="Panel.TFrame", padding=(14, 12))
         frame.pack(fill=tk.BOTH, expand=True)
@@ -6943,7 +6952,13 @@ class CardPipelineApp(tk.Tk):
 
         def reload_plan() -> None:
             nonlocal plan
-            plan = self._instagram_inventory_plan()
+            summary_var.set("Loading Instagram inventory plan...")
+            popup.update_idletasks()
+            try:
+                plan = self._instagram_inventory_plan()
+            except Exception as error:
+                summary_var.set(f"Could not load Instagram inventory plan: {error}")
+                return
             post_items.clear()
             remove_items.clear()
             tree.delete(*tree.get_children())
@@ -7093,7 +7108,8 @@ class CardPipelineApp(tk.Tk):
         ttk.Button(delete_actions, text="Mark Deleted", command=mark_manual_deleted, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
         table_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
-        reload_plan()
+        summary_var.set("Opening Instagram Inventory Sync...")
+        popup.after(50, reload_plan)
 
     def _instagram_api_json(self, endpoint: str, params: dict[str, object] | None = None, method: str = "GET") -> dict[str, object]:
         params = dict(params or {})
