@@ -6183,7 +6183,7 @@ class CardPipelineApp(tk.Tk):
         return urllib.parse.unquote(match.group(1)) if match else ""
 
     def _instagram_cover_photo_path(self, paths: list[Path]) -> Path | None:
-        if not available_paths:
+        if not paths:
             return None
         return instagram_inventory_photo_order(paths)[0]
 
@@ -6441,7 +6441,7 @@ class CardPipelineApp(tk.Tk):
             paths = instagram_inventory_photo_order(self._inventory_photo_paths_for_record(record))
             if hasattr(self, "_instagram_inventory_photo_is_postable"):
                 paths = [path for path in paths if self._instagram_inventory_photo_is_postable(path)]
-            if not available_paths:
+            if not paths:
                 missing_photos.append(record)
                 continue
             cover_photo = paths[0]
