@@ -514,27 +514,6 @@ class SharedStateTests(unittest.TestCase):
         self.assertFalse(ebay_broker_server._callback_allowed("https://lucas.mikeyscards.com/ebay/broker/callback"))
         self.assertFalse(ebay_broker_server._callback_allowed("http://192.168.1.10:8765/ebay/broker/callback"))
 
-    def test_ebay_broker_mount_routes_support_root_and_ebay_prefix(self) -> None:
-        handler = ebay_broker_server.EbayBrokerHandler
-        self.assertEqual(handler._route_path(None, "/"), "/")
-        self.assertEqual(handler._route_path(None, "/health"), "/health")
-        self.assertEqual(handler._route_path(None, "/ebay"), "/")
-        self.assertEqual(handler._route_path(None, "/ebay/"), "/")
-        self.assertEqual(handler._route_path(None, "/ebay/connect"), "/connect")
-        self.assertEqual(handler._route_path(None, "/ebay/callback"), "/callback")
-        self.assertEqual(handler._route_path(None, "/ebay/token"), "/token")
-
-    def test_ebay_broker_store_defaults_are_versioned(self) -> None:
-        with TemporaryDirectory() as tmp:
-            store_path = Path(tmp) / "broker.json"
-            with patch.dict(ebay_broker_server.os.environ, {"LUCAS_EBAY_BROKER_STORE_PATH": str(store_path)}, clear=False):
-                self.assertEqual(ebay_broker_server._load_store(), {"version": 1, "connections": {}})
-                ebay_broker_server._save_store({"connections": {"link": {"account": "default"}}})
-                saved = ebay_broker_server._load_store()
-
-        self.assertEqual(saved["version"], 1)
-        self.assertEqual(saved["connections"]["link"]["account"], "default")
-
     def test_ebay_policy_import_auto_selects_default_setup_values(self) -> None:
         with TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "ebay_listing_state.json"

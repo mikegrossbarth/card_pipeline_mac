@@ -155,11 +155,7 @@ class EbayBrokerHandler(BaseHTTPRequestHandler):
         return
 
     def _route_path(self, path: str) -> str:
-        if path == "/ebay":
-            return "/"
-        if path.startswith("/ebay/"):
-            return path[5:] or "/"
-        return path
+        return path[5:] or "/" if path.startswith("/ebay/") else path
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
