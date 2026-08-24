@@ -9535,7 +9535,7 @@ class CardPipelineApp(tk.Tk):
     def _inventory_photo_paths_for_record(self, record: dict[str, object] | None) -> list[Path]:
         if not record:
             return []
-        available_paths: list[Path] = []
+        paths: list[Path] = []
         seen: set[str] = set()
         for value in record.get("photo_paths") or []:
             path = self._resolve_inventory_photo_path(value)
