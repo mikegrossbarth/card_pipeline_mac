@@ -17127,16 +17127,38 @@ class CardPipelineApp(tk.Tk):
         try:
             pop_scan_paths = getattr(self, "_pop_inventory_photo_scan_paths", None)
             scan_paths = pop_scan_paths(folder) if callable(pop_scan_paths) else None
+            if scan_paths is None:
+                candidate_source = getattr(self, "_inventory_photo_source_mirror_candidates", None)
+                if callable(candidate_source):
+                    scan_paths = candidate_source(folder, folder)
             images = self._inventory_photo_files(folder, scan_paths)
             total = len(images)
             if not background:
                 self.events.put(("inventory_photo_status", f"Inventory photo scan starting in {folder}: 0/{total} file(s)."))
             current_hashes = {str(image.get("sha256") or "") for image in images}
-            if scan_paths is None:
-                for sha, record in list(photos.items()):
-                    if sha and sha not in current_hashes and isinstance(record, dict) and not record.get("removed_at"):
-                        record["status"] = "missing_from_album"
-                        record["removed_at"] = datetime.now().isoformat(timespec="seconds")
+            for sha, record in list(photos.items()):
+                if sha and sha not in current_hashes and isinstance(record, dict) and not record.get("removed_at"):
+                    existing_values = [
+                        record.get("path"),
+                        record.get("relative_path"),
+                        record.get("filename"),
+                    ]
+                    existing_candidates: list[Path] = []
+                    for value in existing_values:
+                        if not str(value or "").strip():
+                            continue
+                        record_path = Path(str(value)).expanduser()
+                        existing_candidates.append(record_path)
+                        if not record_path.is_absolute():
+                            existing_candidates.append(folder / record_path)
+                    path_candidate_source = getattr(self, "_inventory_photo_path_candidates", None)
+                    if callable(path_candidate_source):
+                        for value in existing_values:
+                            existing_candidates.extend(path_candidate_source(value))
+                    if any(candidate.exists() for candidate in existing_candidates):
+                        continue
+                    record["status"] = "missing_from_album"
+                    record["removed_at"] = datetime.now().isoformat(timespec="seconds")
             rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
             keys_by_cert = self._active_inventory_keys_by_cert(rows)
             active_records = [record for record in rows if str(record.get("status") or "").lower() == "active"]
