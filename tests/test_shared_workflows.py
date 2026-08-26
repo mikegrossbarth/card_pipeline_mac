@@ -3648,6 +3648,68 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(label, "2024 Topps Dynasty Gunnar Henderson Rookie Nike Patch Auto 1/1 | gunnar.xlsx | RAW-MIKEY-20260710-0007")
         self.assertEqual(dummy._selected_receive_autocomplete_match(label), match)
 
+    def test_receive_card_autocomplete_down_opens_dropdown(self) -> None:
+        class Dummy:
+            _open_receive_card_autocomplete = app.CardPipelineApp._open_receive_card_autocomplete
+
+            def _refresh_receive_card_autocomplete(self, editor, query):
+                self.refreshed_query = query
+                editor.values = ("2024 Panini One and One Stephen Curry Timeless Moments Auto 7/49",)
+
+        class FakeEditor:
+            def __init__(self):
+                self.values = ()
+                self.post_calls = []
+                self.tk = self
+
+            def get(self):
+                return "curry timeless"
+
+            def cget(self, name):
+                self.assert_name = name
+                return self.values
+
+            def call(self, *args):
+                self.post_calls.append(args)
+
+        dummy = Dummy()
+        editor = FakeEditor()
+
+        result = dummy._open_receive_card_autocomplete(editor)
+
+        self.assertEqual(result, "break")
+        self.assertEqual(dummy.refreshed_query, "curry timeless")
+        self.assertEqual(editor.assert_name, "values")
+        self.assertEqual(editor.post_calls, [("ttk::combobox::Post", editor)])
+
+    def test_receive_card_autocomplete_focus_out_does_not_commit_open_dropdown(self) -> None:
+        class Dummy:
+            _commit_receive_card_autocomplete_focus_out = app.CardPipelineApp._commit_receive_card_autocomplete_focus_out
+
+            def after(self, _delay, callback):
+                callback()
+
+            def _receive_card_autocomplete_dropdown_visible(self, _editor):
+                return self.dropdown_visible
+
+            def _commit_cell_edit(self):
+                self.commit_count += 1
+
+        editor = object()
+        dummy = Dummy()
+        dummy.cell_editor = editor
+        dummy.dropdown_visible = True
+        dummy.commit_count = 0
+
+        dummy._commit_receive_card_autocomplete_focus_out(editor)
+
+        self.assertEqual(dummy.commit_count, 0)
+
+        dummy.dropdown_visible = False
+        dummy._commit_receive_card_autocomplete_focus_out(editor)
+
+        self.assertEqual(dummy.commit_count, 1)
+
     def test_receive_autocomplete_applies_selected_match_to_existing_row(self) -> None:
         class FieldVar:
             def __init__(self):
@@ -3692,6 +3754,84 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(row.best_company, "Arena Club")
         self.assertEqual(row.estimated_payout, 380)
         self.assertEqual(dummy.review_sheet_sources[2], "gunnar.xlsx")
+        self.assertEqual(getattr(row, "_receive_workbook_row"), 2)
+
+    def test_receive_autocomplete_rematch_clears_stale_graded_fields(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            _is_receive_tree = app.CardPipelineApp._is_receive_tree
+            _is_review_row_tree = app.CardPipelineApp._is_review_row_tree
+            _apply_receive_match_to_existing_row = app.CardPipelineApp._apply_receive_match_to_existing_row
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+
+            def _ensure_receive_row_assignment(self, row):
+                return None
+
+        dummy = Dummy()
+        dummy.receive_tree = object()
+        dummy.review_tree = object()
+        dummy.review_sheet_sources = {}
+        dummy.review_status = FieldVar()
+        dummy.review_rows = [
+            WorkbookRow(
+                excel_row=2,
+                cert_number="61791615",
+                card_title="2016 Panini Immaculate Collection Dual Autographs 1 Stephen Curry/Kevin Durant PSA",
+                grader="PSA",
+                existing_value=4250.0,
+                card_ladder_value=9000.0,
+                card_ladder_comps_average=8000.0,
+                card_ladder_comps="old comps",
+                category="basketball",
+                cy_value=7500.0,
+                cy_confidence="High",
+                best_company="FANATICS",
+                estimated_payout=8500.0,
+                company_pile=True,
+            )
+        ]
+        match = {
+            "item_id": "RAW-TEAM-20260824-3014939182",
+            "cert_number": "",
+            "grader": "",
+            "sport": "basketball",
+            "card_title": "2024 Panini One and One Stephen Curry Timeless Moments Auto 7/49",
+            "purchase_price": 3400.0,
+            "card_ladder_value": None,
+            "card_ladder_comps_average": None,
+            "cy_value": None,
+            "cy_confidence": None,
+            "card_ladder_comps": "",
+            "best_company": "",
+            "estimated_payout": None,
+            "sheet": "drose514_8_21_26.xlsx",
+            "workbook_sheet": "Cards",
+            "workbook_row": 2,
+        }
+
+        dummy._apply_receive_match_to_existing_row(dummy.receive_tree, 2, match)
+
+        row = dummy.review_rows[0]
+        self.assertEqual(row.item_id, "RAW-TEAM-20260824-3014939182")
+        self.assertEqual(row.cert_number, "")
+        self.assertEqual(row.grader, "")
+        self.assertEqual(row.card_title, "2024 Panini One and One Stephen Curry Timeless Moments Auto 7/49")
+        self.assertEqual(row.existing_value, 3400.0)
+        self.assertIsNone(row.card_ladder_value)
+        self.assertIsNone(row.card_ladder_comps_average)
+        self.assertEqual(row.card_ladder_comps, "")
+        self.assertIsNone(row.cy_value)
+        self.assertIsNone(row.cy_confidence)
+        self.assertEqual(row.best_company, "")
+        self.assertIsNone(row.estimated_payout)
+        self.assertEqual(dummy.review_sheet_sources[2], "drose514_8_21_26.xlsx")
         self.assertEqual(getattr(row, "_receive_workbook_row"), 2)
 
     def test_receive_missing_cert_does_not_refresh_incoming_index(self) -> None:
@@ -6170,6 +6310,52 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.PROFIT_LEDGER_PATH = old_ledger
+
+    def test_save_working_sheet_commits_active_create_cell_edit_first(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class SaveDummy:
+            save_working_sheet = app.CardPipelineApp.save_working_sheet
+
+            def _commit_cell_edit(self):
+                self.committed = True
+
+        dummy = SaveDummy()
+        dummy.working_sheet_save_active = True
+        dummy.status_var = FieldVar()
+        dummy.committed = False
+
+        dummy.save_working_sheet()
+
+        self.assertTrue(dummy.committed)
+        self.assertEqual(dummy.status_var.value, "Working sheet save is already in progress.")
+
+    def test_create_manual_cell_edit_saves_estimated_payout_value(self) -> None:
+        class CellDummy:
+            _apply_cell_value = app.CardPipelineApp._apply_cell_value
+            _parse_money_text = app.CardPipelineApp._parse_money_text
+            _is_review_row_tree = lambda self, tree: False
+
+            def apply_create_seller_terms(self, show_status=True):
+                self.seller_terms_calls.append(show_status)
+
+        dummy = CellDummy()
+        dummy.intake_tree = object()
+        dummy.comp_tree = object()
+        dummy.intake_rows = [WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Test")]
+        dummy.intake_sources = {}
+        dummy.intake_sheet_sources = {}
+        dummy.seller_terms_calls = []
+
+        dummy._apply_cell_value(dummy.intake_tree, 2, "estimated_payout", "$123.45")
+
+        self.assertEqual(dummy.intake_rows[0].estimated_payout, 123.45)
+        self.assertEqual(dummy.seller_terms_calls, [False])
 
     def test_inventory_records_are_deduped_and_reactivated(self) -> None:
         class InventoryDummy:
