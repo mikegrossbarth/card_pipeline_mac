@@ -529,7 +529,7 @@ Check:
 2. Was the sheet marked received?
 3. Were cards checked for company pile? Those go to company sheets, not active inventory.
 4. Is the Inventory person filter hiding them?
-5. Use **Sync Received to Inventory** if older received sheets need backfill.
+5. Use selected Receive rows or a single explicit sheet move to add inventory. The older broad received-sheet backfill action is disabled because it can resurrect sold or deleted inventory rows.
 
 ### Sold Cards Still Show In Inventory
 

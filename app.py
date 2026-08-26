@@ -2533,7 +2533,6 @@ class CardPipelineApp(tk.Tk):
 
     def _show_inventory_settings_menu(self, anchor: tk.Widget) -> None:
         menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
-        menu.add_command(label="Sync Received to Inventory", command=lambda: self.refresh_inventory_tab(reconcile=True, enrich=True, filtered_only=True))
         menu.add_command(label="Update Best Company/Payouts", command=self.update_inventory_payouts)
         menu.add_command(label="Recomp Visible Cards", command=self.open_inventory_recomp_popup)
         menu.add_separator()
@@ -2731,9 +2730,13 @@ class CardPipelineApp(tk.Tk):
             cert = scan_to_cert(record.get("cert_number"))
             if source_sheet and cert:
                 keys.add((source_sheet, cert))
+            if cert:
+                keys.add(("", cert))
             item_id = str(record.get("item_id") or "").strip().lower()
             if source_sheet and item_id:
                 keys.add((source_sheet, f"item:{item_id}"))
+            if item_id:
+                keys.add(("", f"item:{item_id}"))
             title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
             if source_sheet and not cert and title_identity:
                 keys.add((source_sheet, f"title:{title_identity}"))
@@ -2946,6 +2949,81 @@ class CardPipelineApp(tk.Tk):
             else:
                 kept.append(record)
         return kept, removed
+
+    def _inventory_add_protection_reason(self, record: dict[str, object], existing_rows: list[dict[str, object]]) -> str:
+        source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+        cert = scan_to_cert(record.get("cert_number"))
+        item_id = str(record.get("item_id") or "").strip().lower()
+        title_identity = self._received_inventory_title_identity(record.get("card_title"))
+        purchase_price = self._money_value(record.get("purchase_price"))
+
+        for existing in existing_rows:
+            if str(existing.get("status") or "Active").strip().lower() != "active":
+                continue
+            existing_source = Path(str(existing.get("source_sheet") or "")).name.strip().lower()
+            if source_sheet and existing_source != source_sheet:
+                continue
+            existing_title = self._received_inventory_title_identity(existing.get("card_title"))
+            if not title_identity or existing_title != title_identity:
+                continue
+            existing_cert = scan_to_cert(existing.get("cert_number"))
+            existing_item_id = str(existing.get("item_id") or "").strip().lower()
+            if (cert and existing_item_id) or (item_id and existing_cert):
+                return "possible raw/cert duplicate in the same source sheet"
+
+        tombstone_loader = getattr(self, "_load_inventory_deleted_tombstones", None)
+        tombstones = tombstone_loader() if callable(tombstone_loader) else []
+        for tombstone in tombstones:
+            if not isinstance(tombstone, dict):
+                continue
+            tombstone_source = Path(str(tombstone.get("source_sheet") or "")).name.strip().lower()
+            tombstone_cert = scan_to_cert(tombstone.get("cert_number"))
+            tombstone_item_id = str(tombstone.get("item_id") or "").strip().lower()
+            tombstone_title = self._received_inventory_title_identity(tombstone.get("card_title"))
+            if cert and tombstone_cert == cert:
+                return "cert was previously deleted from inventory"
+            if item_id and tombstone_item_id == item_id:
+                return "item id was previously deleted from inventory"
+            if title_identity and tombstone_title == title_identity and (not source_sheet or not tombstone_source or tombstone_source == source_sheet):
+                return "matching title was previously deleted from inventory"
+
+        profit_loader = getattr(self, "_load_profit_ledger", None)
+        profit_rows = profit_loader() if callable(profit_loader) else []
+        for raw_profit_record in profit_rows:
+            if not isinstance(raw_profit_record, dict):
+                continue
+            profit_record = raw_profit_record
+            if str(profit_record.get("record_type") or "").strip().lower() == "expense":
+                continue
+            if self._money_value(profit_record.get("sale_price")) is None:
+                continue
+            profit_cert = scan_to_cert(profit_record.get("cert_number"))
+            profit_item_id = str(profit_record.get("item_id") or "").strip().lower()
+            profit_title = self._received_inventory_title_identity(profit_record.get("card_title"))
+            source_values = {
+                Path(str(profit_record.get(field) or "")).name.strip().lower()
+                for field in ("source_sheet", "original_source_sheet")
+            }
+            source_values.discard("")
+            same_cert = bool(cert and profit_cert == cert)
+            same_item = bool(item_id and profit_item_id == item_id)
+            same_title = bool(title_identity and profit_title == title_identity)
+            same_source = bool(source_sheet and source_sheet in source_values)
+            profit_purchase = self._money_value(profit_record.get("purchase_price"))
+            clear_buyback = bool(same_cert and source_sheet and not same_source)
+            if (same_cert or same_item) and not clear_buyback:
+                return "cert or item id was previously sold"
+            if same_title and same_source:
+                return "matching title was previously sold from the same source sheet"
+            if (
+                same_title
+                and not clear_buyback
+                and purchase_price is not None
+                and profit_purchase is not None
+                and abs(purchase_price - profit_purchase) < 0.01
+            ):
+                return "matching title and purchase price were previously sold"
+        return ""
 
     def _raw_item_id_namespace(self) -> str:
         return "MIKEY" if self._is_personal_lucas() else "TEAM"
@@ -3265,12 +3343,13 @@ class CardPipelineApp(tk.Tk):
             }
         )
 
-    def add_inventory_records(self, records: list[dict[str, object]], refresh: bool = True) -> int:
+    def add_inventory_records(self, records: list[dict[str, object]], refresh: bool = True, allow_sold_restore: bool = False) -> int:
         if not records:
             return 0
         ledger = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         by_key = {str(record.get("inventory_key") or ""): record for record in ledger}
         added = 0
+        blocked: list[dict[str, object]] = []
         for record in records:
             if not str(record.get("cert_number") or "").strip() and not str(record.get("item_id") or "").strip():
                 record = dict(record)
@@ -3278,6 +3357,21 @@ class CardPipelineApp(tk.Tk):
                 record["item_id"] = self._next_raw_item_id([*ledger, *by_key.values()])
                 record.pop("inventory_key", None)
             normalized = self._normalize_inventory_record(record)
+            if not allow_sold_restore:
+                protection = getattr(self, "_inventory_add_protection_reason", None)
+                blocked_reason = protection(normalized, ledger) if callable(protection) else ""
+                if blocked_reason:
+                    blocked.append(
+                        {
+                            "inventory_key": str(normalized.get("inventory_key") or ""),
+                            "cert_number": scan_to_cert(normalized.get("cert_number")),
+                            "item_id": str(normalized.get("item_id") or ""),
+                            "source_sheet": str(normalized.get("source_sheet") or ""),
+                            "card_title": str(normalized.get("card_title") or ""),
+                            "reason": blocked_reason,
+                        }
+                    )
+                    continue
             normalized = self._enrich_inventory_record_assignment(normalized)
             key = str(normalized.get("inventory_key") or "")
             if not key:
@@ -3291,6 +3385,14 @@ class CardPipelineApp(tk.Tk):
                 existing.update(normalized)
                 existing["status"] = "Active"
         self._save_inventory_ledger(ledger)
+        if blocked:
+            append_activity = getattr(self, "_append_activity", None)
+            if callable(append_activity):
+                append_activity(
+                    "Inventory Add Blocked",
+                    f"Blocked {len(blocked)} inventory add(s) that matched sold/deleted/duplicate protections.",
+                    {"blocked": blocked[:20], "blocked_count": len(blocked)},
+                )
         if refresh:
             self.refresh_inventory_tab()
         return added
@@ -4481,7 +4583,7 @@ class CardPipelineApp(tk.Tk):
         restore_photos = getattr(self, "_restore_inventory_photo_files_for_records", None)
         if callable(restore_photos):
             restore_photos(inventory_records)
-        self.add_inventory_records(inventory_records, refresh=False)
+        self.add_inventory_records(inventory_records, refresh=False, allow_sold_restore=True)
         return refunded, inventory_records
 
     def mobile_profit_refund(self, payload: dict) -> dict:
@@ -5262,11 +5364,7 @@ class CardPipelineApp(tk.Tk):
         return candidates
 
     def _sync_received_inventory_to_ledger(self, filtered_only: bool = False) -> tuple[int, int]:
-        records = self._received_inventory_candidate_records()
-        if filtered_only:
-            records = self._filtered_inventory_records([self._normalize_inventory_record(record) for record in records])
-        added = self.add_inventory_records(records, refresh=False)
-        return added, len(records)
+        return 0, 0
 
     def _sync_received_sheet_inventory_to_ledger(self, stage: str, path: Path, person: str) -> tuple[int, int]:
         records = self._received_inventory_candidate_records_for_sheet(stage, path, person)
@@ -17101,7 +17199,7 @@ class CardPipelineApp(tk.Tk):
 
     def _build_manual_review_mode(self) -> None:
         self.review_mode_host.columnconfigure(8, weight=1)
-        ttk.Label(self.review_mode_host, text="Double-click cells in the Receive table to enter certs, raw Item IDs, or adjust matched details.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
+        ttk.Label(self.review_mode_host, text="Search cert/name to choose incoming or working sheet rows; matched rows are locked.", style="Muted.TLabel").grid(row=0, column=0, columnspan=9, sticky="w")
 
     def _build_manual_intake_mode(self) -> None:
         self.scanning_station_active = False
@@ -18906,6 +19004,15 @@ class CardPipelineApp(tk.Tk):
         if not sheet_name or not workbook_sheet or workbook_row <= 0:
             return None
         return (Path(sheet_name).name, workbook_sheet, workbook_row)
+
+    def _receive_row_is_sheet_matched(self, row: WorkbookRow) -> bool:
+        return self._receive_row_ref(row) is not None
+
+    def _receive_row_for_excel_row(self, excel_row: int) -> WorkbookRow | None:
+        for row in self.review_rows:
+            if row.excel_row == excel_row:
+                return row
+        return None
 
     def _receive_row_was_marked(
         self,
@@ -21074,6 +21181,15 @@ class CardPipelineApp(tk.Tk):
         column = columns[column_index]
         if column not in EDITABLE_COLUMNS:
             return
+        if self._is_review_row_tree(tree):
+            try:
+                excel_row = int(row_id)
+            except (TypeError, ValueError):
+                excel_row = 0
+            row = self._receive_row_for_excel_row(excel_row)
+            if row is not None and self._receive_row_is_sheet_matched(row):
+                self.review_status.set("Matched receive rows are locked to the incoming/working sheet.")
+                return
         bbox = tree.bbox(row_id, column_id)
         if not bbox:
             return
@@ -21114,6 +21230,11 @@ class CardPipelineApp(tk.Tk):
         if value.strip() == str(current or "").strip() and not selected_match:
             return
         excel_row = int(row_id)
+        if self._is_review_row_tree(tree):
+            row = self._receive_row_for_excel_row(excel_row)
+            if row is not None and self._receive_row_is_sheet_matched(row):
+                self.review_status.set("Matched receive rows are locked to the incoming/working sheet.")
+                return
         self._apply_cell_value(tree, excel_row, column, value)
         if selected_match:
             self._apply_receive_match_to_existing_row(tree, excel_row, selected_match)
@@ -21140,10 +21261,11 @@ class CardPipelineApp(tk.Tk):
                 continue
             self._attach_receive_match_to_row(row, match)
             row.status = "Received"
-            if match.get("item_id"):
-                row.item_id = str(match.get("item_id") or "")
             if match.get("cert_number"):
                 row.cert_number = str(match.get("cert_number") or "")
+                row.item_id = ""
+            elif match.get("item_id"):
+                row.item_id = str(match.get("item_id") or "")
             if match.get("card_title"):
                 row.card_title = str(match.get("card_title") or "")
             if match.get("grader"):
