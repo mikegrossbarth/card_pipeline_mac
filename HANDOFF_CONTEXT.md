@@ -50,6 +50,7 @@ Future idea: let the user's OpenClaw agent talk to L.U.C.A.S through a narrow co
 
 ## Latest Completed Work
 
+- Ported Windows receive rematch/card-typing parity to Mac: selecting a different incoming/working card in Receive now fully replaces the row fields, including clearing stale cert/grader/company/value data when the selected sheet row is raw or blank; Receive card-title autocomplete opens on edit/Down/Alt-Down and does not commit while its dropdown has focus; Create estimated-payout cell edits save correctly before seller-term recalculation; Save Working Sheet commits any active Create cell edit first; Inventory no longer shows the Bulk Edit toggle and editable inventory cells can be opened directly by clicking.
 - Create now shows the same non-editable bottom `TOTAL` row as Comp, summing visible Purchase, Card Ladder, Comps, CY Estimate, and Est. Payout columns when those columns are present.
 - Comp now exposes a green `Update Best Company/Payouts` button for the currently loaded incoming/working sheet rows, plus right-click `Update Best Company/Payout` for selected line items. These recalculate assignment fields only; users still click `Save Back to Source Sheet` to persist changes.
 - Raw item ID generation now looks at active inventory, live sheets, sold profit history, and activity-log add/sold history before choosing the next ID. This prevents quick Add Card -> Mark Sold loops from reusing the same raw ID and hiding later sales as duplicate profit rows.
