@@ -3163,6 +3163,124 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 saved.close()
 
+    def test_mark_received_row_ref_reports_cert_found_in_workbook_row(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Mixed Lot.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Cert #", "Grader", "Card", "Purchase"])
+            sheet.append(["63710659", "PSA", "1996 Topps 138 Kobe Bryant PSA 10", 2200])
+            workbook.save(path)
+
+            result = mark_received_in_workbooks([path], set(), {("Mixed Lot.xlsx", "Cards", 2)})
+
+            self.assertEqual(result["rows_marked"], 1)
+            self.assertEqual(result["certs_marked"], {"63710659"})
+            self.assertEqual(result["row_refs_marked"], {("mixed lot.xlsx", "cards", 2)})
+            self.assertEqual(result["row_ref_certs"], {("mixed lot.xlsx", "cards", 2): "63710659"})
+
+    def test_receive_row_ref_hydration_prevents_certed_row_from_becoming_raw_inventory(self) -> None:
+        class Dummy:
+            _receive_row_ref = app.CardPipelineApp._receive_row_ref
+            _hydrate_marked_receive_rows_from_cert_refs = app.CardPipelineApp._hydrate_marked_receive_rows_from_cert_refs
+            _inventory_record_from_row = app.CardPipelineApp._inventory_record_from_row
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _money_value = app.CardPipelineApp._money_value
+
+        dummy = Dummy()
+        row = WorkbookRow(
+            excel_row=2,
+            cert_number="",
+            item_id="RAW-MIKEY-20260814-0003",
+            grader="PSA",
+            card_title="1996 Topps 138 Kobe Bryant PSA 10",
+            existing_value=2200,
+        )
+        setattr(row, "_receive_sheet", "Mixed Lot.xlsx")
+        setattr(row, "_receive_workbook_sheet", "Cards")
+        setattr(row, "_receive_workbook_row", 2)
+
+        hydrated = dummy._hydrate_marked_receive_rows_from_cert_refs(
+            [row],
+            {("mixed lot.xlsx", "cards", 2): "63710659"},
+        )
+        record = dummy._inventory_record_from_row(row, "Mikey", source_sheet="Mixed Lot.xlsx", source="Manual")
+
+        self.assertEqual(hydrated, 1)
+        self.assertEqual(row.cert_number, "63710659")
+        self.assertEqual(row.item_id, "")
+        self.assertEqual(record["item_type"], "Graded")
+        self.assertEqual(record["cert_number"], "63710659")
+        self.assertEqual(record["item_id"], "")
+
+    def test_receive_match_to_certed_sheet_row_clears_temporary_raw_item_id(self) -> None:
+        class FieldVar:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            _is_receive_tree = app.CardPipelineApp._is_receive_tree
+            _is_review_row_tree = app.CardPipelineApp._is_review_row_tree
+            _receive_row_ref = app.CardPipelineApp._receive_row_ref
+            _receive_row_ref_key = app.CardPipelineApp._receive_row_ref_key
+            _attach_receive_match_to_row = app.CardPipelineApp._attach_receive_match_to_row
+            _apply_receive_match_to_existing_row = app.CardPipelineApp._apply_receive_match_to_existing_row
+            _inventory_record_from_row = app.CardPipelineApp._inventory_record_from_row
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _money_value = app.CardPipelineApp._money_value
+            _ensure_receive_row_assignment = lambda self, row: None
+
+        dummy = Dummy()
+        dummy.receive_tree = object()
+        dummy.review_rows = [
+            WorkbookRow(
+                excel_row=2,
+                cert_number="",
+                item_id="RAW-MIKEY-20260825-0001",
+                grader="PSA",
+                card_title="2018 Bowman 49 Shohei Ohtani Blue PSA 7",
+                existing_value=1000,
+            )
+        ]
+        dummy.review_sheet_sources = {}
+        dummy.review_status = FieldVar()
+
+        dummy._apply_receive_match_to_existing_row(
+            dummy.receive_tree,
+            2,
+            {
+                "sheet": "richierocca2_8_24_26.xlsx",
+                "workbook_sheet": "Cards",
+                "workbook_row": 3,
+                "cert_number": "97182846",
+                "item_id": "",
+                "grader": "PSA",
+                "card_title": "2018 Bowman 49 Shohei Ohtani Blue PSA 7",
+                "sport": "baseball",
+                "purchase_price": 1000,
+            },
+        )
+        record = dummy._inventory_record_from_row(
+            dummy.review_rows[0],
+            "Mikey",
+            source_sheet="richierocca2_8_24_26.xlsx",
+            source="Manual",
+        )
+
+        self.assertEqual(dummy.review_rows[0].cert_number, "97182846")
+        self.assertEqual(dummy.review_rows[0].item_id, "")
+        self.assertEqual(record["item_type"], "Graded")
+        self.assertEqual(record["cert_number"], "97182846")
+        self.assertEqual(record["item_id"], "")
+
     def test_receive_index_matches_raw_rows_by_unique_title_and_keeps_row_ref(self) -> None:
         class FieldVar:
             def __init__(self):
@@ -6121,6 +6239,201 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(ledger[0]["inventory_key"], "raw-team-20260807-0001|raw lot.xlsx")
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_add_inventory_records_blocks_sold_or_deleted_received_rows(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _inventory_add_protection_reason = app.CardPipelineApp._inventory_add_protection_reason
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+
+            def __init__(self):
+                self.activities = []
+
+            def _load_profit_ledger(self):
+                return [
+                    {
+                        "status": "Sold from inventory",
+                        "company": "General Sold",
+                        "source_sheet": "Mikey General Sold",
+                        "original_source_sheet": "Mikey General Sold",
+                        "item_id": "RAW-MIKEY-20260726-0001",
+                        "card_title": "2003 Fleer Showcase Derek Jeter Auto 157/250",
+                        "purchase_price": 175,
+                        "sale_price": 210,
+                    }
+                ]
+
+            def _load_inventory_deleted_tombstones(self):
+                return [
+                    {
+                        "source_sheet": "SGC_INV_ADDS_7_6.xlsx",
+                        "cert_number": "0458621",
+                        "card_title": "2019 TOPPS CHROME SHOHEI OHTANI #1 SGC 10",
+                    }
+                ]
+
+            def _append_activity(self, action, summary, details=None):
+                self.activities.append((action, summary, details))
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                added = dummy.add_inventory_records(
+                    [
+                        {
+                            "assigned_person": "Mikey",
+                            "cert_number": "0458621",
+                            "card_title": "2019 Topps Chrome 1 Shohei Ohtani SGC 10",
+                            "source_sheet": "COMPLETE_GRADED_INVENTORY_ADD_7_7_26.xlsx",
+                            "purchase_price": 100,
+                            "status": "Active",
+                        },
+                        {
+                            "assigned_person": "Mikey",
+                            "item_id": "RAW-MIKEY-20260726-0001",
+                            "card_title": "2003 Fleer Showcase Derek Jeter Auto 157/250",
+                            "source_sheet": "RAW_INVENTORY_ADDITION_7_7_6.xlsx",
+                            "purchase_price": 175,
+                            "status": "Active",
+                        },
+                    ]
+                )
+
+                self.assertEqual(added, 0)
+                self.assertEqual(json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"], [])
+                self.assertEqual(dummy.activities[0][0], "Inventory Add Blocked")
+                self.assertEqual(dummy.activities[0][2]["blocked_count"], 2)
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_add_inventory_records_allows_clear_buyback_from_new_source(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _inventory_add_protection_reason = app.CardPipelineApp._inventory_add_protection_reason
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _load_inventory_deleted_tombstones = lambda self: []
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+
+            def _load_profit_ledger(self):
+                return [
+                    {
+                        "status": "Sold from inventory",
+                        "source_sheet": "Mikey General Sold",
+                        "original_source_sheet": "national_day_1_graded_entry.xlsx",
+                        "cert_number": "0012219217",
+                        "card_title": "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5",
+                        "purchase_price": 10150,
+                        "sale_price": 13000,
+                    }
+                ]
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                added = dummy.add_inventory_records(
+                    [
+                        {
+                            "assigned_person": "Mikey",
+                            "cert_number": "0012219217",
+                            "grader": "BGS",
+                            "card_title": "2017 Select Prizm Tie Dye #247 Patrick Mahomes II BGS 9.5",
+                            "source_sheet": "phillip_works_8_17_26.xlsx",
+                            "purchase_price": 10150,
+                            "status": "Active",
+                        }
+                    ]
+                )
+
+                self.assertEqual(added, 1)
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(ledger[0]["inventory_key"], "0012219217|phillip_works_8_17_26.xlsx|mikey")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_add_inventory_records_blocks_raw_cert_duplicate_same_source_title(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _inventory_add_protection_reason = app.CardPipelineApp._inventory_add_protection_reason
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _load_inventory_deleted_tombstones = lambda self: []
+            _load_profit_ledger = lambda self: []
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                self.assertEqual(
+                    dummy.add_inventory_records(
+                        [
+                            {
+                                "assigned_person": "Mikey",
+                                "item_id": "RAW-MIKEY-20260825-0001",
+                                "card_title": "2018 Bowman 49 Shohei Ohtani Blue PSA 7",
+                                "source_sheet": "richierocca2_8_24_26.xlsx",
+                                "status": "Active",
+                            }
+                        ]
+                    ),
+                    1,
+                )
+                self.assertEqual(
+                    dummy.add_inventory_records(
+                        [
+                            {
+                                "assigned_person": "Mikey",
+                                "cert_number": "97182846",
+                                "card_title": "2018 Bowman 49 Shohei Ohtani Blue PSA 7",
+                                "source_sheet": "richierocca2_8_24_26.xlsx",
+                                "status": "Active",
+                            }
+                        ]
+                    ),
+                    0,
+                )
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger[0]["item_id"], "RAW-MIKEY-20260825-0001")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
+    def test_broad_received_inventory_sync_is_disabled(self) -> None:
+        class InventoryDummy:
+            _sync_received_inventory_to_ledger = app.CardPipelineApp._sync_received_inventory_to_ledger
+
+            def _received_inventory_candidate_records(self):
+                return [{"cert_number": "123", "card_title": "Should Not Add"}]
+
+            def add_inventory_records(self, _records, refresh=False):
+                raise AssertionError("broad sync should not add inventory records")
+
+        self.assertEqual(InventoryDummy()._sync_received_inventory_to_ledger(), (0, 0))
 
     def test_inventory_record_from_row_preserves_manual_sport_for_unknown_title(self) -> None:
         class InventoryDummy:

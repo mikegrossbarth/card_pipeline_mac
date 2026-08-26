@@ -81,7 +81,7 @@ Future idea: let the user's OpenClaw agent talk to L.U.C.A.S through a narrow co
 - Company Rules now exposes per-company `Sync Google Keep` inside each selected company's Rule Source panel. The old app-wide Keep sync flow was removed because companies can use different Keep notes. The local bridge intentionally keeps saved Keep URLs private in `/command` and `/status` responses; do not re-add `keepNoteSources` there, because older extensions may auto-open advertised Keep tabs.
 - Fanatics weekly company sheets now use the required visible front columns `Category`, `Card`, `Grade`, `Cert #`, `CL Value`, and `Payout`, with L.U.C.A.S tracking/profit columns trailing to the right. Existing Fanatics weekly tabs migrate when L.U.C.A.S touches the workbook. The live current-week Windows/shared Drive `FANATICS.xlsx` tab `Week of 2026-06-22` was migrated and verified.
 - Operational UX pass: the old `Setup Check` header action is now `System Health` and includes setup diagnostics plus shared conflict files, stale locks, assignment companies, People Rules Health, inventory/profit ledger presence, mobile queue log presence, and the new `activity_log.json`. `Activity Log` is available from the header and records create, receive, sheet move/delete, inventory add/sold/move/delete, mobile inventory/sold actions, expense add/delete, refund, and profit recovery events.
-- Ambiguous buttons were renamed for clarity: examples include `Refresh Sheet List`, `Refresh Incoming Index`, `Refresh Received Sheets`, `Refresh Home View`, `Sync Received to Inventory`, `Update Best Company/Payouts`, `Recomp Visible Cards`, `Refresh View`, and `Recover Sold Ledger`.
+- Ambiguous buttons were renamed for clarity: examples include `Refresh Sheet List`, `Refresh Incoming Index`, `Refresh Received Sheets`, `Refresh Home View`, `Update Best Company/Payouts`, `Recomp Visible Cards`, `Refresh View`, and `Recover Sold Ledger`. The broad `Sync Received to Inventory` action was later removed because it could backfill stale sold/deleted rows.
 - Inventory rows now have right-click `Explain Assignment`, showing the exact assignment engine recommendation plus each company decision/reason/source value/payout. This is the place to debug why an inventory row says `NOBODY TAKES`, Fanatics, Arena Club, etc.
 - Assignment rejection reasons now name the rule miss instead of only saying `card does not match company rules`; examples include blocked DNB rules, excluded terms, grader/grade rule failures, missing include/category matches, or a matched category whose source value falls outside the configured ranges.
 - Manual Company Rules now expose a company-wide `Company Card Year Range` (`Min Year` / `Max Year`) and persist it as `minYear` / `maxYear` in the manual rules JSON. The assignment engine applies this before category/value rule groups, so companies like Fanatics can be set to `Min Year` `1990`.
@@ -442,6 +442,30 @@ Recommended continuation:
 ```
 
 4. Commit only tracked code/test changes if tests pass. Do not commit `.env`, tunnel credential JSON, or Mac-local LaunchAgent plist files.
+
+## Windows Sync TODOs
+
+Inventory received-sync protections added on Mac should be mirrored in the Windows repo:
+
+1. Remove or disable the broad `Sync Received to Inventory` UI action.
+2. Keep selected Receive rows and explicit single-sheet move-to-Received inventory adds.
+3. Block inventory adds that match prior sold profit rows by cert, item id, same source/title, or same title/purchase price.
+4. Block inventory adds that match deleted inventory tombstones by cert, item id, or matching title/source.
+5. Block raw/cert duplicate adds from the same source sheet and normalized title.
+6. Preserve explicit sold-card refund/restore flows with an allowlisted restore flag.
+7. Log every blocked inventory add with the candidate row and reason.
+8. Keep Instagram inventory sync read-only with respect to `inventory_ledger.json`.
+
+Additional 2026-08-25 Mac fixes that Windows should bring over:
+
+1. Treat incoming/working workbook rows as the authority for Receive inventory adds. `Mark Received in Sheets` must not add inventory from free-floating/manual Receive rows that are not matched to an `INCOMING SHEETS` or `WORKING SHEETS` row.
+2. Once a Receive row is matched to a workbook row, lock its visible card fields in the Receive UI. Users may search/type to find a cert/name and select the intended incoming/working item, but after selection the card identity, grader, sport, price, values, and source are immutable from the sheet row.
+3. When a row-ref Receive match marks a workbook row that has a cert number, return a `row_ref_certs` map from `mark_received_in_workbooks` and hydrate the Receive row before inventory creation. This prevents certed cards from becoming generated `RAW-*` inventory rows.
+4. When applying a matched certed sheet row to an existing Receive row, clear any temporary raw item id. The resulting inventory record must be `Graded` with the workbook cert.
+5. Keep true raw Receive rows allowed only when the matched workbook row itself has no cert and has an item id/raw identity.
+6. Legitimate buybacks are allowed when the same cert appears again from a different source sheet, even if the purchase price is identical. Internal raw item ids are not treated as buyback evidence.
+7. The personal live-data repair on Mac removed six bad raw Ohtani duplicate inventory rows from `richierocca2_8_24_26.xlsx`, while keeping the six certed rows: `97182846`, `64428383`, `135059637`, `139142759`, `63805211`, and `63939791`.
+8. The same repair restored and linked twelve 2026-08-25 19:36 Ohtani photos, two per certed row. The photo bucket mismatch was `LUCAS Inventory Photos Personal` vs the configured/shared `LUCAS_PERSONAL/INVENTORY PHOTOS`.
 
 ## New Chat Bootstrap
 
