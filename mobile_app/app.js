@@ -17,7 +17,7 @@ const state = {
   lastFailedQueueIds: new Set(),
 };
 const profileMatch = window.location.pathname.match(/^\/mobile\/(team|personal)(?:\/|$)/);
-const APP_PROFILE = profileMatch ? profileMatch[1] : "";
+const APP_PROFILE = profileMatch ? profileMatch[1] : "default";
 const IS_PERSONAL_PROFILE = Boolean(profileMatch && profileMatch[1] === "personal");
 const PERSONAL_DEFAULT_PERSON = "Mikey";
 const APP_BASE = profileMatch ? `/mobile/${profileMatch[1]}` : "/mobile";
@@ -29,14 +29,14 @@ if (!state.clientId) {
 
 const $ = (id) => document.getElementById(id);
 const QUEUE_KEY = "lucasMobileQueue";
-const CACHE_PREFIX = `${profileMatch ? profileMatch[1] : "default"}:`;
+const PROFILE_STORAGE_KEY = "lucasMobileProfile";
+const CACHE_PREFIX = `${APP_PROFILE}:`;
 const CACHE_KEYS = {
   search: `${CACHE_PREFIX}lucasMobileLastSearch`,
   inventory: `${CACHE_PREFIX}lucasMobileInventorySnapshot`,
   profit: `${CACHE_PREFIX}lucasMobileLastProfit`,
   payouts: `${CACHE_PREFIX}lucasMobileLastPayouts`,
 };
-const PROFILE_STORAGE_KEY = "lucasMobileProfile";
 const INVENTORY_SNAPSHOT_LIMIT = 1000;
 const INVENTORY_SNAPSHOT_REFRESH_MS = 5 * 60 * 1000;
 
@@ -55,14 +55,25 @@ function setConnectionStatus(connected, message = "") {
 
 function cacheSet(key, payload) {
   try {
-    if (!payloadMatchesProfile(payload)) {
-      localStorage.removeItem(key);
-      return;
-    }
     localStorage.setItem(key, JSON.stringify({ saved_at: new Date().toISOString(), payload: { ...payload, profile: APP_PROFILE } }));
   } catch (_error) {
     // Local storage can be full or disabled; offline queue still handles writes separately.
   }
+}
+
+function payloadMatchesProfile(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  const payloadProfile = String(payload.profile || "");
+  if (payloadProfile !== APP_PROFILE) return false;
+  if (APP_PROFILE === "personal") {
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    const allowedPeople = new Set(["mikey", "danny"]);
+    return !items.some((item) => {
+      const person = String(item?.assigned_person || item?.person || "").trim().toLowerCase();
+      return person && !allowedPeople.has(person);
+    });
+  }
+  return true;
 }
 
 function cacheGet(key) {
@@ -77,22 +88,6 @@ function cacheGet(key) {
   } catch (_error) {
     return null;
   }
-}
-
-function payloadMatchesProfile(payload) {
-  if (!payload || typeof payload !== "object") return false;
-  const payloadProfile = String(payload.profile || "").toLowerCase();
-  if (payloadProfile && APP_PROFILE && payloadProfile !== APP_PROFILE) return false;
-  if (!payloadProfile && APP_PROFILE && Array.isArray(payload.items)) return false;
-  if (IS_PERSONAL_PROFILE && Array.isArray(payload.items)) {
-    const allowedPeople = new Set([PERSONAL_DEFAULT_PERSON.toLowerCase(), "danny"]);
-    const teamRows = payload.items.filter((item) => {
-      const person = String(item?.assigned_person || item?.person || "").trim().toLowerCase();
-      return person && !allowedPeople.has(person);
-    });
-    return teamRows.length === 0;
-  }
-  return true;
 }
 
 function cacheAgeText(savedAt) {

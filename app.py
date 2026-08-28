@@ -752,6 +752,8 @@ INVENTORY_COLUMN_WIDTHS = {
 
 INVENTORY_EDIT_COLUMN_FIELDS = {
     "date": "date_added",
+    "type": "item_type",
+    "item_id": "item_id",
     "person": "assigned_person",
     "sport": "sport",
     "cert": "cert_number",
@@ -766,6 +768,7 @@ INVENTORY_EDIT_COLUMN_FIELDS = {
     "company": "best_company",
     "payout": "estimated_payout",
     "source": "source_sheet",
+    "status": "status",
     "notes": "notes",
 }
 INVENTORY_EDIT_MONEY_COLUMNS = {"purchase", "card_ladder", "comps", "cy_estimate", "payout"}
@@ -1444,6 +1447,22 @@ class CardPipelineApp(tk.Tk):
         style.map(
             "Soft.TButton",
             background=[("pressed", palette["button_pressed"]), ("active", palette["button_hover"]), ("disabled", "#535353")],
+            foreground=[("disabled", "#b3b3b3")],
+            relief=[("pressed", tk.FLAT), ("!pressed", tk.FLAT)],
+        )
+        style.configure(
+            "Danger.TButton",
+            font=("Segoe UI Semibold", 10),
+            padding=(16, 9),
+            background=palette["danger"],
+            foreground=palette["text"],
+            borderwidth=0,
+            focusthickness=0,
+            relief=tk.FLAT,
+        )
+        style.map(
+            "Danger.TButton",
+            background=[("pressed", "#3d1515"), ("active", "#742828"), ("disabled", "#535353")],
             foreground=[("disabled", "#b3b3b3")],
             relief=[("pressed", tk.FLAT), ("!pressed", tk.FLAT)],
         )
@@ -8622,13 +8641,14 @@ class CardPipelineApp(tk.Tk):
             ("best_company", "Best Company"),
             ("estimated_payout", "Est. Payout"),
             ("source_sheet", "Source Sheet"),
+            ("status", "Status"),
         ]
         money_fields = {"purchase_price", "card_ladder_value", "card_ladder_comps_average", "cy_value", "estimated_payout"}
         vars_by_field: dict[str, tk.StringVar] = {}
 
         frame = self._scrollable_popup_frame(popup, style_name="Panel.TFrame", bg="#121212", padding=(18, 16))
         ttk.Label(frame, text="Edit Inventory Row", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 2))
-        ttk.Label(frame, text=str(normalized.get("status") or "Active"), style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 14))
+        ttk.Label(frame, text=str(normalized.get("inventory_key") or ""), style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 14))
         for index, (field, label) in enumerate(fields):
             row = 2 + index // 2
             col = 0 if index % 2 == 0 else 2
@@ -8643,8 +8663,11 @@ class CardPipelineApp(tk.Tk):
                 person_combo.grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
                 self._bind_person_autocomplete(person_combo)
             else:
-                ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
-        status_var = tk.StringVar(value="Status changes use Mark Sold, Move, or Delete.")
+                if field == "item_type":
+                    ttk.Combobox(frame, textvariable=var, values=("Raw", "Graded"), width=width, state="readonly").grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
+                else:
+                    ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
+        status_var = tk.StringVar(value="Edit any field here, then save.")
         status_row = 2 + (len(fields) + 1) // 2
         ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(row=status_row, column=0, columnspan=4, sticky="w", pady=(4, 14))
 
@@ -8652,8 +8675,21 @@ class CardPipelineApp(tk.Tk):
             updates: dict[str, object] = {}
             for field, _label in fields:
                 raw = vars_by_field[field].get().strip()
-                if field in {"item_type", "item_id"}:
-                    updates[field] = normalized.get(field) or raw
+                if field == "item_type":
+                    item_type = raw.title()
+                    if item_type not in {"Raw", "Graded"}:
+                        status_var.set("Type must be Raw or Graded.")
+                        return
+                    updates[field] = item_type
+                    continue
+                if field == "item_id":
+                    updates[field] = raw
+                    continue
+                if field == "cert_number":
+                    updates[field] = scan_to_cert(raw)
+                    continue
+                if field == "grader":
+                    updates[field] = normalize_grader(raw) or raw.upper()
                     continue
                 if field == "assigned_person":
                     person_choice = self._canonical_person_choice(raw)
@@ -8971,6 +9007,16 @@ class CardPipelineApp(tk.Tk):
                 self.inventory_status_var.set(f"Enter a valid number for {INVENTORY_HEADINGS.get(column, column)}.")
                 return None
             return {field: float(value)}
+        if column == "type":
+            item_type = raw.title()
+            if item_type not in {"Raw", "Graded"}:
+                self.inventory_status_var.set("Type must be Raw or Graded.")
+                return None
+            return {field: item_type}
+        if column == "cert":
+            return {field: scan_to_cert(raw)}
+        if column == "grader":
+            return {field: normalize_grader(raw) or raw.upper()}
         return {field: raw}
 
     def _refresh_inventory_tree_row(self, iid: str, record: dict[str, object]) -> None:
@@ -8985,6 +9031,7 @@ class CardPipelineApp(tk.Tk):
             "grader": record.get("grader") or "",
             "card": record.get("card_title") or "",
             "purchase": format_money(record.get("purchase_price")),
+            "paid_with": record.get("paid_with") or "",
             "card_ladder": format_money(record.get("card_ladder_value")),
             "comps": format_money(record.get("card_ladder_comps_average")),
             "cy_estimate": format_money(record.get("cy_value")),
@@ -10017,11 +10064,201 @@ class CardPipelineApp(tk.Tk):
         except Exception:
             return None
 
+    def _archive_unattached_inventory_photo_paths(self, selected_paths: list[Path]) -> int:
+        if not selected_paths:
+            return 0
+        available_keys: set[str] = set()
+        for path in self._inventory_unattached_photo_paths():
+            try:
+                available_keys.add(str(Path(path).resolve()))
+            except Exception:
+                available_keys.add(str(path))
+
+        rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        active_rows = [record for record in rows if str(record.get("status") or "").strip().lower() == "active"]
+        active_paths = self._inventory_photo_used_path_keys(active_rows)
+        active_hashes = self._inventory_photo_used_hashes(active_rows)
+        state = self._load_inventory_photo_state()
+        photos = state.setdefault("photos", {})
+        if not isinstance(photos, dict):
+            photos = {}
+            state["photos"] = photos
+        archived_at = datetime.now().isoformat(timespec="seconds")
+        archived_paths: list[str] = []
+        archived_hashes: set[str] = set()
+        seen_candidates: set[str] = set()
+
+        for raw_path in selected_paths:
+            path = Path(raw_path).expanduser()
+            try:
+                selected_key = str(path.resolve())
+            except Exception:
+                selected_key = str(path)
+            if selected_key not in available_keys or not path.exists() or not path.is_file():
+                continue
+            try:
+                selected_hash = self._inventory_photo_file_hash(path)
+            except Exception:
+                continue
+            related: list[Path] = [path]
+            storage_value = self._inventory_photo_storage_value(path)
+            related.extend(self._inventory_photo_safe_candidates(storage_value))
+            related.extend(self._inventory_photo_safe_candidates(path.name))
+            for candidate in related:
+                if not candidate.exists() or not candidate.is_file():
+                    continue
+                try:
+                    resolved = candidate.resolve()
+                except Exception:
+                    continue
+                resolved_text = str(resolved)
+                if resolved_text in seen_candidates:
+                    continue
+                seen_candidates.add(resolved_text)
+                try:
+                    candidate_hash = self._inventory_photo_file_hash(resolved)
+                except Exception:
+                    continue
+                if candidate_hash != selected_hash:
+                    continue
+                candidate_keys = self._inventory_photo_path_keys(resolved)
+                if (candidate_keys & active_paths) or candidate_hash in active_hashes:
+                    continue
+                try:
+                    archive_path = self._archive_deleted_file(
+                        resolved,
+                        DELETED_INVENTORY_PHOTOS_DIR,
+                        "inventory_photo_unattached_deleted",
+                        {
+                            "source": "unattached_photo_picker",
+                            "selected_path": str(path),
+                            "sha256": candidate_hash,
+                        },
+                    )
+                except Exception:
+                    continue
+                archived_paths.append(str(archive_path))
+                archived_hashes.add(candidate_hash)
+                existing = photos.get(candidate_hash) if isinstance(photos.get(candidate_hash), dict) else {}
+                archive_paths = [
+                    str(value)
+                    for value in (existing.get("archive_paths") or [])
+                    if str(value or "").strip()
+                ] if isinstance(existing, dict) else []
+                archive_paths.append(str(archive_path))
+                try:
+                    relative = self._inventory_photo_storage_value(resolved)
+                except Exception:
+                    relative = resolved.name
+                photos[candidate_hash] = {
+                    **existing,
+                    "path": str(resolved),
+                    "relative_path": relative,
+                    "filename": resolved.name,
+                    "sha256": candidate_hash,
+                    "linked_keys": [],
+                    "status": "archived_from_album",
+                    "archive_reason": "inventory_photo_unattached_deleted",
+                    "archived_at": archived_at,
+                    "archive_path": str(archive_path),
+                    "archive_paths": archive_paths,
+                    "last_seen": archived_at,
+                }
+        if archived_hashes:
+            self._save_inventory_photo_state(state)
+        if archived_paths:
+            self._append_activity(
+                "Inventory Photo Archive",
+                f"Archived {len(archived_paths)} unattached inventory photo file(s) for {DELETED_ARCHIVE_RETENTION_DAYS} days.",
+                {"paths": archived_paths[:20]},
+            )
+        return len(archived_paths)
+
+    def _import_unattached_inventory_photo_files(self, source_paths: list[Path]) -> list[Path]:
+        allowed = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+        destination_dir = self._inventory_photo_source_folder()
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        imported: list[Path] = []
+        state = self._load_inventory_photo_state()
+        photos = state.setdefault("photos", {})
+        if not isinstance(photos, dict):
+            photos = {}
+            state["photos"] = photos
+        imported_at = datetime.now().isoformat(timespec="seconds")
+
+        def unique_destination(path: Path) -> Path:
+            safe_stem = safe_filename(path.stem).strip() or "photo"
+            suffix = path.suffix.lower() or ".jpg"
+            destination = destination_dir / f"{safe_stem}{suffix}"
+            if not destination.exists():
+                return destination
+            for index in range(2, 1000):
+                candidate = destination_dir / f"{safe_stem}-{index}{suffix}"
+                if not candidate.exists():
+                    return candidate
+            return destination_dir / f"{safe_stem}-{time.time_ns()}{suffix}"
+
+        for raw_path in source_paths:
+            source = Path(raw_path).expanduser()
+            if not source.exists() or not source.is_file() or source.suffix.lower() not in allowed:
+                continue
+            try:
+                source_hash = self._inventory_photo_file_hash(source)
+            except Exception:
+                continue
+            try:
+                source_resolved = source.resolve()
+                destination_resolved = destination_dir.resolve()
+                if source_resolved == destination_resolved or destination_resolved in source_resolved.parents:
+                    destination = source_resolved
+                else:
+                    destination = unique_destination(source)
+                    while destination.exists():
+                        try:
+                            if self._inventory_photo_file_hash(destination) == source_hash:
+                                break
+                        except Exception:
+                            pass
+                        destination = unique_destination(destination)
+                    if not destination.exists():
+                        shutil.copy2(source, destination)
+            except Exception:
+                continue
+            try:
+                stat = destination.stat()
+                photo_hash = self._inventory_photo_file_hash(destination)
+            except Exception:
+                continue
+            relative = self._inventory_photo_storage_value(destination)
+            existing = photos.get(photo_hash) if isinstance(photos.get(photo_hash), dict) else {}
+            photos[photo_hash] = {
+                **existing,
+                "path": str(destination),
+                "relative_path": relative,
+                "filename": destination.name,
+                "size": stat.st_size,
+                "modified": int(stat.st_mtime),
+                "sha256": photo_hash,
+                "cards": existing.get("cards") if isinstance(existing.get("cards"), list) else [],
+                "certs": existing.get("certs") if isinstance(existing.get("certs"), list) else [],
+                "linked_keys": existing.get("linked_keys") if isinstance(existing.get("linked_keys"), list) else [],
+                "status": "pending_scan",
+                "source": "manual_icloud_import",
+                "imported_at": imported_at,
+                "last_seen": imported_at,
+            }
+            imported.append(destination)
+        if imported:
+            self._save_inventory_photo_state(state)
+            self._append_activity(
+                "Inventory Photo Import",
+                f"Added {len(imported)} inventory photo file(s) to the photo folder.",
+                {"paths": [str(path) for path in imported[:20]]},
+            )
+        return imported
+
     def _choose_unattached_inventory_photos(self, max_count: int = MAX_INVENTORY_PHOTOS_PER_CARD) -> list[Path]:
         available = self._inventory_unattached_photo_paths()
-        if not available:
-            messagebox.showinfo("No unattached photos", "No unattached inventory photos were found in the configured photo bucket.")
-            return []
         popup = tk.Toplevel(self)
         popup.title("Attach Unattached Inventory Photos")
         popup.configure(bg="#121212")
@@ -10074,6 +10311,11 @@ class CardPipelineApp(tk.Tk):
             return f"{path.name} {path.parent} {rel}".lower()
 
         searchable = [(path, row_text(path)) for path in available]
+
+        def refresh_available() -> None:
+            nonlocal available, searchable
+            available = self._inventory_unattached_photo_paths()
+            searchable = [(path, row_text(path)) for path in available]
 
         def render() -> None:
             query = search_var.get().strip().lower()
@@ -10132,6 +10374,67 @@ class CardPipelineApp(tk.Tk):
                 return
             popup.destroy()
 
+        def delete_selected() -> None:
+            delete_paths = [path_by_iid[iid] for iid in tree.selection() if iid in path_by_iid]
+            if not delete_paths:
+                messagebox.showinfo("Choose photo", "Select one or more unattached photos to delete.")
+                return
+            sample = "\n".join(path.name for path in delete_paths[:6])
+            more = f"\n...and {len(delete_paths) - 6} more" if len(delete_paths) > 6 else ""
+            if not messagebox.askyesno(
+                "Delete unattached photos",
+                f"Delete {len(delete_paths)} unattached photo(s)?\n\n{sample}{more}\n\nThey will be moved to the deleted archive for {DELETED_ARCHIVE_RETENTION_DAYS} days.",
+            ):
+                return
+            archived = self._archive_unattached_inventory_photo_paths(delete_paths)
+            refresh_available()
+            render()
+            if archived:
+                self.inventory_status_var.set(f"Deleted {archived} unattached inventory photo file(s).")
+                self.status_var.set(f"Deleted {archived} unattached inventory photo file(s).")
+            else:
+                messagebox.showinfo("Delete photos", "No selected unattached photo files were deleted.")
+
+        def add_photos() -> None:
+            selected = filedialog.askopenfilenames(
+                parent=popup,
+                title="Add Inventory Photos",
+                initialdir=str(self._inventory_photo_source_folder() if self._inventory_photo_source_folder().exists() else Path.home()),
+                filetypes=[
+                    ("Image files", "*.jpg *.jpeg *.png *.webp *.heic *.heif"),
+                    ("All files", "*.*"),
+                ],
+            )
+            if not selected:
+                return
+            imported = self._import_unattached_inventory_photo_files([Path(path) for path in selected])
+            refresh_available()
+            render()
+            imported_keys = set()
+            for path in imported:
+                try:
+                    imported_keys.add(str(path.resolve()))
+                except Exception:
+                    imported_keys.add(str(path))
+            matching_iids = []
+            for iid, path in path_by_iid.items():
+                try:
+                    key = str(path.resolve())
+                except Exception:
+                    key = str(path)
+                if key in imported_keys:
+                    matching_iids.append(iid)
+            if matching_iids:
+                tree.selection_set(matching_iids)
+                tree.focus(matching_iids[0])
+                tree.see(matching_iids[0])
+                update_preview()
+            if imported:
+                self.inventory_status_var.set(f"Added {len(imported)} photo(s) to the inventory photo folder.")
+                self.status_var.set(f"Added {len(imported)} inventory photo(s).")
+            else:
+                messagebox.showinfo("Add photos", "No image files were added.")
+
         def close() -> None:
             selected_paths.clear()
             popup.destroy()
@@ -10140,8 +10443,10 @@ class CardPipelineApp(tk.Tk):
         buttons = ttk.Frame(frame, style="Panel.TFrame")
         buttons.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         buttons.columnconfigure(0, weight=1)
-        ttk.Button(buttons, text="Cancel", command=close, style="Soft.TButton").grid(row=0, column=1, padx=(0, 8))
-        ttk.Button(buttons, text="Attach Selected", command=attach, style="Primary.TButton").grid(row=0, column=2)
+        ttk.Button(buttons, text="Add Photos", command=add_photos, style="Soft.TButton").grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(buttons, text="Delete Selected", command=delete_selected, style="Danger.TButton").grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(buttons, text="Cancel", command=close, style="Soft.TButton").grid(row=0, column=3, padx=(0, 8))
+        ttk.Button(buttons, text="Attach Selected", command=attach, style="Primary.TButton").grid(row=0, column=4)
         tree.bind("<<TreeviewSelect>>", update_preview)
         tree.bind("<Double-1>", lambda _event: attach())
         popup.protocol("WM_DELETE_WINDOW", close)
