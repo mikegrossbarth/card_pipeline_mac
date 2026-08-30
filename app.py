@@ -8744,8 +8744,8 @@ class CardPipelineApp(tk.Tk):
             if key in seen:
                 continue
             seen.add(key)
-            paths.append(path)
-        return paths
+            available_paths.append(path)
+        return available_paths
 
     def _open_local_path(self, path: Path) -> bool:
         try:
