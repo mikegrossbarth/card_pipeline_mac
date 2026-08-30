@@ -7147,7 +7147,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
-    def test_inventory_refresh_purges_active_rows_already_sold_in_profit(self) -> None:
+    def test_inventory_refresh_trusts_active_inventory_even_when_profit_has_prior_sale(self) -> None:
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -7160,9 +7160,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
-            _inventory_identity_keys = app.CardPipelineApp._inventory_identity_keys
-            _sold_inventory_identity_keys = app.CardPipelineApp._sold_inventory_identity_keys
-            _active_inventory_rows_excluding_sold_profit = app.CardPipelineApp._active_inventory_rows_excluding_sold_profit
             _inventory_sport_filter_values = app.CardPipelineApp._inventory_sport_filter_values
             _filtered_inventory_records = app.CardPipelineApp._filtered_inventory_records
             _inventory_cl_comp_delta = app.CardPipelineApp._inventory_cl_comp_delta
@@ -7193,7 +7190,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 dummy.refresh_inventory_tab()
 
                 ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
-                self.assertEqual([row.get("cert_number") or row.get("item_id") for row in ledger], ["111", "333"])
+                self.assertEqual([row.get("cert_number") or row.get("item_id") for row in ledger], ["111", "222", "333", "RAW-TEAM-20260811-0001"])
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.PROFIT_LEDGER_PATH = old_profit

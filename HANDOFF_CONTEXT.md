@@ -458,6 +458,13 @@ Inventory received-sync protections added on Mac should be mirrored in the Windo
 7. Log every blocked inventory add with the candidate row and reason.
 8. Keep Instagram inventory sync read-only with respect to `inventory_ledger.json`.
 
+Additional 2026-08-30 Mac Instagram inventory fix that Windows should bring over:
+
+1. Remove the refresh-time sold/profit-ledger purge from Inventory refresh. Active inventory is the source of truth for Inventory and Instagram sync; sold/profit ledger rows are history only and must not delete or hide active rows.
+2. Legitimate buybacks must remain active when the same cert is bought from a different source sheet, even if the same cert already exists in `profit_ledger.json`.
+3. The Personal Mahomes Select Prizm Tie Dye BGS 9.5 buyback, cert `0012219217`, source `phillip_works_8_17_26.xlsx`, was restored to active inventory and its Instagram state was cleared from `delete_review_needed` back to `posted`.
+4. Live verification after repair showed Mahomes active rows `1`, Instagram `to_post` `0`, and `to_remove` `0`.
+
 Additional 2026-08-25 Mac fixes that Windows should bring over:
 
 1. Treat incoming/working workbook rows as the authority for Receive inventory adds. `Mark Received in Sheets` must not add inventory from free-floating/manual Receive rows that are not matched to an `INCOMING SHEETS` or `WORKING SHEETS` row.

@@ -2875,36 +2875,6 @@ class CardPipelineApp(tk.Tk):
             keys.add(f"item:{item_id}")
         return keys
 
-    def _sold_inventory_identity_keys(self, record: dict[str, object]) -> set[str]:
-        if str(record.get("record_type") or "").strip().lower() == "expense":
-            return set()
-        if self._money_value(record.get("sale_price")) is None:
-            return set()
-        return self._inventory_identity_keys(record)
-
-    def _active_inventory_rows_excluding_sold_profit(
-        self,
-        rows: list[dict[str, object]],
-    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-        profit_loader = getattr(self, "_load_profit_ledger", None)
-        if not callable(profit_loader):
-            return rows, []
-        sold_keys: set[str] = set()
-        for raw_record in profit_loader():
-            if isinstance(raw_record, dict):
-                sold_keys.update(self._sold_inventory_identity_keys(raw_record))
-        if not sold_keys:
-            return rows, []
-        kept: list[dict[str, object]] = []
-        removed: list[dict[str, object]] = []
-        for record in rows:
-            keys = self._inventory_identity_keys(record)
-            if keys and keys & sold_keys:
-                removed.append(record)
-            else:
-                kept.append(record)
-        return kept, removed
-
     def _inventory_add_protection_reason(self, record: dict[str, object], existing_rows: list[dict[str, object]]) -> str:
         source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
         cert = scan_to_cert(record.get("cert_number"))
@@ -9791,12 +9761,7 @@ class CardPipelineApp(tk.Tk):
         all_stored_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         non_active_stored_rows = [record for record in all_stored_rows if str(record.get("status") or "").lower() != "active"]
         stored_rows = [record for record in all_stored_rows if str(record.get("status") or "").lower() == "active"]
-        sold_filter = getattr(self, "_active_inventory_rows_excluding_sold_profit", None)
-        if callable(sold_filter):
-            stored_rows, sold_profit_removed_rows = sold_filter(stored_rows)
-        else:
-            sold_profit_removed_rows = []
-        should_save_inventory_rows = bool(sold_profit_removed_rows) or bool(non_active_stored_rows and not enrich)
+        should_save_inventory_rows = bool(non_active_stored_rows and not enrich)
         if enrich and filtered_only:
             filtered_keys = {str(record.get("inventory_key") or "") for record in self._filtered_inventory_records(stored_rows)}
             self._last_inventory_enrich_visible_count = len(filtered_keys)
