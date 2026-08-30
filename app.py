@@ -8923,6 +8923,21 @@ class CardPipelineApp(tk.Tk):
         shutil.copy2(source_path, destination)
         return destination
 
+    def _inventory_photo_path_keys(self, path: Path) -> set[str]:
+        keys = {str(path), path.name}
+        try:
+            keys.add(str(path.resolve()))
+        except Exception:
+            pass
+        storage = self._inventory_photo_storage_value(path)
+        if storage:
+            keys.add(storage)
+        relative = self._inventory_photo_relative_path(path)
+        if relative and not relative.is_absolute() and ".." not in relative.parts:
+            keys.add(relative.as_posix())
+            keys.add(str(relative))
+        return {key for key in keys if key}
+
     def _inventory_photo_used_path_keys(self, rows: list[dict[str, object]] | None = None) -> set[str]:
         rows = rows if rows is not None else [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
         used: set[str] = set()
@@ -17903,6 +17918,36 @@ class CardPipelineApp(tk.Tk):
             return False
         normalized_ref = (row_ref[0].strip().lower(), row_ref[1].strip().lower(), int(row_ref[2]))
         return normalized_ref in marked_row_refs
+
+    def _hydrate_marked_receive_rows_from_cert_refs(
+        self,
+        rows: list[WorkbookRow],
+        row_ref_certs: dict[tuple[str, str, int], str],
+    ) -> int:
+        if not rows or not row_ref_certs:
+            return 0
+        normalized_certs = {
+            (str(sheet_file).strip().lower(), str(sheet_name).strip().lower(), int(row_index)): scan_to_cert(cert)
+            for (sheet_file, sheet_name, row_index), cert in row_ref_certs.items()
+            if scan_to_cert(cert)
+        }
+        hydrated = 0
+        for row in rows:
+            if scan_to_cert(row.cert_number):
+                continue
+            row_ref = self._receive_row_ref(row)
+            if not row_ref:
+                continue
+            cert = normalized_certs.get((row_ref[0].strip().lower(), row_ref[1].strip().lower(), int(row_ref[2])))
+            if not cert:
+                continue
+            row.cert_number = cert
+            row.item_id = ""
+            row.status = "Received"
+            if row.notes in {"Missing cert", "Missing cert or grader"}:
+                row.notes = ""
+            hydrated += 1
+        return hydrated
 
     def _match_all_review_rows(self) -> None:
         for row in self.review_rows:

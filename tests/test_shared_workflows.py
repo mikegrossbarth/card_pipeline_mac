@@ -10496,8 +10496,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             self.assertEqual(exported[0].read_bytes(), b"front")
             self.assertEqual(exported[1].read_bytes(), b"back")
 
-    def test_inventory_sold_archives_matching_source_and_shared_photo_files(self) -> None:
-        class PhotoSoldDummy:
+    def test_inventory_delete_archives_matching_source_and_shared_photo_files(self) -> None:
+        class PhotoDeleteDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
             _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
@@ -10506,6 +10506,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
             _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
             _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
             _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
             _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
             _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
@@ -10516,7 +10517,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
             _delete_inventory_photo_files_for_removed_records = app.CardPipelineApp._delete_inventory_photo_files_for_removed_records
-            _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
             _append_activity = lambda self, action, summary, details=None: None
 
         with TemporaryDirectory() as tmp:
@@ -10539,13 +10539,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             source_photo = source_dir / "card.jpg"
             shared_photo.write_bytes(b"shared image")
             source_photo.write_bytes(b"source image")
-            dummy = PhotoSoldDummy()
+            dummy = PhotoDeleteDummy()
             dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
             dummy.app_settings = {"inventory_photo_folder": str(source_dir)}
             record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "123", "card_title": "Test", "status": "Active", "photo_paths": [str(shared_photo)]})
             dummy._save_inventory_ledger([record])
             try:
-                self.assertEqual(dummy._mark_inventory_record_sold(str(record["inventory_key"]), "Arena Club", 10), 1)
+                self.assertEqual(dummy._delete_inventory_photo_files_for_removed_records([record], []), 2)
                 self.assertFalse(shared_photo.exists())
                 self.assertFalse(source_photo.exists())
                 archived = sorted(path.name for path in app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card*.jpg"))
