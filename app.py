@@ -2923,6 +2923,8 @@ class CardPipelineApp(tk.Tk):
                 continue
             existing_cert = scan_to_cert(existing.get("cert_number"))
             existing_item_id = str(existing.get("item_id") or "").strip().lower()
+            if not cert and not existing_cert:
+                return "matching raw title already exists in the same source sheet"
             if (cert and existing_item_id) or (item_id and existing_cert):
                 return "possible raw/cert duplicate in the same source sheet"
 
@@ -3214,10 +3216,10 @@ class CardPipelineApp(tk.Tk):
         for folder in folders:
             try:
                 folder.mkdir(parents=True, exist_ok=True)
-                paths.extend(sorted(folder.glob("*.xlsx"), key=lambda path: path.name.lower()))
+                available_paths.extend(sorted(folder.glob("*.xlsx"), key=lambda path: path.name.lower()))
             except Exception:
                 continue
-        return self._ensure_raw_item_ids_in_sheet_paths(paths)
+        return self._ensure_raw_item_ids_in_sheet_paths(available_paths)
 
     def _normalize_inventory_record(self, record: dict[str, object]) -> dict[str, object]:
         normalized = dict(record)
@@ -7158,9 +7160,6 @@ class CardPipelineApp(tk.Tk):
         changed = len(ledger) - len(kept)
         if changed:
             self._save_inventory_ledger(kept)
-            cleanup = getattr(self, "_delete_inventory_photo_files_for_removed_records", None)
-            if callable(cleanup):
-                cleanup(removed, kept)
         return changed
 
     def _general_sold_sheet_name(self, person: str) -> str:
@@ -8686,6 +8685,13 @@ class CardPipelineApp(tk.Tk):
             self.inventory_tree.focus(row_id)
         records = [self.inventory_tree_records.get(iid) for iid in self.inventory_tree.selection()]
         active_records = [record for record in records if record and str(record.get("status") or "").lower() == "active"]
+        clicked_record = self.inventory_tree_records.get(row_id)
+
+        def run_for_clicked_row(command) -> None:
+            self.inventory_tree.selection_set(row_id)
+            self.inventory_tree.focus(row_id)
+            command()
+
         menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
         menu.add_command(label="Copy Cell", command=lambda row=row_id, column=column_id: self.copy_inventory_cell_value(row, column))
         menu.add_command(label="Copy Row", command=lambda row=row_id: self.copy_inventory_row_values(row))
@@ -8695,12 +8701,12 @@ class CardPipelineApp(tk.Tk):
             menu.add_command(label="Explain Assignment", command=self.explain_selected_inventory_assignment)
         if len(active_records) == 1 and len(records) == 1:
             menu.add_command(label="Attach Photo...", command=self.attach_photo_to_selected_inventory_row)
-        if len(records) == 1 and self._inventory_photo_paths_for_record(records[0]):
+        if self._inventory_photo_paths_for_record(clicked_record):
             menu.add_separator()
-            menu.add_command(label="Open Photo", command=self.open_selected_inventory_photo)
-            menu.add_command(label="Export Copy to Desktop", command=self.export_selected_inventory_photos_to_desktop)
-            menu.add_command(label="Open Photo Folder", command=self.open_selected_inventory_photo_folder)
-            menu.add_command(label="Detach Photo...", command=self.detach_photo_from_selected_inventory_row)
+            menu.add_command(label="Open Photo", command=lambda: run_for_clicked_row(self.open_selected_inventory_photo))
+            menu.add_command(label="Export Copy to Desktop", command=lambda: run_for_clicked_row(self.export_selected_inventory_photos_to_desktop))
+            menu.add_command(label="Open Photo Folder", command=lambda: run_for_clicked_row(self.open_selected_inventory_photo_folder))
+            menu.add_command(label="Detach Photo...", command=lambda: run_for_clicked_row(self.detach_photo_from_selected_inventory_row))
         if len(active_records) == 1 and len(records) == 1:
             menu.add_command(label="Mark Sold", command=self.mark_selected_inventory_sold)
         if records and all(self._inventory_record_can_move_to_company_sheet(record) for record in records):
@@ -17759,7 +17765,7 @@ class CardPipelineApp(tk.Tk):
         if not certs and not row_refs:
             messagebox.showinfo("No received cards", "Scan/load certed cards or load/match raw rows in Receive before marking sheets.")
             return
-        paths: list[Path] = []
+        available_paths: list[Path] = []
         errors: list[str] = []
         for directory in (INCOMING_SHEETS_DIR, WORKING_SHEETS_DIR):
             try:
@@ -17767,7 +17773,7 @@ class CardPipelineApp(tk.Tk):
                 available_paths.extend(sorted(directory.glob("*.xlsx"), key=lambda path: path.name.lower()))
             except Exception as error:
                 errors.append(f"{directory}: {error}")
-        if not paths:
+        if not available_paths:
             messagebox.showinfo("No sheets found", "No incoming or working sheets were found to update.")
             return
         paths = self._receive_mark_target_paths(available_paths, certs, row_refs)

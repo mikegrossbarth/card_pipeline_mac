@@ -6609,6 +6609,62 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_add_inventory_records_blocks_duplicate_raw_title_same_source(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _inventory_add_protection_reason = app.CardPipelineApp._inventory_add_protection_reason
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _load_inventory_deleted_tombstones = lambda self: []
+            _load_profit_ledger = lambda self: []
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+            _next_raw_item_id = app.CardPipelineApp._next_raw_item_id
+            _raw_item_id_namespace = lambda self: "TEAM"
+
+            def __init__(self):
+                self.activities = []
+
+            def _append_activity(self, action, summary, details=None):
+                self.activities.append((action, summary, details))
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            try:
+                added = dummy.add_inventory_records(
+                    [
+                        {
+                            "assigned_person": "Kevin Hambone",
+                            "card_title": "2024 Bowman Chrome Prospect Auto Blue",
+                            "source_sheet": "RAW_RECEIVE_8_28_26.xlsx",
+                            "purchase_price": 40,
+                            "status": "Active",
+                        },
+                        {
+                            "assigned_person": "Kevin Hambone",
+                            "card_title": "2024 Bowman Chrome Prospect Auto Blue",
+                            "source_sheet": "RAW_RECEIVE_8_28_26.xlsx",
+                            "purchase_price": 40,
+                            "status": "Active",
+                        },
+                    ]
+                )
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(added, 1)
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger[0]["card_title"], "2024 Bowman Chrome Prospect Auto Blue")
+                self.assertTrue(ledger[0]["item_id"].startswith("RAW-TEAM-"))
+                self.assertEqual(dummy.activities[0][0], "Inventory Add Blocked")
+                self.assertEqual(dummy.activities[0][2]["blocked"][0]["reason"], "matching raw title already exists in the same source sheet")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_broad_received_inventory_sync_is_disabled(self) -> None:
         class InventoryDummy:
             _sync_received_inventory_to_ledger = app.CardPipelineApp._sync_received_inventory_to_ledger
@@ -10371,7 +10427,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
-    def test_inventory_sold_archives_unshared_photo_file_for_two_weeks(self) -> None:
+    def test_inventory_sold_preserves_photo_file_for_refunds(self) -> None:
         class PhotoSoldDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -10380,13 +10436,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
             _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
-            _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
-            _unique_deleted_archive_path = app.CardPipelineApp._unique_deleted_archive_path
-            _archive_deleted_file = app.CardPipelineApp._archive_deleted_file
-            _purge_expired_deleted_archive = app.CardPipelineApp._purge_expired_deleted_archive
             _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
             _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
-            _delete_inventory_photo_files_for_removed_records = app.CardPipelineApp._delete_inventory_photo_files_for_removed_records
             _mark_inventory_record_sold = app.CardPipelineApp._mark_inventory_record_sold
             _append_activity = lambda self, action, summary, details=None: None
 
@@ -10395,14 +10446,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             old_inventory = app.INVENTORY_LEDGER_PATH
             old_photo_dir = app.INVENTORY_PHOTOS_DIR
             old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
-            old_deleted_archive = app.DELETED_ARCHIVE_DIR
-            old_deleted_photos = app.DELETED_INVENTORY_PHOTOS_DIR
             app.CARD_PIPELINE_DIR = Path(tmp)
             app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
             app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
             app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
-            app.DELETED_ARCHIVE_DIR = Path(tmp) / "DELETED ARCHIVE"
-            app.DELETED_INVENTORY_PHOTOS_DIR = app.DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
             app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
             photo = app.INVENTORY_PHOTOS_DIR / "card.jpg"
             photo.write_bytes(b"fake image")
@@ -10413,22 +10460,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy._save_inventory_ledger([record])
             try:
                 self.assertEqual(dummy._mark_inventory_record_sold(str(record["inventory_key"]), "Arena Club", 10), 1)
-                self.assertFalse(photo.exists())
-                archived = list(app.DELETED_INVENTORY_PHOTOS_DIR.rglob("card.jpg"))
-                self.assertEqual(len(archived), 1)
-                metadata_path = archived[0].with_name("card.jpg.archive.json")
-                self.assertTrue(metadata_path.exists())
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                self.assertEqual(metadata["original_path"], str(photo))
-                self.assertEqual(metadata["reason"], "inventory_photo_removed")
-                self.assertEqual(metadata["retention_days"], 14)
+                self.assertTrue(photo.exists())
+                self.assertEqual(dummy._load_inventory_ledger(), [])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
-                app.DELETED_ARCHIVE_DIR = old_deleted_archive
-                app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
 
     def test_inventory_photo_export_to_desktop_copies_each_photo_without_overwrite(self) -> None:
         class PhotoExportDummy:
