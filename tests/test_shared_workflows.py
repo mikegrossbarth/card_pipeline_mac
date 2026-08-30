@@ -10558,6 +10558,163 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.DELETED_ARCHIVE_DIR = old_deleted_archive
                 app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
 
+    def test_unattached_photo_delete_archives_matching_source_and_shared_files(self) -> None:
+        class PhotoDeleteDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_profit_ledger = lambda self: []
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_path_keys = app.CardPipelineApp._inventory_photo_path_keys
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
+            _inventory_photo_path_is_archived = app.CardPipelineApp._inventory_photo_path_is_archived
+            _inventory_photo_paths = app.CardPipelineApp._inventory_photo_paths
+            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
+            _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
+            _inventory_photo_state_used_keys = app.CardPipelineApp._inventory_photo_state_used_keys
+            _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
+            _sold_inventory_photo_used_keys = app.CardPipelineApp._sold_inventory_photo_used_keys
+            _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
+            _inventory_unattached_photo_paths = app.CardPipelineApp._inventory_unattached_photo_paths
+            _deleted_archive_metadata_path = app.CardPipelineApp._deleted_archive_metadata_path
+            _unique_deleted_archive_path = app.CardPipelineApp._unique_deleted_archive_path
+            _archive_deleted_file = app.CardPipelineApp._archive_deleted_file
+            _purge_expired_deleted_archive = app.CardPipelineApp._purge_expired_deleted_archive
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
+            _archive_unattached_inventory_photo_paths = app.CardPipelineApp._archive_unattached_inventory_photo_paths
+            _append_activity = lambda self, action, summary, details=None: None
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            old_deleted_archive = app.DELETED_ARCHIVE_DIR
+            old_deleted_photos = app.DELETED_INVENTORY_PHOTOS_DIR
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "LUCAS_PERSONAL" / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            app.DELETED_ARCHIVE_DIR = Path(tmp) / "DELETED ARCHIVE"
+            app.DELETED_INVENTORY_PHOTOS_DIR = app.DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
+            source_dir = Path(tmp) / "iCloud Source"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            source_dir.mkdir(parents=True)
+            shared_photo = app.INVENTORY_PHOTOS_DIR / "unattached.jpg"
+            source_photo = source_dir / "unattached.jpg"
+            active_photo = app.INVENTORY_PHOTOS_DIR / "active.jpg"
+            shared_photo.write_bytes(b"same unattached image")
+            source_photo.write_bytes(b"same unattached image")
+            active_photo.write_bytes(b"active image")
+            dummy = PhotoDeleteDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.app_settings = {"inventory_photo_folder": str(source_dir)}
+            record = dummy._normalize_inventory_record({"assigned_person": "Kevin", "cert_number": "123", "card_title": "Active", "status": "Active", "photo_paths": [active_photo.name]})
+            dummy._save_inventory_ledger([record])
+            app.PROFIT_LEDGER_PATH.write_text(json.dumps({"items": []}), encoding="utf-8")
+            try:
+                self.assertEqual(dummy._archive_unattached_inventory_photo_paths([shared_photo, active_photo]), 2)
+                self.assertFalse(shared_photo.exists())
+                self.assertFalse(source_photo.exists())
+                self.assertTrue(active_photo.exists())
+                archived = sorted(path.name for path in app.DELETED_INVENTORY_PHOTOS_DIR.rglob("unattached*.jpg"))
+                self.assertEqual(archived, ["unattached-2.jpg", "unattached.jpg"])
+                state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
+                state_record = next(iter(state["photos"].values()))
+                self.assertEqual(state_record["status"], "archived_from_album")
+                self.assertEqual(state_record["archive_reason"], "inventory_photo_unattached_deleted")
+                self.assertEqual(len(state_record["archive_paths"]), 2)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+                app.DELETED_ARCHIVE_DIR = old_deleted_archive
+                app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
+
+    def test_unattached_photo_import_copies_to_source_and_marks_pending(self) -> None:
+        class PhotoImportDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_profit_ledger = lambda self: []
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_path_keys = app.CardPipelineApp._inventory_photo_path_keys
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
+            _inventory_photo_path_is_archived = app.CardPipelineApp._inventory_photo_path_is_archived
+            _inventory_photo_paths = app.CardPipelineApp._inventory_photo_paths
+            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
+            _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
+            _inventory_photo_state_used_keys = app.CardPipelineApp._inventory_photo_state_used_keys
+            _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
+            _sold_inventory_photo_used_keys = app.CardPipelineApp._sold_inventory_photo_used_keys
+            _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
+            _inventory_unattached_photo_paths = app.CardPipelineApp._inventory_unattached_photo_paths
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
+            _import_unattached_inventory_photo_files = app.CardPipelineApp._import_unattached_inventory_photo_files
+            _append_activity = lambda self, action, summary, details=None: None
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "LUCAS_PERSONAL" / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            source_dir = Path(tmp) / "iCloud Source"
+            upload_dir = Path(tmp) / "Uploads"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            source_dir.mkdir(parents=True)
+            upload_dir.mkdir(parents=True)
+            upload = upload_dir / "Manual Photo.JPG"
+            upload.write_bytes(b"manual image")
+            dummy = PhotoImportDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.app_settings = {"inventory_photo_folder": str(source_dir)}
+            dummy._save_inventory_ledger([])
+            app.PROFIT_LEDGER_PATH.write_text(json.dumps({"items": []}), encoding="utf-8")
+            try:
+                imported = dummy._import_unattached_inventory_photo_files([upload])
+                self.assertEqual(len(imported), 1)
+                self.assertEqual(imported[0].parent, source_dir)
+                self.assertEqual(imported[0].read_bytes(), b"manual image")
+                state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
+                state_record = next(iter(state["photos"].values()))
+                self.assertEqual(state_record["status"], "pending_scan")
+                self.assertEqual(state_record["source"], "manual_icloud_import")
+                self.assertEqual(dummy._inventory_unattached_photo_paths(), imported)
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+
     def test_inventory_photo_paths_resolve_windows_safe_mac_names(self) -> None:
         class PhotoPathDummy:
             _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
