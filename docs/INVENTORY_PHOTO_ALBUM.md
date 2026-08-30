@@ -7,11 +7,11 @@ This is the LUCAS version of the earlier automatic inventory update flow. It use
 1. Use a Shortcut that takes inventory photos and saves the files directly into a synced folder such as iCloud Drive, Google Drive, or `Shortcuts/LUCAS Inventory Photos`.
 2. In LUCAS, click `Inventory -> Photo Folder` and choose that exact synced folder.
 3. Click `Inventory -> Scan Photos`. If the selected folder is private/iCloud/phone-synced, LUCAS first copies new or changed images into shared `CARD_PIPELINE/INVENTORY PHOTOS`, then scans that shared folder.
-4. When cards are sold/deleted/moved, LUCAS deletes the linked synced files it can see. With the file-based Shortcut, that deletion can sync back to the phone-side folder.
+4. When cards are intentionally deleted from Inventory, LUCAS archives the linked synced files it can see. With the file-based Shortcut, that removal can sync back to the phone-side folder.
 5. LUCAS also repeats that same mirror-and-scan flow every three hours.
 6. LUCAS OCRs cert numbers from new/changed photos and links matching certs to active rows in `inventory_ledger.json`.
 7. Inventory shows a `Photos` count and exports `Photos` plus `Photo Paths`.
-8. When a card leaves active inventory by being sold, deleted, or moved to a company sheet, LUCAS deletes every linked source/shared photo file it can safely resolve unless another active inventory row still uses that same photo.
+8. When a card is sold, LUCAS keeps the photo files available for refund/return recovery. When a card is intentionally deleted from Inventory, LUCAS archives every linked source/shared photo file it can safely resolve unless another active inventory row still uses that same photo.
 
 ## Viewing Photos In LUCAS
 
@@ -54,7 +54,7 @@ Other users only need to pull the latest LUCAS, point their shared pipeline/work
 
 ## Preferred Shortcut Shape
 
-Use this shape when you want LUCAS to be able to delete the photo file later:
+Use this shape when you want LUCAS to be able to remove the synced photo file later:
 
 1. `Take Photo`
    - Show Camera Preview: on.
@@ -65,7 +65,7 @@ Use this shape when you want LUCAS to be able to delete the photo file later:
    - Ask Where to Save: off.
    - Overwrite If File Exists: on if available.
 
-This keeps the workflow file-based. The photo file lives in the synced folder, and LUCAS can delete that file when the card leaves inventory.
+This keeps the workflow file-based. The photo file lives in the synced folder, and LUCAS can archive that file when the card is intentionally deleted from Inventory.
 
 ## Legacy Photos Album Shape
 
@@ -79,7 +79,7 @@ The older shape still works, but it leaves originals in the iPhone Photos librar
    - Ask Where to Save: off.
    - Overwrite If File Exists: on if available.
 
-LUCAS delete/sold/move cleanup can remove files from the synced source folder and shared `CARD_PIPELINE/INVENTORY PHOTOS` folder. It cannot directly delete a picture from the private iPhone Photos library unless your Shortcut is built around Files/synced folders instead of keeping the original in Photos.
+LUCAS delete cleanup can remove files from the synced source folder and shared `CARD_PIPELINE/INVENTORY PHOTOS` folder. It cannot directly delete a picture from the private iPhone Photos library unless your Shortcut is built around Files/synced folders instead of keeping the original in Photos.
 
 ## Notes
 
