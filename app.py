@@ -1003,7 +1003,7 @@ class CardPipelineApp(tk.Tk):
         self.inventory_tree_records: dict[str, dict[str, object]] = {}
         self.inventory_recomp_context: dict[str, object] | None = None
         self.inventory_bulk_cell: tuple[str, str] | None = None
-        self.inventory_cell_editor: ttk.Entry | None = None
+        self.inventory_cell_editor: ttk.Entry | ttk.Combobox | None = None
         self.inventory_cell_edit: tuple[str, str] | None = None
         self.inventory_bulk_undo_stack: list[dict[str, object]] = []
         self.inventory_filter_after_id: str | None = None
@@ -7775,9 +7775,9 @@ class CardPipelineApp(tk.Tk):
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=col, sticky="w", padx=(0, 8), pady=(0, 8))
             width = 46 if field == "card_title" else 24
             if field == "assigned_person":
-                person_combo = ttk.Combobox(frame, textvariable=var, width=width)
+                person_combo = ttk.Combobox(frame, textvariable=var, values=self._known_people(), width=width, state="readonly")
+                person_combo.configure(postcommand=lambda widget=person_combo: widget.configure(values=self._known_people()))
                 person_combo.grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
-                self._bind_person_autocomplete(person_combo)
             else:
                 ttk.Entry(frame, textvariable=var, width=width).grid(row=row, column=col + 1, sticky="ew", padx=(0, 14), pady=(0, 8))
         status_var = tk.StringVar(value="Status changes use Mark Sold, Move, or Delete.")
@@ -8054,9 +8054,17 @@ class CardPipelineApp(tk.Tk):
             return "break"
         self._destroy_inventory_cell_editor()
         x, y, width, height = bbox
-        editor = ttk.Entry(self.inventory_tree)
-        editor.insert(0, self.inventory_tree.set(iid, column))
-        editor.select_range(0, tk.END)
+        current_value = self.inventory_tree.set(iid, column)
+        if column == "person":
+            people = self._known_people()
+            editor = ttk.Combobox(self.inventory_tree, values=people, state="readonly")
+            editor.set(current_value if current_value in people else "")
+            editor.configure(postcommand=lambda widget=editor: widget.configure(values=self._known_people()))
+            editor.bind("<<ComboboxSelected>>", lambda _event: self._commit_inventory_bulk_edit(0, 0, reopen=False), add="+")
+        else:
+            editor = ttk.Entry(self.inventory_tree)
+            editor.insert(0, current_value)
+            editor.select_range(0, tk.END)
         editor.place(x=x, y=y, width=width, height=height)
         editor.focus_set()
         self.inventory_cell_editor = editor
@@ -8119,6 +8127,12 @@ class CardPipelineApp(tk.Tk):
         field = INVENTORY_EDIT_COLUMN_FIELDS.get(column)
         if not field:
             return {}
+        if column == "person":
+            person = self._canonical_person_choice(raw)
+            if not person:
+                self.inventory_status_var.set("Choose an available person.")
+                return None
+            return {field: person}
         if column in INVENTORY_EDIT_MONEY_COLUMNS:
             if not raw:
                 return {field: None}
