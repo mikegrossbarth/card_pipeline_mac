@@ -5872,6 +5872,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         class HomeSummaryDummy:
             _home_summary_cache_key = app.CardPipelineApp._home_summary_cache_key
             _summarize_home_workbook_cached = app.CardPipelineApp._summarize_home_workbook_cached
+            _home_summary_cache_entry = app.CardPipelineApp._home_summary_cache_entry
             _prune_home_summary_cache = app.CardPipelineApp._prune_home_summary_cache
 
         with TemporaryDirectory() as tmp:
@@ -5886,6 +5887,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(summarizer.call_count, 1)
 
                 path.write_text("second and larger", encoding="utf-8")
+                cached_summary, fresh = dummy._home_summary_cache_entry(path)
+                self.assertEqual(cached_summary, {"name": "first"})
+                self.assertFalse(fresh)
                 self.assertEqual(dummy._summarize_home_workbook_cached(path), {"name": "second"})
                 self.assertEqual(summarizer.call_count, 2)
 
@@ -11481,7 +11485,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 return [{"seller": "Kevin Hambone", "balance_share": 0.5}]
 
         dummy = ProfitDummy()
-        dummy.profit_owner_view_var = types.SimpleNamespace(get=lambda: "My Profit")
+        dummy.profit_person_var = types.SimpleNamespace(get=lambda: "My Profit")
         dummy.home_sheet_markers = {}
         rows = [
             {"assigned_person": "Kevin Hambone", "source_sheet": "Kevin General Sold", "profit": 100.0},

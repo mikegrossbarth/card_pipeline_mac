@@ -199,7 +199,6 @@ PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Last 30 Days", "Calendar Month", "Ye
 PROFIT_GRAPH_OPTIONS = ("Overall Profit", "Generated Profit", "Profit to Sales Ratio", "Daily Trend", "Profit by Company")
 PROFIT_PLOT_OPTIONS = ("Overall", "By Sport")
 PROFIT_BREAKDOWN_OPTIONS = ("Day", "Month")
-PROFIT_OWNER_VIEW_OPTIONS = ("Full Profit", "My Profit")
 PAYOUT_SUMMARY_VIEW_OPTIONS = ("Total", "Per Sheet")
 DEFAULT_PROFIT_BREAKDOWN = "Month"
 DEFAULT_PROFIT_PERIOD = "Calendar Month"
@@ -1026,7 +1025,6 @@ class CardPipelineApp(tk.Tk):
         self.profit_graph_var = tk.StringVar(value=DEFAULT_PROFIT_GRAPH)
         self.profit_plot_var = tk.StringVar(value=DEFAULT_PROFIT_PLOT)
         self.profit_breakdown_var = tk.StringVar(value=DEFAULT_PROFIT_BREAKDOWN)
-        self.profit_owner_view_var = tk.StringVar(value=DEFAULT_PROFIT_OWNER_VIEW)
         self.profit_search_var = tk.StringVar()
         self.profit_chart_title_var = tk.StringVar(value=self._profit_chart_title())
         self.profit_view_mode = tk.StringVar(value="Sold Cards")
@@ -2596,21 +2594,10 @@ class CardPipelineApp(tk.Tk):
         self.profit_breakdown_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
         ttk.Button(controls, text="Refresh View", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=11, sticky="w", padx=(10, 0))
         ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=12, sticky="w", padx=(8, 0))
-        if not self._is_personal_lucas():
-            ttk.Label(controls, text="View", style="Muted.TLabel").grid(row=0, column=13, sticky="e", padx=(18, 6))
-            self.profit_owner_view_combo = ttk.Combobox(
-                controls,
-                textvariable=self.profit_owner_view_var,
-                values=PROFIT_OWNER_VIEW_OPTIONS,
-                width=10,
-                state="readonly",
-            )
-            self.profit_owner_view_combo.grid(row=0, column=14, sticky="w")
-            self.profit_owner_view_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_profit_tab(), add="+")
-        controls.columnconfigure(15, weight=1)
+        controls.columnconfigure(13, weight=1)
         self.profit_search_var.trace_add("write", lambda *_args: self.refresh_profit_tab())
-        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=16, sticky="w", pady=(8, 0))
-        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=16, sticky="w", pady=(4, 0))
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=14, sticky="w", pady=(8, 0))
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=14, sticky="w", pady=(4, 0))
 
         profit_split = tk.PanedWindow(
             self.profit_tab,
@@ -11025,6 +11012,8 @@ class CardPipelineApp(tk.Tk):
 
     def _filtered_profit_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         needle = self.profit_person_var.get().strip().lower() if hasattr(self, "profit_person_var") else ""
+        if needle == "my profit" and not self._is_personal_lucas():
+            needle = ""
         search = self.profit_search_var.get().strip().lower() if hasattr(self, "profit_search_var") else ""
         period = self.profit_period_var.get().strip() if hasattr(self, "profit_period_var") else "Total"
         period_start, period_end = self._profit_period_bounds(period)
@@ -11115,8 +11104,10 @@ class CardPipelineApp(tk.Tk):
         return breakdown if breakdown in PROFIT_BREAKDOWN_OPTIONS else DEFAULT_PROFIT_BREAKDOWN
 
     def _profit_owner_view_label(self) -> str:
-        view = self.profit_owner_view_var.get().strip() if hasattr(self, "profit_owner_view_var") else DEFAULT_PROFIT_OWNER_VIEW
-        return view if view in PROFIT_OWNER_VIEW_OPTIONS else DEFAULT_PROFIT_OWNER_VIEW
+        person = self.profit_person_var.get().strip().lower() if hasattr(self, "profit_person_var") else ""
+        if not self._is_personal_lucas() and person == "my profit":
+            return "My Profit"
+        return DEFAULT_PROFIT_OWNER_VIEW
 
     def _payout_summary_view_label(self) -> str:
         view = self.payout_summary_view_var.get().strip() if hasattr(self, "payout_summary_view_var") else DEFAULT_PAYOUT_SUMMARY_VIEW
@@ -12566,7 +12557,7 @@ class CardPipelineApp(tk.Tk):
         if pruned_duplicates:
             cleanup_parts.append(f"removed {pruned_duplicates} duplicate row(s)")
         cleanup_suffix = f" | {'; '.join(cleanup_parts)}" if cleanup_parts else ""
-        owner_view_suffix = " | View: My Profit" if self._profit_owner_view_label() == "My Profit" and not self._is_personal_lucas() else ""
+        owner_view_suffix = " | Person: My Profit" if self._profit_owner_view_label() == "My Profit" and not self._is_personal_lucas() else ""
         self.profit_status_var.set(f"Loaded {display_count}/{len(display_profit_rows)} profit row(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{search_suffix}{period_suffix}{owner_view_suffix}{suffix}{backfill_suffix}{sync_suffix}{cleanup_suffix}.")
         self._draw_profit_chart()
         record_performance_event(
@@ -13113,6 +13104,30 @@ class CardPipelineApp(tk.Tk):
             self.home_summary_cache[key] = {"mtime_ns": stat.st_mtime_ns, "size": stat.st_size, "summary": dict(summary)}
         return summary
 
+    def _home_summary_cache_entry(self, path: Path) -> tuple[dict[str, object] | None, bool]:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None, False
+        key = self._home_summary_cache_key(path)
+        with self.home_summary_cache_lock:
+            cached = self.home_summary_cache.get(key)
+            if not cached or not isinstance(cached.get("summary"), dict):
+                return None, False
+            fresh = cached.get("mtime_ns") == stat.st_mtime_ns and cached.get("size") == stat.st_size
+            return dict(cached.get("summary") or {}), bool(fresh)
+
+    def _home_summary_placeholder(self, path: Path) -> dict[str, object]:
+        return {
+            "name": path.name,
+            "row_count": 0,
+            "received_count": 0,
+            "purchase_total": 0.0,
+            "all_received": False,
+            "partially_received": False,
+            "status": "Loading summary",
+        }
+
     def _prune_home_summary_cache(self, live_paths: list[Path]) -> None:
         live_keys = {self._home_summary_cache_key(path) for path in live_paths}
         with self.home_summary_cache_lock:
@@ -13570,28 +13585,58 @@ class CardPipelineApp(tk.Tk):
 
         summaries_start = time.perf_counter()
         live_summary_paths: list[Path] = []
+        stale_summary_paths: list[tuple[str, Path]] = []
         for kind, paths in (("Incoming", incoming_paths), ("Working", working_paths), ("Received", received_paths)):
             live_summary_paths.extend(paths)
             for path in paths:
                 key = self._home_sheet_key(kind, path.name)
+                cached_summary, fresh = self._home_summary_cache_entry(path)
+                summary = cached_summary if cached_summary is not None else self._home_summary_placeholder(path)
+                if not fresh:
+                    stale_summary_paths.append((key, path))
+                summary = self._enrich_home_seller_payout_summary(path, self.home_sheet_markers.get(key, {}), summary)
+                payload["home_summaries"][key] = summary
+        record_performance_event(
+            "startup.home_summaries.cached",
+            summaries_start,
+            f"summaries={len(payload['home_summaries'])} stale={len(stale_summary_paths)}",
+        )
+
+        payload["perf_elapsed"] = time.perf_counter() - perf_start
+        payload["home_summary_stale_count"] = len(stale_summary_paths)
+        self.events.put(("startup_refresh", dict(payload)))
+
+        if stale_summary_paths:
+            refresh_start = time.perf_counter()
+            refreshed_summaries: dict[str, dict[str, object]] = {}
+            for key, path in stale_summary_paths:
                 try:
                     summary = self._summarize_home_workbook_cached(path)
                 except Exception as error:
                     errors.append(f"{path.name}: {error}")
-                    summary = {"name": path.name, "row_count": 0, "received_count": 0, "purchase_total": 0.0, "all_received": False, "partially_received": False}
+                    summary = self._home_summary_placeholder(path)
                 summary = self._enrich_home_seller_payout_summary(path, self.home_sheet_markers.get(key, {}), summary)
-                payload["home_summaries"][key] = summary
+                refreshed_summaries[key] = summary
+            self.events.put(
+                (
+                    "home_summary_refresh",
+                    {
+                        "home_summaries": refreshed_summaries,
+                        "errors": list(errors),
+                        "refreshed_count": len(refreshed_summaries),
+                        "perf_elapsed": time.perf_counter() - refresh_start,
+                    },
+                )
+            )
         self._prune_home_summary_cache(live_summary_paths)
-        record_performance_event("startup.home_summaries", summaries_start, f"summaries={len(payload['home_summaries'])}")
+        record_performance_event("startup.home_summaries", summaries_start, f"summaries={len(payload['home_summaries'])} stale={len(stale_summary_paths)}")
 
-        payload["perf_elapsed"] = time.perf_counter() - perf_start
         record_performance_event(
             "startup.worker",
             perf_start,
             f"incoming={len(incoming_paths)} working={len(working_paths)} received={len(received_paths)} certs={len(index)} errors={len(errors)}",
             force=True,
         )
-        self.events.put(("startup_refresh", payload))
 
     def _apply_startup_refresh(self, payload: dict[str, object]) -> None:
         perf_start = time.perf_counter()
@@ -13635,6 +13680,10 @@ class CardPipelineApp(tk.Tk):
             self.status_var.set(f"Startup sheet refresh finished with {len(errors)} issue(s).")
         elif refreshed_google_sheets:
             self.status_var.set(f"Sheet lists loaded. Refreshed {refreshed_google_sheets} Google Sheet cache(s).")
+        elif int(payload.get("home_summary_stale_count") or 0):
+            self.status_var.set(
+                f"Sheet lists loaded from cache. Refreshing {int(payload.get('home_summary_stale_count') or 0)} changed/missing summaries in background."
+            )
         elif self._seller_warning_count("Working"):
             count = self._seller_warning_count("Working")
             self.status_var.set(f"Sheet lists loaded. {count} working seller sheet(s) need values.")
@@ -13644,6 +13693,27 @@ class CardPipelineApp(tk.Tk):
             "startup.apply",
             perf_start,
             f"worker_elapsed={float(payload.get('perf_elapsed') or 0):.3f}s home_summaries={len(self.home_sheet_summaries)} incoming_index={len(self.incoming_cert_index)} errors={len(errors)}",
+        )
+
+    def _apply_home_summary_refresh(self, payload: dict[str, object]) -> None:
+        perf_start = time.perf_counter()
+        refreshed = dict(payload.get("home_summaries") or {})
+        if not refreshed:
+            return
+        self.home_sheet_summaries.update(refreshed)
+        self._refresh_home_sheet_list()
+        self._refresh_home_metrics()
+        self.refresh_payouts_tab()
+        self._update_home_sheet_tabs()
+        errors = list(payload.get("errors") or [])
+        if errors:
+            self.status_var.set(f"Home summaries refreshed with {len(errors)} issue(s).")
+        else:
+            self.status_var.set(f"Home summaries refreshed in background ({len(refreshed)} sheet(s)).")
+        record_performance_event(
+            "startup.home_summaries.apply",
+            perf_start,
+            f"refreshed={len(refreshed)} worker_elapsed={float(payload.get('perf_elapsed') or 0):.3f}s errors={len(errors)}",
         )
 
     def _refresh_home_sheet_list(self) -> None:
@@ -14799,7 +14869,7 @@ class CardPipelineApp(tk.Tk):
         if hasattr(self, "home_person_combo"):
             self.home_person_combo["values"] = filter_people
         if hasattr(self, "profit_person_combo"):
-            self.profit_person_combo["values"] = filter_people
+            self.profit_person_combo["values"] = self._profit_person_options(people, allow_blank=True, filter_text=filter_text)
         if hasattr(self, "inventory_person_combo"):
             self.inventory_person_combo["values"] = filter_people
         if hasattr(self, "seller_terms_seller_combo"):
@@ -14809,8 +14879,18 @@ class CardPipelineApp(tk.Tk):
         people = self._known_people()
         return ([""] if allow_blank else []) + people
 
+    def _profit_person_options(self, people: list[str] | None = None, allow_blank: bool = False, filter_text: str = "") -> list[str]:
+        base_people = self._known_people() if people is None else list(people)
+        options = ([""] if allow_blank else []) + base_people
+        if self._is_personal_lucas():
+            return options
+        needle = str(filter_text or "").strip().lower()
+        if not needle or "my profit".startswith(needle) or needle in "my profit":
+            return [*([""] if allow_blank else []), "My Profit", *[person for person in base_people if person.lower() != "my profit"]]
+        return options
+
     def _bind_person_autocomplete(self, combo: ttk.Combobox, refresh_callback=None, allow_blank: bool = False) -> None:
-        combo["values"] = self._person_combo_values(allow_blank=allow_blank)
+        combo["values"] = self._person_combo_options(combo, self._person_combo_values(allow_blank=allow_blank), allow_blank=allow_blank)
         if not getattr(self, "_is_personal_lucas", lambda: False)():
             combo.configure(state="readonly")
         combo.configure(postcommand=lambda widget=combo: self._refresh_person_combo_widget(widget, allow_blank=allow_blank))
@@ -14820,13 +14900,19 @@ class CardPipelineApp(tk.Tk):
 
     def _refresh_person_combo_widget(self, combo: ttk.Combobox, allow_blank: bool = False) -> None:
         if str(combo.cget("state")) == "readonly":
-            combo["values"] = self._person_combo_values(allow_blank=allow_blank)
+            combo["values"] = self._person_combo_options(combo, self._person_combo_values(allow_blank=allow_blank), allow_blank=allow_blank)
             return
         typed = combo.get().strip().lower()
         people = self._person_combo_values(allow_blank=allow_blank)
         if typed:
             people = [person for person in people if typed in person.lower()]
-        combo["values"] = people
+        combo["values"] = self._person_combo_options(combo, people, allow_blank=allow_blank, filter_text=typed)
+
+    def _person_combo_options(self, combo: ttk.Combobox, people: list[str], allow_blank: bool = False, filter_text: str = "") -> list[str]:
+        if hasattr(self, "profit_person_combo") and combo is self.profit_person_combo:
+            base_people = [person for person in people if person]
+            return self._profit_person_options(base_people, allow_blank=allow_blank, filter_text=filter_text)
+        return people
 
     def _filter_person_combo(self, combo: ttk.Combobox, event, refresh_callback=None, allow_blank: bool = False) -> None:
         if event.keysym in {"Up", "Down", "Left", "Right", "Return", "KP_Enter", "Escape", "Tab"}:
@@ -20551,6 +20637,8 @@ class CardPipelineApp(tk.Tk):
                         self.status_var.set(str(payload))
                     elif kind == "startup_refresh":
                         self._apply_startup_refresh(payload)
+                    elif kind == "home_summary_refresh":
+                        self._apply_home_summary_refresh(payload)
                     elif kind == "save_working_sheet_done":
                         self._finish_save_working_sheet(payload)
                     elif kind == "save_working_sheet_error":
