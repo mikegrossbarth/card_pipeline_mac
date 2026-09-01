@@ -8420,6 +8420,83 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["sport"], "baseball")
 
+    def test_sold_history_does_not_block_buyback_inventory_candidate_from_new_sheet(self) -> None:
+        class CandidateDummy:
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _received_inventory_accounted_source_cert_keys = app.CardPipelineApp._received_inventory_accounted_source_cert_keys
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _received_certs_in_workbook = app.CardPipelineApp._received_certs_in_workbook
+            _ensure_raw_item_ids_in_sheet_paths = lambda self, paths: None
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = lambda self, row: dict(row)
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _inventory_deleted_source_cert_keys = lambda self: set()
+
+            def _load_inventory_ledger(self):
+                return []
+
+            def _load_profit_ledger(self):
+                return [
+                    {
+                        "source_sheet": "old_sale_sheet.xlsx",
+                        "cert_number": "152491672",
+                        "card_title": "2018 Topps Allen & Ginter World Talent Shohei Ohtani PSA 10",
+                        "status": "Sold",
+                    }
+                ]
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "new_buyback_sheet.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Cards"
+            sheet.append(["Cert", "Sport", "Description", "Purchase", "RECEIVED"])
+            sheet.append(["152491672", "baseball", "2018 Topps Allen & Ginter World Talent Shohei Ohtani PSA 10", 430, "X"])
+            workbook.save(path)
+
+            records = CandidateDummy()._received_inventory_candidate_records_for_sheet(
+                "Incoming",
+                path,
+                "Mikey",
+                company_keys=set(),
+            )
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["cert_number"], "152491672")
+
+    def test_received_inventory_candidates_default_blank_person_to_unassigned(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _ensure_raw_item_ids_in_sheet_paths = lambda self, paths: None
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "blank-person.xlsx"
+            write_working_sheet(
+                path,
+                [
+                    WorkbookRow(
+                        excel_row=2,
+                        cert_number="0010355805",
+                        grader="BGS",
+                        card_title="2017 Bowman Chrome Prospect Autographs Gold Shimmer Refractors #CPACF Clint Frazier BGS 9.5",
+                        category="baseball",
+                        card_ladder_comps_average=432,
+                    )
+                ],
+            )
+
+            records = InventoryDummy()._received_inventory_candidate_records_for_sheet("Received", path, "", set())
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["assigned_person"], "Unassigned")
+
     def test_create_raw_rows_get_item_ids_before_working_sheet_save(self) -> None:
         class CreateDummy:
             _next_raw_item_id = app.CardPipelineApp._next_raw_item_id

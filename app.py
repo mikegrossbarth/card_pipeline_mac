@@ -4683,13 +4683,9 @@ class CardPipelineApp(tk.Tk):
                 source_sheet = Path(str(source_value or "")).name.strip().lower()
                 if source_sheet and cert:
                     keys.add((source_sheet, cert))
-                if cert:
-                    keys.add(("", cert))
                 item_id = str(record.get("item_id") or "").strip().lower()
                 if source_sheet and item_id:
                     keys.add((source_sheet, f"item:{item_id}"))
-                if item_id:
-                    keys.add(("", f"item:{item_id}"))
                 title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
                 if source_sheet and not cert and title_identity:
                     keys.add((source_sheet, f"title:{title_identity}"))
@@ -4704,8 +4700,8 @@ class CardPipelineApp(tk.Tk):
         company_keys: set[tuple[str, str]] | None = None,
         accounted_keys: set[tuple[str, str]] | None = None,
     ) -> list[dict[str, object]]:
-        assigned_person = str(person or "").strip()
-        if not assigned_person or not path.exists():
+        assigned_person = str(person or "").strip() or "Unassigned"
+        if not path.exists():
             return []
         received_certs = None if stage == "Received" else self._received_certs_in_workbook(path)
         try:
@@ -15417,8 +15413,8 @@ class CardPipelineApp(tk.Tk):
                 if target_stage == "Received" and moved_key:
                     received_stage, received_name = self._split_home_sheet_key(moved_key)
                     marker = self.home_sheet_markers.get(moved_key, {})
-                    person = str(marker.get("assigned_person") or "").strip()
-                    if received_stage == "Received" and received_name and person:
+                    person = str(marker.get("assigned_person") or "").strip() or "Unassigned"
+                    if received_stage == "Received" and received_name:
                         phase_started = time.perf_counter()
                         inventory_rows_added, inventory_candidate_rows = self._sync_received_sheet_inventory_to_ledger(
                             received_stage,
