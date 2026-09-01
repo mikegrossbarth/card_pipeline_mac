@@ -4360,6 +4360,43 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy._active_payout_balance("Kevin Hambone", 100.0, 80.0, sellers, realized_profit_total=-20.0), (-10.0, "Team balance share 50%"))
         self.assertEqual(dummy._active_payout_balance("James Copeland", 80.0, 150.0, sellers, realized_profit_total=70.0), (35.0, "Team balance share 50%"))
 
+    def test_profit_person_options_only_include_balance_share_people_when_configured(self) -> None:
+        class ProfitDummy:
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _team_balance_share_people = app.CardPipelineApp._team_balance_share_people
+            _profit_filter_people = app.CardPipelineApp._profit_filter_people
+            _profit_person_options = app.CardPipelineApp._profit_person_options
+            _filtered_profit_records = app.CardPipelineApp._filtered_profit_records
+
+            def _is_personal_lucas(self):
+                return False
+
+            def _known_people(self):
+                return ["James Copeland", "John Seller", "Kevin Hambone"]
+
+            def _load_seller_terms(self):
+                return [
+                    {"seller": "Kevin Hambone", "balance_share": 0.5},
+                    {"seller": "John Seller", "sheet_type": "Arena Club", "rate": 0.9},
+                ]
+
+            def _profit_period_bounds(self, _period):
+                return None, None
+
+        dummy = ProfitDummy()
+
+        options = dummy._profit_person_options(dummy._known_people())
+        self.assertEqual(options, ["My Profit", "Kevin Hambone"])
+
+        dummy.profit_person_var = types.SimpleNamespace(get=lambda: "John Seller")
+        dummy.profit_search_var = types.SimpleNamespace(get=lambda: "")
+        dummy.profit_period_var = types.SimpleNamespace(get=lambda: "Total")
+        rows = [
+            {"assigned_person": "John Seller", "profit": 100.0},
+            {"assigned_person": "Kevin Hambone", "profit": 50.0},
+        ]
+        self.assertEqual(dummy._filtered_profit_records(rows), [])
+
     def test_balance_share_only_people_rule_does_not_make_person_seller_source(self) -> None:
         class PayoutDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key

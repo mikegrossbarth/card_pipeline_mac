@@ -11014,6 +11014,10 @@ class CardPipelineApp(tk.Tk):
         needle = self.profit_person_var.get().strip().lower() if hasattr(self, "profit_person_var") else ""
         if needle == "my profit" and not self._is_personal_lucas():
             needle = ""
+        if needle and not self._is_personal_lucas():
+            allowed_people = [person.lower() for person in self._profit_filter_people(self._known_people())]
+            if allowed_people and not any(needle in person for person in allowed_people):
+                return []
         search = self.profit_search_var.get().strip().lower() if hasattr(self, "profit_search_var") else ""
         period = self.profit_period_var.get().strip() if hasattr(self, "profit_period_var") else "Total"
         period_start, period_end = self._profit_period_bounds(period)
@@ -14481,6 +14485,22 @@ class CardPipelineApp(tk.Tk):
             and (term.get("rate") is not None or term.get("deduction") is not None)
         }
 
+    def _team_balance_share_people(self) -> set[str]:
+        return {
+            str(term.get("seller") or "").strip().lower()
+            for term in self._load_seller_terms()
+            if str(term.get("seller") or "").strip()
+            and term.get("balance_share") is not None
+        }
+
+    def _profit_filter_people(self, people: list[str]) -> list[str]:
+        if self._is_personal_lucas():
+            return list(people)
+        balance_people = self._team_balance_share_people()
+        if not balance_people:
+            return list(people)
+        return [person for person in people if str(person or "").strip().lower() in balance_people]
+
     def _team_balance_share_for_person(self, person: str) -> float:
         person_key = str(person or "").strip().lower()
         if not person_key:
@@ -14885,6 +14905,8 @@ class CardPipelineApp(tk.Tk):
         if self._is_personal_lucas():
             return options
         needle = str(filter_text or "").strip().lower()
+        base_people = self._profit_filter_people(base_people)
+        options = ([""] if allow_blank else []) + base_people
         if not needle or "my profit".startswith(needle) or needle in "my profit":
             return [*([""] if allow_blank else []), "My Profit", *[person for person in base_people if person.lower() != "my profit"]]
         return options

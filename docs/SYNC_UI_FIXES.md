@@ -13,6 +13,16 @@
 - When a change lands only in Mac or only in Windows, update this file in the repo where the change lands so the other platform's follow-up is visible during the next pull/audit.
 - If an old local note conflicts with this file, treat the old local note as stale unless Michael explicitly says otherwise.
 
+## Team Profit Balance-Share People Filter
+
+- Origin: Windows
+- Implemented on origin: Yes
+- Mirrored to other platform: Mac complete
+- Source commit/repo: Current Windows commit in `mikegrossbarth/card_pipeline`
+- Target to mirror: Mac LUCAS `mikegrossbarth/card_pipeline_mac`
+- Summary: When People Rules has explicit `Balance Share %` rows, the Team Profit Person selector only offers those balance-share team members plus `My Profit`. Seller/network people are intentionally hidden because their payouts are seller-term sheet economics, not per-card team profit share.
+- Notes / avoid porting: Do not hide seller/network rows from overall profit totals or seller payout ledgers. This only limits Profit person filtering to the people whose team-profit basis is known.
+
 ## Payout Refresh Button
 
 - Origin: Windows
