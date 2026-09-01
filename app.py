@@ -17239,8 +17239,11 @@ class CardPipelineApp(tk.Tk):
         else:
             relative_variants.append(path)
             candidates.append(path)
+        safe_relative_for = getattr(self, "_inventory_photo_windows_safe_relative", None)
+        if not callable(safe_relative_for):
+            safe_relative_for = lambda value: CardPipelineApp._inventory_photo_windows_safe_relative(self, value)
         for relative in list(relative_variants):
-            safe_relative = self._inventory_photo_windows_safe_relative(relative)
+            safe_relative = safe_relative_for(relative)
             if safe_relative != relative:
                 relative_variants.append(safe_relative)
         for relative in relative_variants:
@@ -17283,6 +17286,8 @@ class CardPipelineApp(tk.Tk):
         if not existing:
             return False
         status = str(existing.get("status") or "").strip()
+        if status in {"archived_from_album", "sold_inventory"}:
+            return True
         linked_keys = [str(key).strip() for key in (existing.get("linked_keys") or []) if str(key).strip()]
         if status not in {"linked", "missing_from_album", "archived_from_album"} or not linked_keys:
             return False
@@ -17437,14 +17442,28 @@ class CardPipelineApp(tk.Tk):
         grouped = 0
         state = self._load_inventory_photo_state()
         photos = state.setdefault("photos", {})
+        archived_scan_skipped = 0
         try:
-            images = self._inventory_photo_files(folder)
+            all_images = self._inventory_photo_files(folder)
+            archived_scan_statuses = {"archived_from_album", "sold_inventory"}
+            images: list[dict[str, object]] = []
+            for image in all_images:
+                sha = str(image.get("sha256") or "")
+                existing = photos.get(sha) if sha and isinstance(photos.get(sha), dict) else {}
+                if str(existing.get("status") or "").strip() in archived_scan_statuses:
+                    archived_scan_skipped += 1
+                    continue
+                images.append(image)
             total = len(images)
             if not background:
                 self.events.put(("inventory_photo_status", f"Inventory photo scan starting in {folder}: 0/{total} file(s)."))
-            current_hashes = {str(image.get("sha256") or "") for image in images}
+            current_hashes = {str(image.get("sha256") or "") for image in all_images}
             for sha, record in list(photos.items()):
-                if sha and sha not in current_hashes and isinstance(record, dict) and not record.get("removed_at"):
+                if not isinstance(record, dict):
+                    continue
+                if str(record.get("status") or "").strip() in archived_scan_statuses:
+                    continue
+                if sha and sha not in current_hashes and not record.get("removed_at"):
                     record["status"] = "missing_from_album"
                     record["removed_at"] = datetime.now().isoformat(timespec="seconds")
             rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
@@ -17539,7 +17558,8 @@ class CardPipelineApp(tk.Tk):
                     linked += grouped
             self._save_inventory_photo_state(state)
             grouped_text = f", grouped {grouped}" if grouped else ""
-            self.events.put(("inventory_photo_status", f"Inventory photo scan complete: {len(images)} file(s), skipped {skipped}, OCR scanned {scanned}, linked {linked}{grouped_text}."))
+            archived_text = f", archived/sold skipped {archived_scan_skipped}" if archived_scan_skipped else ""
+            self.events.put(("inventory_photo_status", f"Inventory photo scan complete: {len(images)} file(s), skipped {skipped}, OCR scanned {scanned}, linked {linked}{grouped_text}{archived_text}."))
             if linked:
                 self.events.put(("inventory_refresh", {"enrich": False}))
         except Exception as error:
@@ -17548,7 +17568,7 @@ class CardPipelineApp(tk.Tk):
         finally:
             if errors:
                 record_performance_event("inventory.photos.errors", started, " | ".join(errors[:5]), force=True)
-            record_performance_event("inventory.photos.scan", started, f"skipped={skipped} scanned={scanned} linked={linked} errors={len(errors)}")
+            record_performance_event("inventory.photos.scan", started, f"skipped={skipped} archived_skipped={archived_scan_skipped} scanned={scanned} linked={linked} errors={len(errors)}")
 
     def _incoming_index_paths(self) -> list[Path]:
         INCOMING_SHEETS_DIR.mkdir(parents=True, exist_ok=True)

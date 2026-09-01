@@ -10094,12 +10094,14 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             sold_photo = app.INVENTORY_PHOTOS_DIR / "sold.jpg"
             sold_path_photo = app.INVENTORY_PHOTOS_DIR / "sold-path.jpg"
             attached_stale_photo = app.INVENTORY_PHOTOS_DIR / "attached-stale.jpg"
+            archived_photo = app.INVENTORY_PHOTOS_DIR / "archived.jpg"
             retry_photo.write_bytes(b"retry image")
             linked_photo.write_bytes(b"linked image")
             stale_linked_photo.write_bytes(b"stale linked image")
             sold_photo.write_bytes(b"sold image")
             sold_path_photo.write_bytes(b"sold path image")
             attached_stale_photo.write_bytes(b"attached stale image")
+            archived_photo.write_bytes(b"archived image")
             dummy = PhotoDummy()
             dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
             dummy.app_settings = {}
@@ -10119,6 +10121,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             sold_sha = dummy._inventory_photo_file_hash(sold_photo)
             sold_path_sha = dummy._inventory_photo_file_hash(sold_path_photo)
             attached_stale_sha = dummy._inventory_photo_file_hash(attached_stale_photo)
+            archived_sha = dummy._inventory_photo_file_hash(archived_photo)
             dummy._save_inventory_photo_state(
                 {
                     "version": 1,
@@ -10128,6 +10131,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                         stale_linked_sha: {"filename": stale_linked_photo.name, "relative_path": stale_linked_photo.name, "cards": [{"cert_number": "11111111"}], "certs": ["11111111"], "linked_keys": ["old-key"], "status": "missing_from_album"},
                         sold_sha: {"filename": sold_photo.name, "relative_path": sold_photo.name, "cards": [{"cert_number": "55555555"}], "certs": ["55555555"], "linked_keys": [], "status": "no_matching_inventory"},
                         attached_stale_sha: {"filename": attached_stale_photo.name, "relative_path": attached_stale_photo.name, "cards": [{"cert_number": "22222222"}], "certs": ["22222222"], "linked_keys": [], "status": "no_matching_inventory"},
+                        archived_sha: {"filename": archived_photo.name, "relative_path": archived_photo.name, "cards": [], "certs": [], "linked_keys": [], "status": "archived_from_album"},
                     },
                 }
             )
@@ -10150,6 +10154,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertIn("last_seen", state["photos"][sold_path_sha])
                 self.assertEqual(state["photos"][attached_stale_sha]["status"], "linked")
                 self.assertEqual(state["photos"][attached_stale_sha]["linked_keys"], [attached_stale_record["inventory_key"]])
+                self.assertEqual(state["photos"][archived_sha]["status"], "archived_from_album")
+                self.assertNotIn("removed_at", state["photos"][archived_sha])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
