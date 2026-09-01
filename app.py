@@ -199,10 +199,14 @@ PROFIT_PERIOD_OPTIONS = ("5 Days", "Week", "Last 30 Days", "Calendar Month", "Ye
 PROFIT_GRAPH_OPTIONS = ("Overall Profit", "Generated Profit", "Profit to Sales Ratio", "Daily Trend", "Profit by Company")
 PROFIT_PLOT_OPTIONS = ("Overall", "By Sport")
 PROFIT_BREAKDOWN_OPTIONS = ("Day", "Month")
+PROFIT_OWNER_VIEW_OPTIONS = ("Full Profit", "My Profit")
+PAYOUT_SUMMARY_VIEW_OPTIONS = ("Total", "Per Sheet")
 DEFAULT_PROFIT_BREAKDOWN = "Month"
 DEFAULT_PROFIT_PERIOD = "Calendar Month"
 DEFAULT_PROFIT_GRAPH = "Overall Profit"
 DEFAULT_PROFIT_PLOT = "Overall"
+DEFAULT_PROFIT_OWNER_VIEW = "Full Profit"
+DEFAULT_PAYOUT_SUMMARY_VIEW = "Total"
 COMPANY_RESET_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 DEFAULT_COMPANY_RESET_WEEKDAY = "Monday"
 DEFAULT_COMPANY_RESET_TIME = "20:00"
@@ -976,11 +980,14 @@ class CardPipelineApp(tk.Tk):
         self.home_selected_sheet_key = ""
         self.home_person_var = tk.StringVar()
         self.home_sheet_sort_var = tk.StringVar(value="Date Created")
+        self.home_sheet_search_var = tk.StringVar()
         self.home_incoming_volume_sort_column = "sheet"
         self.home_incoming_volume_sort_descending = False
         self.payout_person_var = tk.StringVar()
+        self.payout_summary_view_var = tk.StringVar(value=DEFAULT_PAYOUT_SUMMARY_VIEW)
         self.payout_status_var = tk.StringVar(value="No unpaid sheets loaded.")
         self.payout_summary_people: dict[str, str] = {}
+        self.payout_summary_item_keys: dict[str, list[str]] = {}
         self.payout_detail_keys: dict[str, str] = {}
         self.inventory_status_var = tk.StringVar(value="No inventory loaded.")
         self.inventory_metric_var = tk.StringVar(value="")
@@ -1019,6 +1026,7 @@ class CardPipelineApp(tk.Tk):
         self.profit_graph_var = tk.StringVar(value=DEFAULT_PROFIT_GRAPH)
         self.profit_plot_var = tk.StringVar(value=DEFAULT_PROFIT_PLOT)
         self.profit_breakdown_var = tk.StringVar(value=DEFAULT_PROFIT_BREAKDOWN)
+        self.profit_owner_view_var = tk.StringVar(value=DEFAULT_PROFIT_OWNER_VIEW)
         self.profit_search_var = tk.StringVar()
         self.profit_chart_title_var = tk.StringVar(value=self._profit_chart_title())
         self.profit_view_mode = tk.StringVar(value="Sold Cards")
@@ -1900,6 +1908,11 @@ class CardPipelineApp(tk.Tk):
         )
         self.home_sheet_sort_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
         self.home_sheet_sort_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_home_sheet_list(), add="+")
+        search_row = ttk.Frame(sheet_panel, style="Panel.TFrame")
+        search_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(search_row, text="Search", style="Muted.TLabel").pack(side=tk.LEFT)
+        ttk.Entry(search_row, textvariable=self.home_sheet_search_var, width=18).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+        self.home_sheet_search_var.trace_add("write", lambda *_args: self._refresh_home_sheet_list())
         self.home_sheet_list = tk.Listbox(
             sheet_panel,
             width=1,
@@ -2147,8 +2160,18 @@ class CardPipelineApp(tk.Tk):
             self.payout_person_combo.grid(row=0, column=1, sticky="w", padx=(8, 10))
         self._bind_person_autocomplete(self.payout_person_combo, refresh_callback=self.refresh_payouts_tab, allow_blank=True)
         self.payout_person_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_payouts_tab(), add="+")
-        controls.columnconfigure(2, weight=1)
-        ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ttk.Label(controls, text="View", style="Muted.TLabel").grid(row=0, column=2, sticky="e", padx=(4, 6))
+        self.payout_summary_view_combo = ttk.Combobox(
+            controls,
+            textvariable=self.payout_summary_view_var,
+            values=PAYOUT_SUMMARY_VIEW_OPTIONS,
+            width=10,
+            state="readonly",
+        )
+        self.payout_summary_view_combo.grid(row=0, column=3, sticky="w", padx=(0, 10))
+        self.payout_summary_view_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_payouts_tab(), add="+")
+        controls.columnconfigure(4, weight=1)
+        ttk.Label(controls, textvariable=self.payout_status_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=5, sticky="w", pady=(10, 0))
 
         payout_split = tk.PanedWindow(
             self.payouts_tab,
@@ -2167,9 +2190,10 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(summary_panel, text="Active Balances", style="Panel.TLabel").pack(anchor=tk.W)
         self.payout_summary_tree = self._build_home_tree(
             summary_panel,
-            columns=("person", "sheets", "cards", "expenses", "total_net_profit", "unpaid_net_profit", "balance"),
+            columns=("person", "sheet", "sheets", "cards", "expenses", "total_net_profit", "unpaid_net_profit", "balance"),
             headings={
                 "person": "Person",
+                "sheet": "Sheet",
                 "sheets": "Sheets",
                 "cards": "Cards",
                 "expenses": "Expenses",
@@ -2177,7 +2201,7 @@ class CardPipelineApp(tk.Tk):
                 "unpaid_net_profit": "Unpaid Net Profit",
                 "balance": "Balance Owed",
             },
-            widths={"person": 180, "sheets": 65, "cards": 65, "expenses": 100, "total_net_profit": 120, "unpaid_net_profit": 125, "balance": 120},
+            widths={"person": 160, "sheet": 220, "sheets": 65, "cards": 65, "expenses": 100, "total_net_profit": 120, "unpaid_net_profit": 125, "balance": 120},
             height=18,
         )
         self.payout_summary_tree.tag_configure("total_divider", background="#1f1f1f", foreground="#ffffff", font=("Segoe UI Semibold", 10))
@@ -2572,10 +2596,21 @@ class CardPipelineApp(tk.Tk):
         self.profit_breakdown_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_profit_chart(), add="+")
         ttk.Button(controls, text="Refresh View", command=self.refresh_profit_tab, style="Soft.TButton").grid(row=0, column=11, sticky="w", padx=(10, 0))
         ttk.Button(controls, text="Add Expense", command=self.open_add_expense_popup, style="Soft.TButton").grid(row=0, column=12, sticky="w", padx=(8, 0))
-        controls.columnconfigure(13, weight=1)
+        if not self._is_personal_lucas():
+            ttk.Label(controls, text="View", style="Muted.TLabel").grid(row=0, column=13, sticky="e", padx=(18, 6))
+            self.profit_owner_view_combo = ttk.Combobox(
+                controls,
+                textvariable=self.profit_owner_view_var,
+                values=PROFIT_OWNER_VIEW_OPTIONS,
+                width=10,
+                state="readonly",
+            )
+            self.profit_owner_view_combo.grid(row=0, column=14, sticky="w")
+            self.profit_owner_view_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_profit_tab(), add="+")
+        controls.columnconfigure(15, weight=1)
         self.profit_search_var.trace_add("write", lambda *_args: self.refresh_profit_tab())
-        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=14, sticky="w", pady=(8, 0))
-        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=14, sticky="w", pady=(4, 0))
+        ttk.Label(controls, textvariable=self.profit_metric_var, style="Panel.TLabel").grid(row=1, column=0, columnspan=16, sticky="w", pady=(8, 0))
+        ttk.Label(controls, textvariable=self.profit_status_var, style="Muted.TLabel").grid(row=2, column=0, columnspan=16, sticky="w", pady=(4, 0))
 
         profit_split = tk.PanedWindow(
             self.profit_tab,
@@ -11011,6 +11046,22 @@ class CardPipelineApp(tk.Tk):
             filtered.append(record)
         return filtered
 
+    def _profit_rows_for_owner_view(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        if self._is_personal_lucas() or self._profit_owner_view_label() != "My Profit":
+            return rows
+        seller_names = self._seller_terms_seller_names()
+        adjusted: list[dict[str, object]] = []
+        for record in rows:
+            normalized = dict(record)
+            profit = self._money_value(normalized.get("profit"))
+            person = str(normalized.get("assigned_person") or "").strip()
+            source_sheet = str(normalized.get("source_sheet") or "").strip()
+            if profit is not None and person and person.lower() != "unassigned" and not self._source_sheet_is_seller_payout(source_sheet, person, seller_names):
+                share = self._team_balance_share_for_person(person)
+                normalized["profit"] = round(float(profit) * (1.0 - share), 2)
+            adjusted.append(normalized)
+        return adjusted
+
     def _profit_record_date(self, value: object):
         text = str(value or "").strip()
         if not text:
@@ -11063,6 +11114,14 @@ class CardPipelineApp(tk.Tk):
         breakdown = self.profit_breakdown_var.get().strip() if hasattr(self, "profit_breakdown_var") else DEFAULT_PROFIT_BREAKDOWN
         return breakdown if breakdown in PROFIT_BREAKDOWN_OPTIONS else DEFAULT_PROFIT_BREAKDOWN
 
+    def _profit_owner_view_label(self) -> str:
+        view = self.profit_owner_view_var.get().strip() if hasattr(self, "profit_owner_view_var") else DEFAULT_PROFIT_OWNER_VIEW
+        return view if view in PROFIT_OWNER_VIEW_OPTIONS else DEFAULT_PROFIT_OWNER_VIEW
+
+    def _payout_summary_view_label(self) -> str:
+        view = self.payout_summary_view_var.get().strip() if hasattr(self, "payout_summary_view_var") else DEFAULT_PAYOUT_SUMMARY_VIEW
+        return view if view in PAYOUT_SUMMARY_VIEW_OPTIONS else DEFAULT_PAYOUT_SUMMARY_VIEW
+
     def _profit_monthly_breakdown(self) -> bool:
         return self._profit_breakdown_label() == "Month" and self._profit_period_label() in {"Year", "YTD", "Total"}
 
@@ -11071,7 +11130,10 @@ class CardPipelineApp(tk.Tk):
         plot_suffix = " by Sport" if plot_label == "By Sport" and self._profit_graph_label() != "Profit by Company" else ""
         period = self._profit_period_label()
         breakdown_suffix = f" by {self._profit_breakdown_label()}" if period in {"Year", "YTD", "Total"} else ""
-        return f"{self._profit_graph_label()}{plot_suffix} ({period}{breakdown_suffix})"
+        is_personal = bool(getattr(self, "_is_personal_lucas", lambda: False)())
+        owner_view = self._profit_owner_view_label() if hasattr(self, "_profit_owner_view_label") else DEFAULT_PROFIT_OWNER_VIEW
+        owner_prefix = "My " if not is_personal and owner_view == "My Profit" else ""
+        return f"{owner_prefix}{self._profit_graph_label()}{plot_suffix} ({period}{breakdown_suffix})"
 
     def _profit_sport_label(self, record: dict[str, object]) -> str:
         def display_sport(value: str) -> str:
@@ -12349,12 +12411,13 @@ class CardPipelineApp(tk.Tk):
             ),
             reverse=True,
         )
-        self.filtered_profit_rows = self._filtered_profit_records(self.profit_rows)
+        display_profit_rows = self._profit_rows_for_owner_view(self.profit_rows)
+        self.filtered_profit_rows = self._filtered_profit_records(display_profit_rows)
         if not hasattr(self, "profit_tree"):
             record_performance_event(
                 "profit.refresh",
                 perf_start,
-                f"rows={len(self.profit_rows)} filtered={len(self.filtered_profit_rows)} backfilled={backfilled} tree=missing",
+                f"rows={len(display_profit_rows)} filtered={len(self.filtered_profit_rows)} backfilled={backfilled} tree=missing",
             )
             return
         self._refresh_person_combo_values()
@@ -12503,7 +12566,8 @@ class CardPipelineApp(tk.Tk):
         if pruned_duplicates:
             cleanup_parts.append(f"removed {pruned_duplicates} duplicate row(s)")
         cleanup_suffix = f" | {'; '.join(cleanup_parts)}" if cleanup_parts else ""
-        self.profit_status_var.set(f"Loaded {display_count}/{len(self.profit_rows)} profit row(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{search_suffix}{period_suffix}{suffix}{backfill_suffix}{sync_suffix}{cleanup_suffix}.")
+        owner_view_suffix = " | View: My Profit" if self._profit_owner_view_label() == "My Profit" and not self._is_personal_lucas() else ""
+        self.profit_status_var.set(f"Loaded {display_count}/{len(display_profit_rows)} profit row(s) from {PROFIT_LEDGER_PATH.name}{filter_suffix}{search_suffix}{period_suffix}{owner_view_suffix}{suffix}{backfill_suffix}{sync_suffix}{cleanup_suffix}.")
         self._draw_profit_chart()
         record_performance_event(
             "profit.refresh",
@@ -12859,11 +12923,32 @@ class CardPipelineApp(tk.Tk):
         person = str(marker.get("assigned_person") or "Unassigned").strip().lower()
         return needle in person
 
+    def _home_sheet_matches_search_filter(self, kind: str, name: str) -> bool:
+        needle = self.home_sheet_search_var.get().strip().lower() if hasattr(self, "home_sheet_search_var") else ""
+        if not needle:
+            return True
+        key = self._home_sheet_key(kind, name)
+        marker = self.home_sheet_markers.get(key, {})
+        summary = self.home_sheet_summaries.get(key, {})
+        searchable = " ".join(
+            str(value or "")
+            for value in (
+                name,
+                kind,
+                marker.get("assigned_person"),
+                marker.get("tracking_number"),
+                summary.get("status"),
+                summary.get("seller_payout_warning"),
+            )
+        ).lower()
+        return all(part in searchable for part in needle.split())
+
     def _filtered_home_sheet_names(self, kind: str) -> list[str]:
         names = [
             name
             for name in self.home_sheet_paths.get(kind, {})
             if self._home_sheet_matches_person_filter(self._home_sheet_key(kind, name))
+            and self._home_sheet_matches_search_filter(kind, name)
         ]
         sorter = getattr(self, "_sorted_home_sheet_names", None)
         return sorter(kind, names) if callable(sorter) else sorted(names, key=lambda name: name.lower())
@@ -13813,18 +13898,30 @@ class CardPipelineApp(tk.Tk):
         self.payout_summary_tree.delete(*self.payout_summary_tree.get_children())
         self.payout_detail_tree.delete(*self.payout_detail_tree.get_children())
         self.payout_summary_people = {}
+        self.payout_summary_item_keys = {}
         self.payout_detail_keys = {}
 
         balances: dict[str, dict[str, float | int]] = {}
         detail_count = 0
         filter_person = self.payout_person_var.get().strip().lower()
+        summary_view = self._payout_summary_view_label()
         for item in self._payout_sheet_items():
             person = item["person"] or "Unassigned"
             if filter_person and filter_person not in person.lower():
                 continue
+            summary_key = person
+            summary_sheet = "All"
+            if summary_view == "Per Sheet":
+                if str(item.get("payout_kind") or "") != "seller_sheet":
+                    summary_sheet = "Team itemized rows"
+                    continue
+                summary_sheet = str(item.get("source_sheet") or item.get("name") or "Unknown sheet").strip() or "Unknown sheet"
+                summary_key = f"{person}\n{summary_sheet.lower()}"
             balance = balances.setdefault(
-                person,
+                summary_key,
                 {
+                    "person": person,
+                    "sheet": summary_sheet,
                     "sheets": 0,
                     "cards": 0,
                     "expenses": 0.0,
@@ -13834,8 +13931,12 @@ class CardPipelineApp(tk.Tk):
                     "unpaid_expenses": 0.0,
                     "unpaid_net_profit": 0.0,
                     "balance": 0.0,
+                    "item_keys": [],
                 },
             )
+            item_keys = balance.setdefault("item_keys", [])
+            if isinstance(item_keys, list):
+                item_keys.append(str(item["key"]))
             balance["sheets"] = int(balance["sheets"]) + 1
             balance["cards"] = int(balance["cards"]) + int(item["row_count"])
             balance["expenses"] = float(balance["expenses"]) + float(item.get("expense_total") or 0.0)
@@ -13864,15 +13965,19 @@ class CardPipelineApp(tk.Tk):
             )
             detail_count += 1
 
-        for index, (person, values) in enumerate(sorted(balances.items(), key=lambda pair: (-float(pair[1]["balance"]), pair[0].lower()))):
+        for index, (_summary_key, values) in enumerate(sorted(balances.items(), key=lambda pair: (-float(pair[1]["balance"]), str(pair[1].get("person") or "").lower(), str(pair[1].get("sheet") or "").lower()))):
             iid = f"payout-summary:{index}"
+            person = str(values.get("person") or "Unassigned")
             self.payout_summary_people[iid] = person
+            item_keys = values.get("item_keys")
+            self.payout_summary_item_keys[iid] = [str(key) for key in item_keys] if isinstance(item_keys, list) else []
             self.payout_summary_tree.insert(
                 "",
                 tk.END,
                 iid=iid,
                 values=(
                     person,
+                    str(values.get("sheet") or "All"),
                     int(values["sheets"]),
                     int(values["cards"]),
                     format_money(float(values["expenses"])),
@@ -13893,22 +13998,50 @@ class CardPipelineApp(tk.Tk):
                 "",
                 tk.END,
                 tags=("total_divider",),
-                values=("------", "------", "------", "------", "------", "------", "------"),
+                values=("------", "------", "------", "------", "------", "------", "------", "------"),
             )
             self.payout_summary_tree.insert(
                 "",
                 tk.END,
                 tags=("total_row",),
-                values=("TOTAL", total_sheets, total_cards, format_money(total_expenses), format_money(total_net_profit), format_money(total_unpaid_net_profit), format_money(total_balance)),
+                values=("TOTAL", "", total_sheets, total_cards, format_money(total_expenses), format_money(total_net_profit), format_money(total_unpaid_net_profit), format_money(total_balance)),
             )
         filter_label = self.payout_person_var.get().strip()
         suffix = f" | Filter: {filter_label}" if filter_label else ""
-        self.payout_status_var.set(f"{detail_count} payout row(s) | Active balance: {format_money(total_balance)}{suffix}")
+        view_suffix = f" | View: {summary_view}"
+        self.payout_status_var.set(f"{detail_count} payout row(s) | Active balance: {format_money(total_balance)}{suffix}{view_suffix}")
         record_performance_event(
             "payouts.refresh",
             perf_start,
             f"details={detail_count} people={len(balances)} total_net={total_net_profit:.2f} unpaid_net={total_unpaid_net_profit:.2f} expenses={total_expenses:.2f} balance={total_balance:.2f}",
         )
+
+    def _apply_payout_marker_balance_state(self, item: dict[str, object]) -> dict[str, object]:
+        key = str(item.get("key") or "")
+        marker = self.home_sheet_markers.get(key, {})
+        total = round(float(item.get("payout_balance") or 0.0), 2)
+        paid_amount = self._money_value(marker.get("paid_amount"))
+        if paid_amount is None:
+            paid_amount = 0.0
+        if marker.get("paid") or item.get("paid"):
+            paid_amount = total
+            open_balance = 0.0
+            paid = True
+        else:
+            open_balance = round(total - float(paid_amount), 2)
+            paid = abs(open_balance) < 0.005
+        adjusted = dict(item)
+        adjusted["payout_total"] = total
+        adjusted["paid_amount"] = round(float(paid_amount), 2)
+        adjusted["payout_balance"] = open_balance
+        adjusted["paid"] = paid
+        if paid:
+            adjusted["status"] = "Paid"
+            adjusted["paid_at"] = str(marker.get("paid_at") or adjusted.get("paid_at") or "")
+        elif paid_amount:
+            adjusted["status"] = "Partial"
+            adjusted["paid_at"] = str(marker.get("paid_at") or adjusted.get("paid_at") or "")
+        return adjusted
 
     def _payout_sheet_items(self) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
@@ -13954,7 +14087,8 @@ class CardPipelineApp(tk.Tk):
                     )
                     seller_payable = True
                 items.append(
-                    {
+                    self._apply_payout_marker_balance_state(
+                        {
                         "key": key,
                         "stage": stage,
                         "name": name,
@@ -13972,7 +14106,10 @@ class CardPipelineApp(tk.Tk):
                         "payout_basis": payout_basis,
                         "payable": seller_payable,
                         "status": status,
+                        "source_sheet": name,
+                        "payout_kind": "seller_sheet",
                     }
+                    )
                 )
         for record in sorted(team_profit_records, key=self._team_payout_record_sort_key):
             if str(record.get("record_type") or "").strip().lower() == "expense":
@@ -14049,7 +14186,7 @@ class CardPipelineApp(tk.Tk):
         card_title = str(record.get("card_title") or "").strip() or cert_or_item or "Sold Card"
         if cert_or_item and cert_or_item not in card_title:
             card_title = f"{card_title} [{cert_or_item}]"
-        return {
+        return self._apply_payout_marker_balance_state({
             "key": key,
             "stage": "Sold Card",
             "name": card_title,
@@ -14070,7 +14207,8 @@ class CardPipelineApp(tk.Tk):
             "status": "Paid" if paid else "Sold",
             "source_sheet": source_sheet,
             "ledger_key": str(record.get("ledger_key") or ""),
-        }
+            "payout_kind": "team_card",
+        })
 
     def _team_expense_payout_item(self, record: dict[str, object], seller_names: set[str]) -> dict[str, object] | None:
         person = str(record.get("assigned_person") or "").strip() or "Unassigned"
@@ -14088,7 +14226,7 @@ class CardPipelineApp(tk.Tk):
         payout_balance = min(0.0, round(float(profit) * balance_share, 2))
         expense_amount = abs(float(profit))
         name = str(record.get("card_title") or record.get("notes") or record.get("expense_type") or "Expense").strip()
-        return {
+        return self._apply_payout_marker_balance_state({
             "key": key,
             "stage": "Expense",
             "name": name,
@@ -14109,7 +14247,8 @@ class CardPipelineApp(tk.Tk):
             "status": "Paid" if paid else "Expenses",
             "source_sheet": source_sheet,
             "ledger_key": str(record.get("ledger_key") or ""),
-        }
+            "payout_kind": "team_expense",
+        })
 
     def _realized_profit_totals_by_person_sheet(self) -> dict[tuple[str, str], float]:
         return {
@@ -14833,14 +14972,20 @@ class CardPipelineApp(tk.Tk):
                     "expense_total": 0.0,
                     "net_profit_total": 0.0,
                     "payout_balance": 0.0,
+                    "paid_amount": 0.0,
                     "payout_basis": "Total paid balance",
                     "status": "Paid",
                 },
             )
             for field in ("row_count", "received_count"):
                 batch[field] = int(batch.get(field) or 0) + int(item.get(field) or 0)
-            for field in ("purchase_total", "estimated_payout_total", "estimated_profit", "realized_profit_total", "expense_total", "net_profit_total", "payout_balance"):
+            for field in ("purchase_total", "estimated_payout_total", "estimated_profit", "realized_profit_total", "expense_total", "net_profit_total"):
                 batch[field] = round(float(batch.get(field) or 0.0) + float(item.get(field) or 0.0), 2)
+            batch["paid_amount"] = round(
+                float(batch.get("paid_amount") or 0.0) + float(item.get("paid_amount") or item.get("payout_total") or 0.0),
+                2,
+            )
+            batch["payout_balance"] = batch["paid_amount"]
         for key, marker in self.home_sheet_markers.items():
             if key in source_keys:
                 continue
@@ -14873,11 +15018,13 @@ class CardPipelineApp(tk.Tk):
                     "expense_total": 0.0,
                     "net_profit_total": 0.0,
                     "payout_balance": 0.0,
+                    "paid_amount": 0.0,
                     "payout_basis": "Total paid balance",
                     "status": "Paid",
                 },
             )
-            batch["payout_balance"] = round(float(batch.get("payout_balance") or 0.0) + amount, 2)
+            batch["paid_amount"] = round(float(batch.get("paid_amount") or 0.0) + amount, 2)
+            batch["payout_balance"] = batch["paid_amount"]
         return [
             *sorted(paid_batches.values(), key=lambda item: str(item.get("paid_at") or item.get("name") or ""), reverse=True),
             *sorted(open_items, key=lambda item: (str(item.get("stage") or ""), str(item.get("name") or "").lower())),
@@ -14914,7 +15061,7 @@ class CardPipelineApp(tk.Tk):
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text=f"Payout History: {person}", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).pack(anchor=tk.W)
         totals = {
-            "paid": sum(float(item.get("payout_balance") or 0.0) for item in items if item.get("paid")),
+            "paid": sum(float(item.get("paid_amount") or 0.0) for item in items),
             "unpaid": sum(float(item.get("payout_balance") or 0.0) for item in items if not item.get("paid")),
         }
         ttk.Label(
@@ -14944,6 +15091,7 @@ class CardPipelineApp(tk.Tk):
         tree.tag_configure("negative", foreground="#ffd1d1")
         for index, item in enumerate(items):
             paid = bool(item.get("paid"))
+            partial = bool(item.get("paid_amount")) and not paid
             balance = float(item.get("payout_balance") or 0.0)
             tag = "paid" if paid else ("negative" if balance < 0 else "open")
             tree.insert(
@@ -14951,7 +15099,7 @@ class CardPipelineApp(tk.Tk):
                 tk.END,
                 iid=f"history:{index}",
                 values=(
-                    "Paid" if paid else "Open",
+                    "Paid" if paid else ("Partial" if partial else "Open"),
                     item.get("stage") or "",
                     item.get("name") or "",
                     item.get("row_count") or 0,
@@ -14981,10 +15129,12 @@ class CardPipelineApp(tk.Tk):
             return
         if person in {"TOTAL", "━━━━━━", "------"}:
             return
+        selected_item_keys = set(self.payout_summary_item_keys.get(selected[0], [])) if hasattr(self, "payout_summary_item_keys") else set()
         matching_items = [
             item
             for item in self._payout_sheet_items()
             if not item["paid"] and item.get("payable", True) and (item["person"] or "Unassigned") == person
+            and (not selected_item_keys or str(item.get("key") or "") in selected_item_keys)
         ]
         if not matching_items:
             self.payout_status_var.set(f"No unpaid payout rows found for {person}.")
@@ -15000,9 +15150,9 @@ class CardPipelineApp(tk.Tk):
         total_cards: int,
         total_balance: float,
     ) -> None:
-        confirmed_var = tk.BooleanVar(value=False)
+        amount_var = tk.StringVar(value=format_money(total_balance))
         popup = tk.Toplevel(self)
-        popup.title("Mark Payout Paid")
+        popup.title("Record Payout Payment")
         popup.configure(bg="#1f1f1f")
         popup.transient(self)
         popup.grab_set()
@@ -15010,42 +15160,77 @@ class CardPipelineApp(tk.Tk):
 
         frame = ttk.Frame(popup, style="Panel.TFrame", padding=(18, 16))
         frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text="Mark Payout Paid", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
+        ttk.Label(frame, text="Record Payout Payment", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
         ttk.Label(frame, text=person, style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
         ttk.Label(frame, text="Payout Rows", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 18), pady=(0, 8))
         ttk.Label(frame, text=str(len(matching_items)), style="Panel.TLabel").grid(row=2, column=1, sticky="w", pady=(0, 8))
         ttk.Label(frame, text="Cards", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 18), pady=(0, 8))
         ttk.Label(frame, text=str(total_cards), style="Panel.TLabel").grid(row=3, column=1, sticky="w", pady=(0, 8))
-        ttk.Label(frame, text="Total Balance", style="Panel.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 18), pady=(0, 14))
-        ttk.Label(frame, text=format_money(total_balance), style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=4, column=1, sticky="w", pady=(0, 14))
+        ttk.Label(frame, text="Open Balance", style="Panel.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 18), pady=(0, 8))
+        ttk.Label(frame, text=format_money(total_balance), style="Panel.TLabel", font=("Segoe UI Semibold", 11)).grid(row=4, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text="Payment Amount", style="Panel.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 18), pady=(0, 14))
+        amount_entry = ttk.Entry(frame, textvariable=amount_var, width=18)
+        amount_entry.grid(row=5, column=1, sticky="w", pady=(0, 14))
 
         buttons = ttk.Frame(frame, style="Panel.TFrame")
         buttons.grid(row=6, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=popup.destroy, style="Soft.TButton").pack(side=tk.LEFT, padx=(0, 8))
-        confirm_button = ttk.Button(
+        ttk.Button(
             buttons,
-            text="Confirm Mark Paid",
+            text="Save Payment",
             style="Primary.TButton",
-            state=tk.DISABLED,
-            command=lambda: self._apply_payout_person_paid(person, matching_items, total_balance, popup),
-        )
-        confirm_button.pack(side=tk.LEFT)
-
-        def toggle_confirm() -> None:
-            confirm_button.configure(state=tk.NORMAL if confirmed_var.get() else tk.DISABLED)
-
-        ttk.Checkbutton(
-            frame,
-            text="I confirm this person's full active balance has been paid.",
-            variable=confirmed_var,
-            command=toggle_confirm,
-            style="Panel.TCheckbutton",
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 14))
+            command=lambda: self._apply_payout_person_payment(person, matching_items, amount_var.get(), total_balance, popup),
+        ).pack(side=tk.LEFT)
         frame.columnconfigure(1, weight=1)
         popup.update_idletasks()
+        amount_entry.focus_set()
+        amount_entry.selection_range(0, tk.END)
         x = self.winfo_rootx() + max(80, (self.winfo_width() - popup.winfo_width()) // 2)
         y = self.winfo_rooty() + max(80, (self.winfo_height() - popup.winfo_height()) // 2)
         popup.geometry(f"+{x}+{y}")
+
+    def _apply_payout_person_payment(
+        self,
+        person: str,
+        matching_items: list[dict[str, object]],
+        amount_text: str,
+        total_balance: float,
+        popup: tk.Toplevel | None = None,
+    ) -> None:
+        payment = self._parse_money_text(amount_text)
+        if payment is None or payment <= 0:
+            messagebox.showerror("Invalid payment", "Enter a payment amount greater than $0.")
+            return
+        payment = min(round(float(payment), 2), round(float(total_balance), 2))
+        remaining = payment
+        paid_at = datetime.now().isoformat(timespec="seconds")
+        for item in matching_items:
+            if remaining <= 0:
+                break
+            key = str(item["key"])
+            kind, _name = self._split_home_sheet_key(key)
+            marker = dict(self.home_sheet_markers.get(key, {}))
+            summary = self.home_sheet_summaries.get(key, {})
+            open_balance = round(float(item.get("payout_balance") or 0.0), 2)
+            if open_balance <= 0:
+                continue
+            current_paid = self._money_value(marker.get("paid_amount")) or 0.0
+            applied = min(open_balance, remaining)
+            new_paid_amount = round(current_paid + applied, 2)
+            payout_total = round(float(item.get("payout_total") or open_balance + current_paid), 2)
+            marker["assigned_person"] = str(item["person"] or "").strip()
+            marker["paid_amount"] = new_paid_amount
+            marker["paid_at"] = paid_at
+            marker["paid"] = new_paid_amount + 0.005 >= payout_total
+            marker["all_received"] = bool(marker.get("all_received") or summary.get("all_received") or kind == "Received")
+            marker["tracking_number"] = str(marker.get("tracking_number") or "")
+            self.home_sheet_markers[key] = marker
+            remaining = round(remaining - applied, 2)
+        self._save_sheet_markers()
+        self.refresh_home()
+        if popup is not None:
+            popup.destroy()
+        self.status_var.set(f"Recorded {format_money(payment)} payment for {person}; remaining open balance reduced.")
 
     def _apply_payout_person_paid(
         self,
@@ -15061,6 +15246,7 @@ class CardPipelineApp(tk.Tk):
             summary = self.home_sheet_summaries.get(key, {})
             marker["assigned_person"] = str(item["person"] or "").strip()
             marker["paid"] = True
+            marker["paid_amount"] = round(float(item.get("payout_total") or item.get("payout_balance") or 0.0), 2)
             marker["paid_at"] = datetime.now().isoformat(timespec="seconds")
             marker["all_received"] = bool(marker.get("all_received") or summary.get("all_received") or kind == "Received")
             marker["tracking_number"] = str(marker.get("tracking_number") or "")
