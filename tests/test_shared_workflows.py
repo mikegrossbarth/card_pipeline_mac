@@ -10536,11 +10536,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             active = app.INVENTORY_PHOTOS_DIR / "active.jpg"
             unassigned = app.INVENTORY_PHOTOS_DIR / "unassigned.jpg"
             ignored = app.INVENTORY_PHOTOS_DIR / "ignored.jpg"
+            stale = app.INVENTORY_PHOTOS_DIR / "stale.jpg"
             archived = app.DELETED_INVENTORY_PHOTOS_DIR / "archived.jpg"
             archived.parent.mkdir(parents=True)
             active.write_bytes(b"active image")
             unassigned.write_bytes(b"unassigned image")
             ignored.write_bytes(b"ignored image")
+            stale.write_bytes(b"stale image")
             archived.write_bytes(b"archived image")
             dummy = PhotoDummy()
             dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
@@ -10550,7 +10552,19 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             active_record = dummy._normalize_inventory_record({"assigned_person": "Mikey", "cert_number": "123", "card_title": "Active", "status": "Active", "photo_paths": [active.name]})
             dummy._save_inventory_ledger([active_record])
             ignored_sha = dummy._inventory_photo_file_hash(ignored)
-            app.INVENTORY_PHOTO_STATE_PATH.write_text(json.dumps({"version": 1, "photos": {ignored_sha: {"path": str(ignored), "filename": ignored.name, "status": "sold_inventory"}}}), encoding="utf-8")
+            stale_sha = dummy._inventory_photo_file_hash(stale)
+            app.INVENTORY_PHOTO_STATE_PATH.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "photos": {
+                            ignored_sha: {"path": str(ignored), "filename": ignored.name, "status": "sold_inventory"},
+                            stale_sha: {"path": str(stale), "filename": stale.name, "status": "no_matching_inventory"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
             dummy._prepared_inventory_photo_scan_paths = [active, unassigned, ignored, archived]
             try:
                 with patch.object(app, "identify_cards_sync", return_value=[]):
@@ -10568,6 +10582,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertIn("unassigned.jpg", filenames)
                 self.assertIn("ignored.jpg", filenames)
                 self.assertNotIn("archived.jpg", filenames)
+                self.assertEqual(state["photos"][stale_sha]["status"], "no_matching_inventory")
+                self.assertNotIn("removed_at", state["photos"][stale_sha])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
