@@ -16804,13 +16804,15 @@ class CardPipelineApp(tk.Tk):
             source_resolved = source
             shared_resolved = shared
         if source_resolved == shared_resolved:
+            self._prepared_inventory_photo_scan_paths = self._inventory_photo_scan_candidate_paths(shared)
             return shared
         try:
-            source_images = self._inventory_photo_paths(source)
+            source_images = self._inventory_photo_source_mirror_candidates(source)
             total = len(source_images)
             shared.mkdir(parents=True, exist_ok=True)
             copied = 0
             skipped = 0
+            prepared_scan_paths: list[Path] = []
             if not total:
                 self._inventory_photo_status(f"No inventory photos found in {source}. Scanning {shared}...", background=background)
                 if not background:
@@ -16833,12 +16835,15 @@ class CardPipelineApp(tk.Tk):
                 if destination.exists():
                     try:
                         if destination.stat().st_size == source_path.stat().st_size:
+                            prepared_scan_paths.append(destination)
                             skipped += 1
                             continue
                     except Exception:
                         pass
                 shutil.copy2(source_path, destination)
+                prepared_scan_paths.append(destination)
                 copied += 1
+            self._prepared_inventory_photo_scan_paths = sorted(prepared_scan_paths, key=lambda item: str(item).lower())
             self._inventory_photo_status(f"Mirrored {copied} photo(s) to shared folder; skipped {skipped}. Scanning {shared}...", background=background)
             if background:
                 self.events.put(("status", f"Mirrored inventory photos to {shared}."))
@@ -16939,9 +16944,64 @@ class CardPipelineApp(tk.Tk):
                 paths.append(path)
         return sorted(paths, key=lambda item: str(item).lower())
 
-    def _inventory_photo_files(self, folder: Path) -> list[dict[str, object]]:
+    def _inventory_photo_path_is_under(self, path: Path, folder: Path) -> bool:
+        try:
+            path.resolve(strict=False).relative_to(folder.resolve(strict=False))
+            return True
+        except Exception:
+            return False
+
+    def _inventory_photo_scan_candidate_paths(self, folder: Path) -> list[Path]:
+        folder = Path(folder).expanduser()
+        if not folder.exists():
+            return []
+        paths: list[Path] = []
+        seen: set[str] = set()
+
+        def add(path: Path) -> None:
+            if not path.exists() or not path.is_file():
+                return
+            if self._inventory_photo_path_is_archived(path, folder):
+                return
+            if not self._inventory_photo_path_is_under(path, folder):
+                return
+            try:
+                key = str(path.resolve(strict=False))
+            except Exception:
+                key = str(path)
+            if key in seen:
+                return
+            seen.add(key)
+            paths.append(path)
+
+        active_rows = [
+            self._normalize_inventory_record(record)
+            for record in self._load_inventory_ledger()
+            if str(record.get("status") or "").strip().lower() == "active"
+        ]
+        for record in active_rows:
+            for value in record.get("photo_paths") or []:
+                for candidate in self._inventory_photo_path_candidates(value):
+                    add(candidate)
+        for path in self._inventory_unattached_photo_paths():
+            add(path)
+        return sorted(paths, key=lambda item: str(item).lower())
+
+    def _inventory_photo_source_mirror_candidates(self, source: Path) -> list[Path]:
+        return self._inventory_photo_scan_candidate_paths(source)
+
+    def _inventory_photo_files(self, folder: Path, paths: list[Path] | None = None) -> list[dict[str, object]]:
         images: list[dict[str, object]] = []
-        if hasattr(self, "_inventory_photo_paths"):
+        if paths is not None:
+            paths = [
+                Path(path)
+                for path in paths
+                if Path(path).exists()
+                and Path(path).is_file()
+                and not self._inventory_photo_path_is_archived(Path(path), folder)
+                and self._inventory_photo_path_is_under(Path(path), folder)
+            ]
+        elif hasattr(self, "_inventory_photo_paths"):
             paths = self._inventory_photo_paths(folder)
         else:
             allowed = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
@@ -17397,6 +17457,8 @@ class CardPipelineApp(tk.Tk):
         if not folder:
             return
         folder.mkdir(parents=True, exist_ok=True)
+        if getattr(self, "_prepared_inventory_photo_scan_paths", None) is None:
+            self._prepared_inventory_photo_scan_paths = self._inventory_photo_scan_candidate_paths(folder)
         if genai is None or identify_cards_sync is None:
             self.inventory_status_var.set("Inventory photo scan unavailable: missing photo OCR dependencies.")
             return
@@ -17429,6 +17491,8 @@ class CardPipelineApp(tk.Tk):
         if not api_key:
             self.events.put(("inventory_photo_status", "Inventory photo scan unavailable: missing GOOGLE_API_KEY."))
             return
+        if getattr(self, "_prepared_inventory_photo_scan_paths", None) is None:
+            self._prepared_inventory_photo_scan_paths = self._inventory_photo_scan_candidate_paths(folder)
         self.inventory_photo_client = make_photo_ocr_client(api_key)
         self.events.put(("inventory_photo_status", f"Inventory photo background scan started in {folder}."))
         self._inventory_photo_scan_worker(folder, True)
@@ -17444,7 +17508,9 @@ class CardPipelineApp(tk.Tk):
         photos = state.setdefault("photos", {})
         archived_scan_skipped = 0
         try:
-            all_images = self._inventory_photo_files(folder)
+            prepared_paths = getattr(self, "_prepared_inventory_photo_scan_paths", None)
+            all_images = self._inventory_photo_files(folder, prepared_paths if isinstance(prepared_paths, list) else None)
+            self._prepared_inventory_photo_scan_paths = None
             archived_scan_statuses = {"archived_from_album", "sold_inventory"}
             images: list[dict[str, object]] = []
             for image in all_images:
@@ -17505,6 +17571,7 @@ class CardPipelineApp(tk.Tk):
                 ]
                 if (callable(can_skip) and can_skip(existing, records_by_key, image_path)) or sold_cert_skip or sold_photo_skip or attached_records:
                     skipped += 1
+                    existing = {**image, **existing}
                     existing["last_seen"] = datetime.now().isoformat(timespec="seconds")
                     if sold_cert_skip or sold_photo_skip:
                         existing["status"] = "sold_inventory"
