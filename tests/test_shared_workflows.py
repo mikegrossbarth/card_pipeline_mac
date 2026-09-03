@@ -12507,6 +12507,211 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIsNone(state.get_mobile_inventory_photo(None, {"pin": ["bad"]}, "abc"))
         self.assertEqual(state.get_mobile_inventory_photo(None, {"pin": ["123456"]}, "abc"), (b"jpg-bytes", "image/jpeg"))
 
+    def test_mobile_photo_upload_requires_pin_and_callback(self) -> None:
+        state = app.BridgeState()
+        state.mobile_pin_provider = lambda: "123456"
+        state.mobile_photo_upload = lambda payload: {"ok": True, "saved": 1}
+
+        self.assertTrue(state.mobile_config()["photoUpload"])
+        self.assertEqual(state.upload_mobile_photos({"pin": "123456"})["saved"], 1)
+        self.assertFalse(state.upload_mobile_photos({"pin": "bad"})["ok"])
+
+    def test_mobile_photo_upload_saves_under_person_and_links_inventory(self) -> None:
+        class MobileUploadDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
+            _inventory_photo_safe_candidates = app.CardPipelineApp._inventory_photo_safe_candidates
+            _safe_inventory_photo_path = app.CardPipelineApp._safe_inventory_photo_path
+            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
+            _link_inventory_photo_to_keys = app.CardPipelineApp._link_inventory_photo_to_keys
+            _mobile_image_parts = app.CardPipelineApp._mobile_image_parts
+            _mobile_photo_upload_images = app.CardPipelineApp._mobile_photo_upload_images
+            _mobile_photo_upload_owner = app.CardPipelineApp._mobile_photo_upload_owner
+            _mobile_photo_upload_folder = app.CardPipelineApp._mobile_photo_upload_folder
+            _mobile_photo_title_match_key = app.CardPipelineApp._mobile_photo_title_match_key
+            _mobile_photo_upload_match_keys = app.CardPipelineApp._mobile_photo_upload_match_keys
+            _record_mobile_photo_upload_state = app.CardPipelineApp._record_mobile_photo_upload_state
+            mobile_photo_upload = app.CardPipelineApp.mobile_photo_upload
+
+            def _is_personal_lucas(self):
+                return False
+
+            def _personal_default_person(self):
+                return "Mikey"
+
+            def _canonical_person_choice(self, person):
+                return str(person or "").strip()
+
+            def _queue_mobile_photo_scan(self, photo_paths=None):
+                raise AssertionError("direct cert matches should not need OCR scan")
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            try:
+                dummy = MobileUploadDummy()
+                dummy.app_settings = {}
+                dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+                dummy.events = queue.Queue()
+                kevin_record = dummy._normalize_inventory_record(
+                    {"assigned_person": "Kevin Hambone", "cert_number": "12345678", "card_title": "Kevin Card", "status": "Active"}
+                )
+                tyler_record = dummy._normalize_inventory_record(
+                    {"assigned_person": "Tyler Hamlin", "cert_number": "87654321", "card_title": "Tyler Card", "status": "Active"}
+                )
+                dummy._save_inventory_ledger([kevin_record, tyler_record])
+
+                result = dummy.mobile_photo_upload(
+                    {
+                        "client_id": "phone-one",
+                        "assigned_person": "Kevin Hambone",
+                        "cert_number": "12345678",
+                        "images": [{"name": "front.jpg", "image": "data:image/jpeg;base64,anBnLWJ5dGVz"}],
+                    }
+                )
+
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["saved"], 1)
+                self.assertEqual(result["linked"], 1)
+                saved = list((app.INVENTORY_PHOTOS_DIR / "mobile" / "team" / "kevin-hambone").rglob("*.jpg"))
+                self.assertEqual(len(saved), 1)
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                kevin_after = next(record for record in ledger if record["assigned_person"] == "Kevin Hambone")
+                tyler_after = next(record for record in ledger if record["assigned_person"] == "Tyler Hamlin")
+                self.assertEqual(kevin_after["photo_paths"], [saved[0].relative_to(app.INVENTORY_PHOTOS_DIR).as_posix()])
+                self.assertEqual(tyler_after["photo_paths"], [])
+                state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
+                state_record = next(iter(state["photos"].values()))
+                self.assertEqual(state_record["status"], "linked")
+                self.assertEqual(state_record["linked_keys"], [kevin_record["inventory_key"]])
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+
+    def test_mobile_photo_upload_queues_only_uploaded_pending_scan_files(self) -> None:
+        class MobileUploadDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_profit_ledger = lambda self: []
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_storage_value = app.CardPipelineApp._inventory_photo_storage_value
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
+            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _inventory_photo_used_path_keys = app.CardPipelineApp._inventory_photo_used_path_keys
+            _inventory_photo_used_hashes = app.CardPipelineApp._inventory_photo_used_hashes
+            _inventory_photo_state_used_keys = app.CardPipelineApp._inventory_photo_state_used_keys
+            _sold_inventory_cert_numbers = app.CardPipelineApp._sold_inventory_cert_numbers
+            _sold_inventory_photo_used_keys = app.CardPipelineApp._sold_inventory_photo_used_keys
+            _inventory_photo_state_matches_sold_cert = app.CardPipelineApp._inventory_photo_state_matches_sold_cert
+            _inventory_photo_paths = app.CardPipelineApp._inventory_photo_paths
+            _inventory_unattached_photo_paths = app.CardPipelineApp._inventory_unattached_photo_paths
+            _inventory_photo_path_is_archived = app.CardPipelineApp._inventory_photo_path_is_archived
+            _inventory_photo_path_is_under = app.CardPipelineApp._inventory_photo_path_is_under
+            _inventory_photo_scan_candidate_paths = app.CardPipelineApp._inventory_photo_scan_candidate_paths
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
+            _mobile_image_parts = app.CardPipelineApp._mobile_image_parts
+            _mobile_photo_upload_images = app.CardPipelineApp._mobile_photo_upload_images
+            _mobile_photo_upload_owner = app.CardPipelineApp._mobile_photo_upload_owner
+            _mobile_photo_upload_folder = app.CardPipelineApp._mobile_photo_upload_folder
+            _mobile_photo_title_match_key = app.CardPipelineApp._mobile_photo_title_match_key
+            _mobile_photo_upload_match_keys = app.CardPipelineApp._mobile_photo_upload_match_keys
+            _record_mobile_photo_upload_state = app.CardPipelineApp._record_mobile_photo_upload_state
+            mobile_photo_upload = app.CardPipelineApp.mobile_photo_upload
+
+            def _is_personal_lucas(self):
+                return False
+
+            def _personal_default_person(self):
+                return "Mikey"
+
+            def _canonical_person_choice(self, person):
+                return str(person or "").strip()
+
+            def _queue_mobile_photo_scan(self, photo_paths=None):
+                self.queued_scan_paths = list(photo_paths or [])
+                return True
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            old_deleted_archive = app.DELETED_ARCHIVE_DIR
+            old_deleted_photos = app.DELETED_INVENTORY_PHOTOS_DIR
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            app.DELETED_ARCHIVE_DIR = Path(tmp) / "DELETED ARCHIVE"
+            app.DELETED_INVENTORY_PHOTOS_DIR = app.DELETED_ARCHIVE_DIR / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            stale = app.INVENTORY_PHOTOS_DIR / "stale-linked.jpg"
+            stale.write_bytes(b"stale")
+            try:
+                dummy = MobileUploadDummy()
+                dummy.app_settings = {}
+                dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+                dummy.events = queue.Queue()
+                active_record = dummy._normalize_inventory_record(
+                    {"assigned_person": "Kevin Hambone", "cert_number": "12345678", "card_title": "Kevin Card", "status": "Active", "photo_paths": [stale.name]}
+                )
+                dummy._save_inventory_ledger([active_record])
+                app.PROFIT_LEDGER_PATH.write_text(json.dumps({"items": []}), encoding="utf-8")
+
+                result = dummy.mobile_photo_upload(
+                    {
+                        "client_id": "phone-one",
+                        "assigned_person": "Kevin Hambone",
+                        "images": [{"name": "fresh.jpg", "image": "data:image/jpeg;base64,ZnJlc2gtanBn"}],
+                    }
+                )
+
+                self.assertTrue(result["ok"])
+                self.assertTrue(result["scan_started"])
+                self.assertEqual(len(dummy.queued_scan_paths), 1)
+                self.assertEqual(dummy.queued_scan_paths[0].name, result["files"][0])
+                candidates = dummy._inventory_photo_scan_candidate_paths(app.INVENTORY_PHOTOS_DIR)
+                self.assertIn(dummy.queued_scan_paths[0], candidates)
+                state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
+                state_record = next(iter(state["photos"].values()))
+                self.assertEqual(state_record["status"], "pending_scan")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+                app.DELETED_ARCHIVE_DIR = old_deleted_archive
+                app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
+
     def test_instagram_publish_retries_until_media_ready(self) -> None:
         class InstagramDummy:
             _instagram_publish_media_with_retry = app.CardPipelineApp._instagram_publish_media_with_retry

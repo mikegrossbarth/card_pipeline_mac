@@ -888,6 +888,7 @@ class CardPipelineApp(tk.Tk):
         self.state.mobile_inventory_mark_sold = self.mobile_inventory_mark_sold
         self.state.mobile_inventory_trade = self.mobile_inventory_trade
         self.state.mobile_card_identify = self.mobile_card_identify
+        self.state.mobile_photo_upload = self.mobile_photo_upload
         self.state.mobile_profit_summary = self.mobile_profit_summary
         self.state.mobile_profit_refund = self.mobile_profit_refund
         self.state.mobile_expense_add = self.mobile_expense_add
@@ -4464,6 +4465,210 @@ class CardPipelineApp(tk.Tk):
             mime_type = "image/jpeg"
             image_b64 = image
         return mime_type, image_b64, base64.b64decode(image_b64)
+
+    def _mobile_photo_upload_images(self, payload: dict) -> list[dict[str, object]]:
+        images = payload.get("images")
+        if isinstance(images, list):
+            return [item for item in images if isinstance(item, dict)]
+        image = str(payload.get("image") or "").strip()
+        if not image:
+            return []
+        return [{"image": image, "name": payload.get("name") or payload.get("filename") or "mobile-photo.jpg"}]
+
+    def _mobile_photo_upload_owner(self, payload: dict) -> tuple[str, str]:
+        profile = "personal" if self._is_personal_lucas() else "team"
+        person = str(payload.get("assigned_person") or payload.get("person") or "").strip()
+        if profile == "personal" and not person:
+            person = self._personal_default_person()
+        elif profile == "team":
+            person = self._canonical_person_choice(person) or person
+        return profile, person or "Unassigned"
+
+    def _mobile_photo_upload_folder(self, payload: dict) -> Path:
+        profile, person = self._mobile_photo_upload_owner(payload)
+        person_slug = re.sub(r"[^a-z0-9]+", "-", safe_filename(person).strip().lower()).strip("-") or "unassigned"
+        now = datetime.now()
+        return INVENTORY_PHOTOS_DIR / "mobile" / profile / person_slug / now.strftime("%Y") / now.strftime("%m")
+
+    def _mobile_photo_title_match_key(self, title_hint: str, records: list[dict[str, object]]) -> str:
+        token_source = getattr(self, "_match_text_tokens", None)
+        hint_tokens = token_source(title_hint) if callable(token_source) else set(re.findall(r"[a-z0-9]+", title_hint.lower()))
+        if len(hint_tokens) < 2:
+            return ""
+        scored: list[tuple[float, str]] = []
+        hint_compact = re.sub(r"[^a-z0-9]+", "", title_hint.lower())
+        for record in records:
+            key = str(record.get("inventory_key") or "")
+            title = str(record.get("card_title") or record.get("title") or "")
+            if not key or not title:
+                continue
+            title_tokens = token_source(title) if callable(token_source) else set(re.findall(r"[a-z0-9]+", title.lower()))
+            overlap = hint_tokens & title_tokens
+            if len(overlap) < 2:
+                continue
+            title_compact = re.sub(r"[^a-z0-9]+", "", title.lower())
+            ratio = difflib.SequenceMatcher(None, hint_compact, title_compact).ratio()
+            score = len(overlap) + ratio
+            scored.append((score, key))
+        if not scored:
+            return ""
+        scored.sort(reverse=True)
+        best_score, best_key = scored[0]
+        second_score = scored[1][0] if len(scored) > 1 else 0.0
+        return best_key if best_score >= 3.0 and best_score >= second_score + 0.5 else ""
+
+    def _mobile_photo_upload_match_keys(self, payload: dict) -> set[str]:
+        cert = scan_to_cert(payload.get("cert_number") or payload.get("cert") or "")
+        item_id = str(payload.get("item_id") or "").strip().lower()
+        title_hint = str(payload.get("card_title") or payload.get("title") or payload.get("hint") or "").strip()
+        _profile, owner = self._mobile_photo_upload_owner(payload)
+        owner_lower = owner.strip().lower()
+        rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        active_records = [record for record in rows if str(record.get("status") or "").lower() == "active"]
+        if owner_lower and owner_lower != "unassigned":
+            owner_records = [record for record in active_records if str(record.get("assigned_person") or "").strip().lower() == owner_lower]
+            if owner_records:
+                active_records = owner_records
+        matched: set[str] = set()
+        if cert:
+            for record in active_records:
+                if scan_to_cert(record.get("cert_number")) == cert:
+                    key = str(record.get("inventory_key") or "")
+                    if key:
+                        matched.add(key)
+            return matched
+        if item_id:
+            for record in active_records:
+                if str(record.get("item_id") or "").strip().lower() == item_id:
+                    key = str(record.get("inventory_key") or "")
+                    if key:
+                        matched.add(key)
+            return matched
+        if title_hint:
+            best_key = self._mobile_photo_title_match_key(title_hint, active_records)
+            if best_key:
+                matched.add(best_key)
+        return matched
+
+    def _record_mobile_photo_upload_state(self, photo_paths: list[Path], linked_keys: set[str], status: str) -> None:
+        state = self._load_inventory_photo_state()
+        photos = state.setdefault("photos", {})
+        if not isinstance(photos, dict):
+            photos = {}
+            state["photos"] = photos
+        saved_at = datetime.now().isoformat(timespec="seconds")
+        for path in photo_paths:
+            try:
+                stat = path.stat()
+                sha = self._inventory_photo_file_hash(path)
+                relative = self._inventory_photo_storage_value(path)
+            except Exception:
+                continue
+            photos[sha] = {
+                **(photos.get(sha) if isinstance(photos.get(sha), dict) else {}),
+                "path": str(path),
+                "relative_path": relative,
+                "filename": path.name,
+                "size": stat.st_size,
+                "modified": int(stat.st_mtime),
+                "sha256": sha,
+                "cards": [],
+                "certs": [],
+                "linked_keys": sorted(linked_keys),
+                "status": status,
+                "source": "mobile_upload",
+                "last_seen": saved_at,
+            }
+        self._save_inventory_photo_state(state)
+
+    def _queue_mobile_photo_scan(self, photo_paths: list[Path] | None = None) -> bool:
+        if genai is None or identify_cards_sync is None:
+            return False
+        worker = getattr(self, "inventory_photo_worker", None)
+        if worker and worker.is_alive():
+            return True
+        if hasattr(self, "_load_photo_env"):
+            self._load_photo_env()
+        api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+        if not api_key:
+            return False
+        try:
+            self.inventory_photo_client = make_photo_ocr_client(api_key)
+        except Exception:
+            return False
+        if photo_paths:
+            self._prepared_inventory_photo_scan_paths = sorted([Path(path) for path in photo_paths], key=lambda item: str(item).lower())
+        self.inventory_photo_worker = threading.Thread(target=self._inventory_photo_scan_worker, args=(INVENTORY_PHOTOS_DIR, True), daemon=True)
+        self.inventory_photo_worker.start()
+        return True
+
+    def mobile_photo_upload(self, payload: dict) -> dict:
+        upload_items = self._mobile_photo_upload_images(payload)
+        if not upload_items:
+            return {"ok": False, "error": "Take or choose at least one photo."}
+        if len(upload_items) > 12:
+            return {"ok": False, "error": "Upload 12 photos or fewer at a time."}
+        destination_folder = self._mobile_photo_upload_folder(payload)
+        destination_folder.mkdir(parents=True, exist_ok=True)
+        saved_paths: list[Path] = []
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        client_id = re.sub(r"[^A-Za-z0-9_-]+", "-", str(payload.get("client_id") or payload.get("clientId") or "mobile")).strip("-")[:40] or "mobile"
+        for index, item in enumerate(upload_items, start=1):
+            image = str(item.get("image") or "").strip()
+            if not image:
+                continue
+            try:
+                mime_type, _image_b64, image_bytes = self._mobile_image_parts(image)
+            except Exception as error:
+                return {"ok": False, "error": f"Could not read photo {index}: {error}"}
+            if not str(mime_type or "").startswith("image/"):
+                return {"ok": False, "error": f"Photo {index} is not an image."}
+            if len(image_bytes) > 12 * 1024 * 1024:
+                return {"ok": False, "error": f"Photo {index} is too large. Retake it closer or choose a smaller image."}
+            original = str(item.get("name") or item.get("filename") or f"photo-{index}.jpg")
+            safe_stem = safe_filename(Path(original).stem or f"photo-{index}")[:90] or f"photo-{index}"
+            extension = ".png" if "png" in mime_type.lower() else ".webp" if "webp" in mime_type.lower() else ".jpg"
+            path = destination_folder / f"[{timestamp}]-Mobile-{client_id}-[{index}]-[{safe_stem}]{extension}"
+            suffix = 1
+            while path.exists():
+                suffix += 1
+                path = destination_folder / f"[{timestamp}]-Mobile-{client_id}-[{index}-{suffix}]-[{safe_stem}]{extension}"
+            temp_path = path.with_name(f".{path.name}.tmp")
+            try:
+                temp_path.write_bytes(image_bytes)
+                temp_path.replace(path)
+            except OSError as error:
+                return {"ok": False, "error": f"Could not save photo {index}: {error}"}
+            saved_paths.append(path)
+        if not saved_paths:
+            return {"ok": False, "error": "No usable photos were uploaded."}
+        matched_keys = self._mobile_photo_upload_match_keys(payload)
+        linked = 0
+        if matched_keys:
+            for path in saved_paths:
+                linked += self._link_inventory_photo_to_keys(matched_keys, path)
+            self._record_mobile_photo_upload_state(saved_paths, matched_keys, "linked" if linked else "saved")
+        else:
+            self._record_mobile_photo_upload_state(saved_paths, set(), "pending_scan")
+        scan_started = False if matched_keys else self._queue_mobile_photo_scan(saved_paths)
+        if linked:
+            self.events.put(("inventory_refresh", {"enrich": False}))
+        status = "linked" if linked else "saved"
+        message = (
+            f"Uploaded {len(saved_paths)} photo(s) and linked them to inventory."
+            if linked
+            else f"Uploaded {len(saved_paths)} photo(s). Photo matching {'started' if scan_started else 'will run when photo OCR is available'}."
+        )
+        return {
+            "ok": True,
+            "saved": len(saved_paths),
+            "linked": linked,
+            "status": status,
+            "scan_started": scan_started,
+            "folder": str(destination_folder),
+            "files": [path.name for path in saved_paths],
+            "message": message,
+        }
 
     def _parse_mobile_quick_card_response(self, raw: str) -> dict:
         text = str(raw or "").strip()
