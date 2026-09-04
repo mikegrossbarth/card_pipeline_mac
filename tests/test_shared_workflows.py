@@ -10300,6 +10300,79 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_PHOTOS_DIR = old_photo_dir
                 app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
 
+    def test_inventory_photo_scan_title_matches_when_label_text_has_noise_numbers(self) -> None:
+        class PhotoDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _inventory_photo_files = app.CardPipelineApp._inventory_photo_files
+            _inventory_photo_certs_from_cards = app.CardPipelineApp._inventory_photo_certs_from_cards
+            _active_inventory_keys_by_cert = app.CardPipelineApp._active_inventory_keys_by_cert
+            _link_inventory_photo_to_keys = app.CardPipelineApp._link_inventory_photo_to_keys
+            _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
+            _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
+            _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
+            _match_text_tokens = app.CardPipelineApp._match_text_tokens
+            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
+            _compact_match_text = app.CardPipelineApp._compact_match_text
+            _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
+            _inventory_photo_base64 = lambda self, path: "stub"
+            _inventory_photo_scan_group_nearby_unmatched = app.CardPipelineApp._inventory_photo_scan_group_nearby_unmatched
+            _inventory_photo_scan_worker = app.CardPipelineApp._inventory_photo_scan_worker
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            photo = app.INVENTORY_PHOTOS_DIR / "[20260903-2030]-Card[1]-[1]-garnett noir.jpg"
+            photo.write_bytes(b"fake image")
+            dummy = PhotoDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.app_settings = {}
+            dummy.inventory_photo_client = object()
+            dummy.events = __import__("queue").Queue()
+            record = dummy._normalize_inventory_record(
+                {
+                    "assigned_person": "Kevin",
+                    "item_id": "RAW-GARNETT-1",
+                    "cert_number": "",
+                    "card_title": "Kevin Garnett Noir Timberwolves Auto /75",
+                    "status": "Active",
+                }
+            )
+            dummy._save_inventory_ledger([record])
+            ocr_card = {
+                "label_text": "Noir Timberwolves Kevin Garnett 1375 single photo unknown",
+                "item_id": "UNKNOWN",
+            }
+            try:
+                with patch.object(app, "identify_cards_sync", return_value=[ocr_card]):
+                    dummy._inventory_photo_scan_worker(app.INVENTORY_PHOTOS_DIR)
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(ledger[0]["photo_paths"], [str(photo)])
+                state = json.loads(app.INVENTORY_PHOTO_STATE_PATH.read_text(encoding="utf-8"))
+                state_record = next(iter(state["photos"].values()))
+                self.assertEqual(state_record["certs"], [])
+                self.assertEqual(state_record["linked_keys"], [record["inventory_key"]])
+                self.assertEqual(state_record["status"], "linked")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+
     def test_inventory_photo_scan_does_not_title_match_when_cert_mismatches(self) -> None:
         class PhotoDummy:
             _money_value = app.CardPipelineApp._money_value

@@ -17261,19 +17261,39 @@ class CardPipelineApp(tk.Tk):
                 card.get("cert_number"),
                 card.get("cert"),
                 card.get("certification_number"),
-                card.get("item_id"),
             ]
             for value in cert_values:
                 text = str(value or "")
-                direct = scan_to_cert(text)
+                direct = CardPipelineApp._inventory_photo_plausible_cert(self, text)
                 if direct:
                     certs.add(direct)
             label_text = str(card.get("label_text") or "")
             for match in re.findall(r"\b\d{5,12}\b", label_text):
-                cert = scan_to_cert(match)
+                cert = CardPipelineApp._inventory_photo_plausible_cert(self, match)
                 if cert:
                     certs.add(cert)
         return certs
+
+    def _inventory_photo_plausible_cert(self, value: object) -> str:
+        text = str(value or "").strip()
+        if not text or text.upper() in {"UNKNOWN", "N/A", "NA", "NONE"}:
+            return ""
+        cert = scan_to_cert(text)
+        if not cert:
+            return ""
+        digits = re.sub(r"\D", "", cert)
+        if len(digits) < 6 or len(digits) > 16:
+            return ""
+        return cert
+
+    def _inventory_photo_has_explicit_cert(self, cards: list[dict]) -> bool:
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            for field in ("cert_number", "cert", "certification_number"):
+                if CardPipelineApp._inventory_photo_plausible_cert(self, card.get(field)):
+                    return True
+        return False
 
     def _inventory_photo_rescue_single_bgs_cert(self, cards: list[dict], image_b64: str, client: object | None = None) -> set[str]:
         if _verify_cert_only_sync is None or len(cards) != 1 or not isinstance(cards[0], dict):
@@ -17326,7 +17346,7 @@ class CardPipelineApp(tk.Tk):
         matched = {key for cert in certs for key in keys_by_cert.get(cert, [])}
         if matched:
             return matched
-        if certs:
+        if certs and CardPipelineApp._inventory_photo_has_explicit_cert(self, cards):
             return set()
         for card in cards:
             if not isinstance(card, dict):
@@ -17378,7 +17398,7 @@ class CardPipelineApp(tk.Tk):
                 overlap_ratio = len(overlap) / max(1, len(card_tokens))
                 if overlap_ratio >= 0.5:
                     evidence += min(5.0, len(overlap) * 1.0)
-            if filename_hint_tokens and len(filename_hint_tokens & title_tokens) >= 3:
+            if filename_hint_tokens and len(filename_hint_tokens & title_tokens) >= 2:
                 hint_ratio = len(filename_hint_tokens & title_tokens) / max(1, len(filename_hint_tokens))
                 if hint_ratio >= 0.75:
                     evidence += 1.5
@@ -17812,6 +17832,12 @@ class CardPipelineApp(tk.Tk):
                 filename_hint = self._inventory_photo_filename_hint(image)
                 match_cards = list(cards)
                 if filename_hint and not certs:
+                    match_cards = [
+                        {**card, "photo_filename_hint": filename_hint}
+                        if isinstance(card, dict)
+                        else card
+                        for card in match_cards
+                    ]
                     match_cards.append({"label_text": filename_hint, "photo_filename_hint": filename_hint})
                 matched_keys = self._inventory_photo_match_keys(certs, match_cards, keys_by_cert, records_by_key)
                 if matched_keys:
