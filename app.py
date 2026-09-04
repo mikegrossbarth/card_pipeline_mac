@@ -273,6 +273,51 @@ def save_app_settings(settings: dict[str, object]) -> None:
     atomic_write_json(SETTINGS_PATH, settings)
 
 
+def lucas_profile_key(settings: dict[str, object] | None = None, settings_path: Path | None = None) -> str:
+    return "personal" if is_personal_lucas_profile(settings, settings_path) else "team"
+
+
+def default_inventory_photo_source_folder(profile: str) -> Path | None:
+    if sys.platform != "darwin":
+        return None
+    folder_name = "LUCAS Inventory Photos Personal" if profile == "personal" else "LUCAS Inventory Photos"
+    return Path.home() / "Library" / "Mobile Documents" / "iCloud~is~workflow~my~workflows" / "Documents" / folder_name
+
+
+def inventory_photo_folder_setting(settings: dict[str, object], profile: str) -> str:
+    profile = "personal" if profile == "personal" else "team"
+    folders = settings.get("inventory_photo_folders")
+    if isinstance(folders, dict):
+        value = str(folders.get(profile) or "").strip()
+        if value:
+            return value
+
+    legacy = str(settings.get("inventory_photo_folder") or "").strip()
+    default = default_inventory_photo_source_folder(profile)
+    if legacy:
+        legacy_text = legacy.lower()
+        if profile == "personal":
+            if "personal" in legacy_text:
+                return legacy
+            if default and default.exists():
+                return str(default)
+        elif "personal" not in legacy_text:
+            return legacy
+
+    if default and default.exists():
+        return str(default)
+    return legacy
+
+
+def set_inventory_photo_folder_setting(settings: dict[str, object], profile: str, folder: Path) -> dict[str, object]:
+    folders = settings.get("inventory_photo_folders")
+    if not isinstance(folders, dict):
+        folders = {}
+    folders["personal" if profile == "personal" else "team"] = str(folder)
+    settings["inventory_photo_folders"] = folders
+    return settings
+
+
 def ensure_mobile_pin(settings: dict[str, object]) -> str:
     pin = re.sub(r"\D", "", str(settings.get("mobile_pin") or ""))
     if len(pin) >= 4:
@@ -16941,7 +16986,9 @@ class CardPipelineApp(tk.Tk):
         load_dotenv(PHOTO_APP_ROOT / ".env", override=False)
 
     def _inventory_photo_source_folder(self) -> Path:
-        configured = str(self.app_settings.get("inventory_photo_folder") or "").strip() if hasattr(self, "app_settings") else ""
+        settings = getattr(self, "app_settings", {}) if hasattr(self, "app_settings") else {}
+        profile = lucas_profile_key(settings, SETTINGS_PATH)
+        configured = inventory_photo_folder_setting(settings, profile)
         return Path(configured).expanduser() if configured else INVENTORY_PHOTOS_DIR
 
     def _inventory_photo_shared_folder(self) -> Path:
@@ -16971,7 +17018,8 @@ class CardPipelineApp(tk.Tk):
             return
         folder = Path(selected).expanduser()
         settings = load_app_settings()
-        settings["inventory_photo_folder"] = str(folder)
+        profile = lucas_profile_key(settings, SETTINGS_PATH)
+        settings = set_inventory_photo_folder_setting(settings, profile, folder)
         save_app_settings(settings)
         self.app_settings = settings
         try:

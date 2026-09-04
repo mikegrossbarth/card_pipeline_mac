@@ -14,7 +14,7 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from openpyxl import Workbook, load_workbook
 
@@ -12515,6 +12515,57 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             patch.object(app, "SETTINGS_PATH", Path("/repo/lucas_settings.michael.json")),
         ):
             self.assertFalse(InstagramDummy({"pipeline_root": "/Users/test/Drive/LUCAS_PERSONAL"})._personal_instagram_sync_enabled())
+
+    def test_inventory_photo_folder_setting_is_profile_specific(self) -> None:
+        team_folder = Path("/Users/test/iCloud/LUCAS Inventory Photos")
+        personal_folder = Path("/Users/test/iCloud/LUCAS Inventory Photos Personal")
+        settings = {
+            "inventory_photo_folder": str(team_folder),
+            "inventory_photo_folders": {
+                "personal": str(personal_folder),
+            },
+        }
+
+        self.assertEqual(app.inventory_photo_folder_setting(settings, "personal"), str(personal_folder))
+        self.assertEqual(app.inventory_photo_folder_setting(settings, "team"), str(team_folder))
+
+    def test_inventory_photo_folder_setting_ignores_team_legacy_for_personal_default(self) -> None:
+        team_folder = Path("/Users/test/iCloud/LUCAS Inventory Photos")
+        personal_folder = Path("/Users/test/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/LUCAS Inventory Photos Personal")
+        settings = {"inventory_photo_folder": str(team_folder)}
+
+        with (
+            patch.object(app.sys, "platform", "darwin"),
+            patch.object(app.Path, "home", return_value=Path("/Users/test")),
+            patch.object(Path, "exists", return_value=True),
+        ):
+            self.assertEqual(app.inventory_photo_folder_setting(settings, "personal"), str(personal_folder))
+            self.assertEqual(app.inventory_photo_folder_setting(settings, "team"), str(team_folder))
+
+    def test_choose_inventory_photo_folder_saves_current_profile_setting(self) -> None:
+        class PhotoDummy:
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_files = lambda self, folder: []
+            choose_inventory_photo_folder = app.CardPipelineApp.choose_inventory_photo_folder
+
+        with TemporaryDirectory() as tmp:
+            old_settings = app.SETTINGS_PATH
+            selected = Path(tmp) / "Personal Photos"
+            selected.mkdir()
+            app.SETTINGS_PATH = Path(tmp) / "lucas_settings.michael.json"
+            app.SETTINGS_PATH.write_text(json.dumps({"pipeline_root": "/Users/test/Drive/LUCAS_PERSONAL"}), encoding="utf-8")
+            dummy = PhotoDummy()
+            dummy.app_settings = app.load_app_settings()
+            dummy.inventory_status_var = MagicMock()
+            dummy.status_var = MagicMock()
+            try:
+                with patch.object(app.filedialog, "askdirectory", return_value=str(selected)):
+                    dummy.choose_inventory_photo_folder()
+                saved = json.loads(app.SETTINGS_PATH.read_text(encoding="utf-8"))
+                self.assertEqual(saved["inventory_photo_folders"]["personal"], str(selected))
+                self.assertNotIn("inventory_photo_folder", saved)
+            finally:
+                app.SETTINGS_PATH = old_settings
 
     def test_instagram_media_preflight_blocks_unfetchable_bridge_url(self) -> None:
         class InstagramDummy:
