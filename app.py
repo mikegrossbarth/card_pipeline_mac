@@ -6640,7 +6640,8 @@ class CardPipelineApp(tk.Tk):
         if token:
             params["access_token"] = token
         data = urllib.parse.urlencode(params).encode("utf-8")
-        url = f"https://graph.instagram.com/v21.0/{endpoint.lstrip('/')}"
+        graph_base_url = str(os.environ.get("LUCAS_INSTAGRAM_GRAPH_BASE_URL") or "https://graph.facebook.com/v26.0").strip().rstrip("/")
+        url = f"{graph_base_url}/{endpoint.lstrip('/')}"
         request: urllib.request.Request
         if method.upper() == "GET":
             request = urllib.request.Request(url + ("?" + data.decode("utf-8") if data else ""))

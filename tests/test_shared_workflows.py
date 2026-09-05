@@ -12486,6 +12486,35 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(config["public_bridge_url"], "https://hidden-background.trycloudflare.com")
 
+    def test_instagram_api_json_uses_facebook_graph_by_default_for_page_tokens(self) -> None:
+        class InstagramDummy:
+            _instagram_api_json = app.CardPipelineApp._instagram_api_json
+
+            def _instagram_env_config(self):
+                return {"access_token": "token"}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        urls: list[str] = []
+
+        def fake_urlopen(request, timeout=45):
+            urls.append(request.full_url)
+            return Response()
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(urllib.request, "urlopen", fake_urlopen):
+            result = InstagramDummy()._instagram_api_json("178/content_publishing_limit")
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(urls[0], "https://graph.facebook.com/v26.0/178/content_publishing_limit?access_token=token")
+
     def test_personal_instagram_sync_is_disabled_for_team_profile(self) -> None:
         class InstagramDummy:
             _personal_instagram_sync_enabled = app.CardPipelineApp._personal_instagram_sync_enabled
