@@ -17563,6 +17563,11 @@ class CardPipelineApp(tk.Tk):
         path = Path(text).expanduser()
         candidates: list[Path] = []
         relative_variants: list[Path] = []
+        windows_parts = [part for part in re.split(r"[\\/]+", text) if part and part not in {".", ".."}]
+        for index, part in enumerate(windows_parts):
+            if part.lower() == "inventory photos" and index + 1 < len(windows_parts):
+                relative_variants.append(Path(*windows_parts[index + 1 :]))
+                break
         if path.is_absolute():
             candidates.append(path)
             relative = self._inventory_photo_relative_path(path)
@@ -17640,6 +17645,20 @@ class CardPipelineApp(tk.Tk):
             return ""
         return self._compact_match_text(match.group(1))
 
+    def _inventory_photo_capture_side_index(self, image: dict[str, object]) -> int | None:
+        stem = Path(str(image.get("relative_path") or image.get("filename") or "")).stem.strip()
+        if not stem:
+            return None
+        match = re.match(r"(?i)^.*?(?:card|group|item)\[(\d+)\][-_ ]*\[(\d+)\]", stem)
+        if not match:
+            match = re.match(r"(?i)^.*?(?:card|group|item)[-_ ]*\d+[-_ ]+(?:photo|img|shot|p)?[-_ ]*(\d+)", stem)
+        if not match:
+            return None
+        try:
+            return int(match.group(match.lastindex or 1))
+        except ValueError:
+            return None
+
     def _inventory_photo_scan_group_nearby_unmatched(
         self,
         images: list[dict[str, object]],
@@ -17664,6 +17683,7 @@ class CardPipelineApp(tk.Tk):
             if not anchor_keys:
                 continue
             anchor_group_key = self._inventory_photo_capture_group_key(image)
+            anchor_side_index = self._inventory_photo_capture_side_index(image)
             latest_rows = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
             records_by_key = {str(record.get("inventory_key") or ""): record for record in latest_rows if str(record.get("status") or "").lower() == "active"}
             remaining = MAX_INVENTORY_PHOTOS_PER_CARD
@@ -17686,10 +17706,13 @@ class CardPipelineApp(tk.Tk):
                     continue
                 if candidate_entry.get("linked_keys") or str(candidate_entry.get("status") or "") == "linked":
                     continue
-                candidate_certs = {scan_to_cert(cert) for cert in (candidate_entry.get("certs") or []) if scan_to_cert(cert)}
-                if candidate_certs:
-                    continue
                 same_group = bool(anchor_group_key and self._inventory_photo_capture_group_key(candidate) == anchor_group_key)
+                candidate_side_index = self._inventory_photo_capture_side_index(candidate)
+                if same_group and anchor_side_index is not None and candidate_side_index is not None and candidate_side_index <= anchor_side_index:
+                    continue
+                candidate_certs = {scan_to_cert(cert) for cert in (candidate_entry.get("certs") or []) if scan_to_cert(cert)}
+                if candidate_certs and not same_group:
+                    continue
                 if not same_group:
                     continue
                 distance = abs(int(candidate.get("modified") or 0) - anchor_modified)

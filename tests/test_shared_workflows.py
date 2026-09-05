@@ -9735,6 +9735,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
             _compact_match_text = app.CardPipelineApp._compact_match_text
             _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
+            _inventory_photo_capture_side_index = app.CardPipelineApp._inventory_photo_capture_side_index
             _inventory_photo_base64 = lambda self, path: "stub"
             _inventory_photo_scan_group_nearby_unmatched = app.CardPipelineApp._inventory_photo_scan_group_nearby_unmatched
             _inventory_photo_scan_worker = app.CardPipelineApp._inventory_photo_scan_worker
@@ -9801,6 +9802,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
             _compact_match_text = app.CardPipelineApp._compact_match_text
             _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
+            _inventory_photo_capture_side_index = app.CardPipelineApp._inventory_photo_capture_side_index
             _inventory_photo_base64 = lambda self, path: "stub"
             _inventory_photo_scan_group_nearby_unmatched = app.CardPipelineApp._inventory_photo_scan_group_nearby_unmatched
             _inventory_photo_scan_worker = app.CardPipelineApp._inventory_photo_scan_worker
@@ -9865,6 +9867,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
             _compact_match_text = app.CardPipelineApp._compact_match_text
             _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
+            _inventory_photo_capture_side_index = app.CardPipelineApp._inventory_photo_capture_side_index
             _inventory_photo_base64 = lambda self, path: "stub"
             _inventory_photo_scan_group_nearby_unmatched = app.CardPipelineApp._inventory_photo_scan_group_nearby_unmatched
             _inventory_photo_scan_worker = app.CardPipelineApp._inventory_photo_scan_worker
@@ -9902,6 +9905,68 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
                 self.assertEqual(ledger[0]["photo_paths"], [str(front), str(back)])
                 self.assertNotIn(str(other), ledger[0]["photo_paths"])
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
+                app.INVENTORY_PHOTO_STATE_PATH = old_photo_state
+
+    def test_inventory_photo_scan_groups_back_photo_with_noise_cert_same_filename_group(self) -> None:
+        class PhotoDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _load_inventory_photo_state = app.CardPipelineApp._load_inventory_photo_state
+            _save_inventory_photo_state = app.CardPipelineApp._save_inventory_photo_state
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_file_hash = app.CardPipelineApp._inventory_photo_file_hash
+            _inventory_photo_files = app.CardPipelineApp._inventory_photo_files
+            _inventory_photo_certs_from_cards = app.CardPipelineApp._inventory_photo_certs_from_cards
+            _active_inventory_keys_by_cert = app.CardPipelineApp._active_inventory_keys_by_cert
+            _link_inventory_photo_to_keys = app.CardPipelineApp._link_inventory_photo_to_keys
+            _inventory_photo_match_keys = app.CardPipelineApp._inventory_photo_match_keys
+            _inventory_photo_best_title_match = app.CardPipelineApp._inventory_photo_best_title_match
+            _inventory_photo_card_match_text = app.CardPipelineApp._inventory_photo_card_match_text
+            _match_text_tokens = app.CardPipelineApp._match_text_tokens
+            _inventory_photo_filename_hint = app.CardPipelineApp._inventory_photo_filename_hint
+            _compact_match_text = app.CardPipelineApp._compact_match_text
+            _inventory_photo_capture_group_key = app.CardPipelineApp._inventory_photo_capture_group_key
+            _inventory_photo_capture_side_index = app.CardPipelineApp._inventory_photo_capture_side_index
+            _inventory_photo_base64 = lambda self, path: "stub"
+            _inventory_photo_scan_group_nearby_unmatched = app.CardPipelineApp._inventory_photo_scan_group_nearby_unmatched
+            _inventory_photo_scan_worker = app.CardPipelineApp._inventory_photo_scan_worker
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            old_photo_state = app.INVENTORY_PHOTO_STATE_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTO_STATE_PATH = Path(tmp) / "inventory_photo_state.json"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            front = app.INVENTORY_PHOTOS_DIR / "[20260905-1017]-Card[21]-[1]-[].jpg"
+            back = app.INVENTORY_PHOTOS_DIR / "[20260905-1017]-Card[21]-[2]-[].jpg"
+            front.write_bytes(b"front image")
+            back.write_bytes(b"back image")
+            now = time.time()
+            os.utime(front, (now, now))
+            os.utime(back, (now + 1, now + 1))
+            dummy = PhotoDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            dummy.app_settings = {}
+            dummy.inventory_photo_client = object()
+            dummy.events = queue.Queue()
+            record = dummy._normalize_inventory_record({"assigned_person": "Mikey", "cert_number": "0015127086", "card_title": "2020 Select Joe Burrow BGS 8.5", "status": "Active"})
+            dummy._save_inventory_ledger([record])
+            try:
+                with patch.object(app, "identify_cards_sync", side_effect=[[{"cert_number": "0015127086"}], [{"label_text": "Random back serial 6295759"}]]):
+                    dummy._inventory_photo_scan_worker(app.INVENTORY_PHOTOS_DIR)
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(ledger[0]["photo_paths"], [str(front), str(back)])
             finally:
                 app.CARD_PIPELINE_DIR = old_pipeline
                 app.INVENTORY_LEDGER_PATH = old_inventory
@@ -10550,6 +10615,34 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.DELETED_ARCHIVE_DIR = old_deleted_archive
                 app.DELETED_INVENTORY_PHOTOS_DIR = old_deleted_photos
+
+    def test_inventory_photo_path_candidates_resolve_windows_inventory_photo_path_on_mac(self) -> None:
+        class PhotoDummy:
+            _inventory_photo_source_folder = app.CardPipelineApp._inventory_photo_source_folder
+            _inventory_photo_shared_folder = app.CardPipelineApp._inventory_photo_shared_folder
+            _inventory_photo_relative_path = app.CardPipelineApp._inventory_photo_relative_path
+            _inventory_photo_windows_safe_relative = app.CardPipelineApp._inventory_photo_windows_safe_relative
+            _inventory_photo_path_candidates = app.CardPipelineApp._inventory_photo_path_candidates
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_photo_dir = app.INVENTORY_PHOTOS_DIR
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.INVENTORY_PHOTOS_DIR = Path(tmp) / "INVENTORY PHOTOS"
+            app.INVENTORY_PHOTOS_DIR.mkdir(parents=True)
+            photo = app.INVENTORY_PHOTOS_DIR / "[20260905-1017]-Card[21]-[2]-[].jpg"
+            photo.write_bytes(b"back")
+            try:
+                dummy = PhotoDummy()
+                dummy.app_settings = {}
+                candidates = dummy._inventory_photo_path_candidates(
+                    r"G:\My Drive\LUCAS_PERSONAL\INVENTORY PHOTOS\[20260905-1017]-Card[21]-[2]-[].jpg"
+                )
+                self.assertIn(photo, candidates)
+                self.assertTrue(any(candidate.exists() for candidate in candidates))
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.INVENTORY_PHOTOS_DIR = old_photo_dir
 
     def test_inventory_photo_scan_worker_uses_prepared_candidate_paths(self) -> None:
         class PhotoDummy:
