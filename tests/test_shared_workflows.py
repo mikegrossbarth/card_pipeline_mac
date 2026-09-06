@@ -6724,6 +6724,60 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_add_inventory_records_allows_duplicate_raw_title_with_different_item_id(self) -> None:
+        class InventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _inventory_add_protection_reason = app.CardPipelineApp._inventory_add_protection_reason
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _load_inventory_deleted_tombstones = lambda self: []
+            _load_profit_ledger = lambda self: []
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+
+            def _append_activity(self, action, summary, details=None):
+                raise AssertionError(f"unexpected blocked activity: {details}")
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            dummy = InventoryDummy()
+            title = "2024 Panini Spectra Peyton Manning Spectral Auto /25"
+            try:
+                added = dummy.add_inventory_records(
+                    [
+                        {
+                            "item_id": "RAW-MIKEY-20260902-112209562350",
+                            "assigned_person": "Mikey",
+                            "card_title": title,
+                            "source_sheet": "chris_weaver_9_2_26.xlsx",
+                            "purchase_price": 185,
+                            "status": "Active",
+                        },
+                        {
+                            "item_id": "RAW-MIKEY-20260902-112209562351",
+                            "assigned_person": "Mikey",
+                            "card_title": title,
+                            "source_sheet": "chris_weaver_9_2_26.xlsx",
+                            "purchase_price": 185,
+                            "status": "Active",
+                        },
+                    ]
+                )
+                ledger = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(added, 2)
+                self.assertEqual(len(ledger), 2)
+                self.assertEqual(
+                    [record["item_id"] for record in ledger],
+                    ["RAW-MIKEY-20260902-112209562350", "RAW-MIKEY-20260902-112209562351"],
+                )
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_broad_received_inventory_sync_is_disabled(self) -> None:
         class InventoryDummy:
             _sync_received_inventory_to_ledger = app.CardPipelineApp._sync_received_inventory_to_ledger
@@ -8151,7 +8205,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.WORKING_SHEETS_DIR = old_working
                 app.COMPANY_SHEETS_DIR = old_company
 
-    def test_received_inventory_reconcile_skips_raw_same_source_title_with_different_item_id(self) -> None:
+    def test_received_inventory_reconcile_includes_raw_same_source_title_with_different_item_id(self) -> None:
         class ReconcileDummy:
             _money_value = app.CardPipelineApp._money_value
             _inventory_record_key = app.CardPipelineApp._inventory_record_key
@@ -8210,7 +8264,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 )
             ]
             try:
-                self.assertEqual(dummy._received_inventory_candidate_records(), [])
+                records = dummy._received_inventory_candidate_records()
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0]["item_id"], "RAW-MIKEY-20260710-0015")
+                self.assertEqual(records[0]["card_title"], title)
             finally:
                 app.RECEIVED_SHEETS_DIR = old_received
                 app.INCOMING_SHEETS_DIR = old_incoming

@@ -2777,7 +2777,7 @@ class CardPipelineApp(tk.Tk):
             if item_id:
                 keys.add(("", f"item:{item_id}"))
             title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
-            if source_sheet and not cert and title_identity:
+            if source_sheet and not cert and not item_id and title_identity:
                 keys.add((source_sheet, f"title:{title_identity}"))
         return keys
 
@@ -2947,6 +2947,7 @@ class CardPipelineApp(tk.Tk):
         source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
         cert = scan_to_cert(record.get("cert_number"))
         item_id = str(record.get("item_id") or "").strip().lower()
+        generated_item_id = bool(record.get("_generated_item_id_for_add"))
         title_identity = self._received_inventory_title_identity(record.get("card_title"))
         purchase_price = self._money_value(record.get("purchase_price"))
 
@@ -2962,6 +2963,12 @@ class CardPipelineApp(tk.Tk):
             existing_cert = scan_to_cert(existing.get("cert_number"))
             existing_item_id = str(existing.get("item_id") or "").strip().lower()
             if not cert and not existing_cert:
+                if generated_item_id:
+                    return "matching raw title already exists in the same source sheet"
+                if item_id or existing_item_id:
+                    if item_id and existing_item_id == item_id:
+                        return "matching raw item id already exists in the same source sheet"
+                    continue
                 return "matching raw title already exists in the same source sheet"
             if (cert and existing_item_id) or (item_id and existing_cert):
                 return "possible raw/cert duplicate in the same source sheet"
@@ -3350,6 +3357,7 @@ class CardPipelineApp(tk.Tk):
                 record = dict(record)
                 record["item_type"] = "Raw"
                 record["item_id"] = self._next_raw_item_id([*ledger, *by_key.values()])
+                record["_generated_item_id_for_add"] = True
                 record.pop("inventory_key", None)
             normalized = self._normalize_inventory_record(record)
             if not allow_sold_restore:
@@ -3371,6 +3379,7 @@ class CardPipelineApp(tk.Tk):
             key = str(normalized.get("inventory_key") or "")
             if not key:
                 continue
+            normalized.pop("_generated_item_id_for_add", None)
             if key not in by_key:
                 ledger.append(normalized)
                 by_key[key] = normalized
@@ -5003,7 +5012,7 @@ class CardPipelineApp(tk.Tk):
                 continue
             card_title = str(row.get("card_title") or "")
             title_identity = CardPipelineApp._received_inventory_title_identity(self, card_title)
-            if not cert and title_identity and (path.name.lower(), f"title:{title_identity}") in accounted_keys:
+            if not cert and not item_id and title_identity and (path.name.lower(), f"title:{title_identity}") in accounted_keys:
                 continue
             sport = CardPipelineApp._inventory_sport_from_value(self, row.get("sport") or row.get("category"), card_title)
             item_type = "Graded" if cert else "Raw"
