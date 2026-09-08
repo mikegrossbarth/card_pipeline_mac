@@ -9170,6 +9170,25 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy.home_sheet_search_var = Var("james")
         self.assertEqual(dummy._filtered_home_sheet_names("Incoming"), ["james.xlsx"])
 
+    def test_home_sheet_search_refreshes_metrics_when_cleared(self) -> None:
+        class HomeDummy:
+            _on_home_sheet_search_changed = app.CardPipelineApp._on_home_sheet_search_changed
+
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def _refresh_home_sheet_list(self) -> None:
+                self.calls.append("list")
+
+            def _refresh_home_metrics(self) -> None:
+                self.calls.append("metrics")
+
+        dummy = HomeDummy()
+
+        dummy._on_home_sheet_search_changed()
+
+        self.assertEqual(dummy.calls, ["list", "metrics"])
+
     def test_create_seller_terms_apply_and_restore_purchase_prices(self) -> None:
         class Var:
             def __init__(self, value=""):

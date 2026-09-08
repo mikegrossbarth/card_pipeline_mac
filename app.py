@@ -1956,7 +1956,7 @@ class CardPipelineApp(tk.Tk):
         search_row.pack(fill=tk.X, pady=(0, 8))
         ttk.Label(search_row, text="Search", style="Muted.TLabel").pack(side=tk.LEFT)
         ttk.Entry(search_row, textvariable=self.home_sheet_search_var, width=18).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
-        self.home_sheet_search_var.trace_add("write", lambda *_args: self._refresh_home_sheet_list())
+        self.home_sheet_search_var.trace_add("write", lambda *_args: self._on_home_sheet_search_changed())
         self.home_sheet_list = tk.Listbox(
             sheet_panel,
             width=1,
@@ -13166,6 +13166,10 @@ class CardPipelineApp(tk.Tk):
         self.refresh_payouts_tab()
         self.refresh_inventory_tab()
         self.refresh_profit_tab()
+
+    def _on_home_sheet_search_changed(self) -> None:
+        self._refresh_home_sheet_list()
+        self._refresh_home_metrics()
 
     def _home_person_filter(self) -> str:
         return self.home_person_var.get().strip().lower() if hasattr(self, "home_person_var") else ""
