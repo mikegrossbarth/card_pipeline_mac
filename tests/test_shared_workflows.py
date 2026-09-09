@@ -13506,6 +13506,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                     {"inventory_key": "good-key", "status": "Active", "card_title": "Good Card", "item_id": "RAW-GOOD"},
                 ]
 
+            def _instagram_media_preflight_errors(self, items):
+                return []
+
             def _instagram_api_json(self, endpoint, params=None, method="GET"):
                 if method == "POST" and params and params.get("caption") == "Bad Card":
                     raise RuntimeError("image fetch failed")
@@ -13552,6 +13555,158 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn("posted 1", dummy.activities[-1][1])
         self.assertIn("errors 1", dummy.activities[-1][1])
 
+    def test_instagram_inventory_sync_replans_after_import_to_avoid_duplicate_posts(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.events = queue.Queue()
+                self.activities = []
+                self.post_calls = []
+
+            def _instagram_import_existing_posts(self, limit=500, use_ocr=False):
+                self.state["posts"]["flag-key"] = {
+                    "status": "posted",
+                    "media_id": "179-existing",
+                    "caption": "Cooper Flagg",
+                    "inventory_identity": "cert:163065873",
+                }
+                return {"imported": 1, "already_known": 0, "duplicates_found": 0}
+
+            def _instagram_inventory_plan(self):
+                return {"to_post": [], "to_remove": [], "missing_public_urls": []}
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "flag-key",
+                        "status": "Active",
+                        "card_title": "Cooper Flagg",
+                        "cert_number": "163065873",
+                    }
+                ]
+
+            def _instagram_media_preflight_errors(self, items):
+                return []
+
+            def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                self.post_calls.append((endpoint, params, method))
+                return {"id": "should-not-post"}
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+        dummy = InstagramDummy()
+        dummy._instagram_inventory_sync_worker(
+            {
+                "config": {"user_id": "178"},
+                "replan_after_import": True,
+                "to_post": [
+                    {
+                        "inventory_key": "flag-key",
+                        "record": {
+                            "inventory_key": "flag-key",
+                            "status": "Active",
+                            "card_title": "Cooper Flagg",
+                            "cert_number": "163065873",
+                        },
+                        "caption": "Cooper Flagg",
+                        "photo_url": "https://example.test/flag.jpg",
+                    }
+                ],
+                "to_remove": [],
+            }
+        )
+
+        self.assertEqual(dummy.post_calls, [])
+        self.assertEqual(dummy.state["posts"]["flag-key"]["media_id"], "179-existing")
+        self.assertIn("posted 0", dummy.activities[-1][1])
+
+    def test_instagram_inventory_sync_skips_duplicate_items_inside_same_plan(self) -> None:
+        class InstagramDummy:
+            _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
+            _instagram_inventory_identity = app.CardPipelineApp._instagram_inventory_identity
+            _instagram_post_entry_identity = app.CardPipelineApp._instagram_post_entry_identity
+            _instagram_active_identity_map = app.CardPipelineApp._instagram_active_identity_map
+
+            def __init__(self):
+                self.state = {"version": 1, "posts": {}}
+                self.events = queue.Queue()
+                self.activities = []
+                self.create_calls = 0
+
+            def _instagram_import_existing_posts(self, limit=500, use_ocr=False):
+                return {"imported": 0, "already_known": 0, "duplicates_found": 0}
+
+            def _load_instagram_inventory_state(self):
+                return self.state
+
+            def _save_instagram_inventory_state(self, state):
+                self.state = state
+
+            def _instagram_inventory_active_records(self):
+                return [
+                    {
+                        "inventory_key": "flag-key",
+                        "status": "Active",
+                        "card_title": "Cooper Flagg",
+                        "cert_number": "163065873",
+                    }
+                ]
+
+            def _instagram_media_preflight_errors(self, items):
+                return []
+
+            def _instagram_api_json(self, endpoint, params=None, method="GET"):
+                if method == "POST":
+                    self.create_calls += 1
+                    return {"id": f"creation-{self.create_calls}"}
+                return {"permalink": "https://instagram.test/p/flag"}
+
+            def _instagram_publish_media_with_retry(self, user_id, creation_id, caption):
+                return {"id": "179-new"}
+
+            def _instagram_inventory_photo_id(self, path):
+                return "photo-flag"
+
+            def _append_activity(self, action, summary, details):
+                self.activities.append((action, summary, details))
+
+        row = {
+            "inventory_key": "flag-key",
+            "record": {
+                "inventory_key": "flag-key",
+                "status": "Active",
+                "card_title": "Cooper Flagg",
+                "cert_number": "163065873",
+            },
+            "caption": "Cooper Flagg",
+            "photo_url": "https://example.test/flag.jpg",
+            "photo_path": "/tmp/flag.jpg",
+        }
+        dummy = InstagramDummy()
+        dummy._instagram_inventory_sync_worker(
+            {
+                "config": {"user_id": "178"},
+                "to_post": [dict(row), dict(row)],
+                "to_remove": [],
+            }
+        )
+
+        self.assertEqual(dummy.create_calls, 1)
+        self.assertEqual(dummy.state["posts"]["flag-key"]["media_id"], "179-new")
+        self.assertIn("posted 1", dummy.activities[-1][1])
+
     def test_instagram_inventory_sync_does_not_delete_active_identity_from_stale_remove_plan(self) -> None:
         class InstagramDummy:
             _instagram_inventory_sync_worker = app.CardPipelineApp._instagram_inventory_sync_worker
@@ -13585,6 +13740,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
             def _instagram_inventory_active_records(self):
                 return [{"inventory_key": "new-key", "status": "Active", "card_title": "Active Card", "cert_number": "12345"}]
+
+            def _instagram_media_preflight_errors(self, items):
+                return []
 
             def _instagram_api_json(self, endpoint, params=None, method="GET"):
                 self.deleted.append((endpoint, method))

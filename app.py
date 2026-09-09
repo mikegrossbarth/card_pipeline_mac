@@ -5644,7 +5644,7 @@ class CardPipelineApp(tk.Tk):
             self._mark_instagram_auto_sync_completed(today, summary)
             self.events.put(("status", "Instagram daily sync checked: Meta publishing quota is full." if meta_remaining == 0 else "Instagram daily sync checked: no inventory changes to post or remove."))
             return False
-        auto_plan = {**plan, "to_post": ready_posts, "to_remove": removable, "missing_public_urls": []}
+        auto_plan = {**plan, "to_post": ready_posts, "to_remove": removable, "missing_public_urls": [], "replan_after_import": True}
         self.instagram_auto_sync_running = True
         worker = threading.Thread(target=self._instagram_auto_sync_worker, args=(auto_plan, today), daemon=True)
         worker.start()
@@ -5675,6 +5675,7 @@ class CardPipelineApp(tk.Tk):
             **plan,
             "to_post": limited_posts,
             "missing_public_urls": [],
+            "replan_after_import": True,
         }
         return limited_plan, len(ready_posts), limit
 
@@ -6887,6 +6888,12 @@ class CardPipelineApp(tk.Tk):
 
     def _instagram_inventory_sync_worker(self, plan: dict[str, object]) -> None:
         started = time.perf_counter()
+        original_post_limit = len([item for item in plan.get("to_post") or [] if isinstance(item, dict)])
+        original_post_keys = {
+            str(item.get("inventory_key") or "").strip()
+            for item in plan.get("to_post") or []
+            if isinstance(item, dict) and str(item.get("inventory_key") or "").strip()
+        }
         try:
             import_existing = getattr(self, "_instagram_import_existing_posts", None)
             if callable(import_existing):
@@ -6897,6 +6904,28 @@ class CardPipelineApp(tk.Tk):
                 events.put(("status", f"Instagram pre-sync duplicate scan skipped: {str(error)[:120]}"))
         state = self._load_instagram_inventory_state()
         posts = state.setdefault("posts", {})
+        if plan.get("replan_after_import"):
+            try:
+                fresh_plan = self._instagram_inventory_plan()
+                fresh_posts = [
+                    item
+                    for item in fresh_plan.get("to_post") or []
+                    if isinstance(item, dict)
+                    and str(item.get("inventory_key") or "").strip()
+                    and (not original_post_keys or str(item.get("inventory_key") or "").strip() in original_post_keys)
+                ]
+                plan = {
+                    **plan,
+                    "to_post": fresh_posts[:original_post_limit],
+                    "to_remove": fresh_plan.get("to_remove") or plan.get("to_remove") or [],
+                    "missing_public_urls": fresh_plan.get("missing_public_urls") or [],
+                }
+                state = self._load_instagram_inventory_state()
+                posts = state.setdefault("posts", {})
+            except Exception as error:
+                events = getattr(self, "events", None)
+                if events is not None:
+                    events.put(("status", f"Instagram post plan refresh skipped: {str(error)[:120]}"))
         current_active_records = self._instagram_inventory_active_records()
         active_by_key = {str(record.get("inventory_key") or ""): record for record in current_active_records if str(record.get("inventory_key") or "")}
         active_by_identity = self._instagram_active_identity_map(current_active_records)
@@ -6904,6 +6933,9 @@ class CardPipelineApp(tk.Tk):
         removed = 0
         queued_removals = 0
         errors: list[str] = []
+        seen_post_keys: set[str] = set()
+        seen_post_identities: set[str] = set()
+        seen_post_photo_ids: set[str] = set()
         post_preflight_errors = self._instagram_media_preflight_errors(list(plan.get("to_post") or []))
         if post_preflight_errors:
             errors.extend(post_preflight_errors)
@@ -6929,6 +6961,8 @@ class CardPipelineApp(tk.Tk):
                 if not current_record:
                     continue
                 identity = self._instagram_inventory_identity(current_record)
+                if key in seen_post_keys or (identity and identity in seen_post_identities):
+                    continue
                 if identity and self._instagram_inventory_identity(record) and identity != self._instagram_inventory_identity(record):
                     continue
                 caption = str(current_record.get("card_title") or caption).strip()
@@ -6958,6 +6992,9 @@ class CardPipelineApp(tk.Tk):
                         self._instagram_inventory_photo_id(Path(str(path or "")))
                         for path in photo_paths[: len(photo_urls)]
                     ]
+                    primary_photo_id = photo_ids[0] if photo_ids else self._instagram_inventory_photo_id(Path(str(item.get("photo_path") or "")))
+                    if primary_photo_id and primary_photo_id in seen_post_photo_ids:
+                        continue
                     child_creation_ids: list[str] = []
                     media_type = "IMAGE"
                     if len(photo_urls) > 1:
@@ -7004,7 +7041,7 @@ class CardPipelineApp(tk.Tk):
                         "card_title": str(current_record.get("card_title") or "").strip(),
                         "cert_number": scan_to_cert(current_record.get("cert_number")) if isinstance(current_record, dict) else "",
                         "item_id": str(current_record.get("item_id") or "").strip() if isinstance(current_record, dict) else "",
-                        "photo_id": photo_ids[0] if photo_ids else self._instagram_inventory_photo_id(Path(str(item.get("photo_path") or ""))),
+                        "photo_id": primary_photo_id,
                         "photo_ids": photo_ids,
                         "photo_url": photo_urls[0],
                         "photo_urls": photo_urls,
@@ -7013,6 +7050,11 @@ class CardPipelineApp(tk.Tk):
                         "permalink": permalink,
                         "posted_at": datetime.now().isoformat(timespec="seconds"),
                     }
+                    seen_post_keys.add(key)
+                    if identity:
+                        seen_post_identities.add(identity)
+                    if primary_photo_id:
+                        seen_post_photo_ids.add(primary_photo_id)
                     posted += 1
                 except Exception as error:
                     error_text = str(error)
