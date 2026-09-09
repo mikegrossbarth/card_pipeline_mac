@@ -957,7 +957,7 @@ class CardPipelineApp(tk.Tk):
         self.input_mode = tk.StringVar(value="Barcode Scanner")
         self.review_mode = tk.StringVar(value="Automatic Receive")
         self.review_input_mode = tk.StringVar(value="Barcode Scanner")
-        self.comp_strategy_label = tk.StringVar(value="Average last 5")
+        self.comp_strategy_label = tk.StringVar(value="Date weighted")
         self.comp_low_outlier_pct_var = tk.StringVar(value="Off")
         self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
         self.comp_source_label = tk.StringVar(value=COMP_SOURCE_CARD_LADDER)
@@ -10365,7 +10365,7 @@ class CardPipelineApp(tk.Tk):
         cl_value_var = tk.BooleanVar(value=True)
         cl_comps_var = tk.BooleanVar(value=True)
         cy_var = tk.BooleanVar(value=False)
-        strategy_var = tk.StringVar(value=self.comp_strategy_label.get() or "Average last 5")
+        strategy_var = tk.StringVar(value=self.comp_strategy_label.get() or "Date weighted")
         scope_var = tk.StringVar(value=COMP_SCOPE_EMPTY)
 
         popup = tk.Toplevel(self)
@@ -10475,7 +10475,7 @@ class CardPipelineApp(tk.Tk):
             "total": len(temp_rows),
             "changed": 0,
         }
-        strategy_label = str(features.get("strategy_label") or self.comp_strategy_label.get() or "Average last 5")
+        strategy_label = str(features.get("strategy_label") or self.comp_strategy_label.get() or "Date weighted")
         self.comp_strategy_label.set(strategy_label)
         self.state.set_comp_strategy(COMP_STRATEGY_DISPLAY.get(strategy_label, COMP_STRATEGY_AVERAGE), self._comp_low_outlier_pct())
         self.state.set_rows(temp_rows)
