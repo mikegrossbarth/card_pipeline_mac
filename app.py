@@ -15354,7 +15354,8 @@ class CardPipelineApp(tk.Tk):
             for field in ("purchase_total", "estimated_payout_total", "estimated_profit", "realized_profit_total", "expense_total", "net_profit_total"):
                 batch[field] = round(float(batch.get(field) or 0.0) + float(item.get(field) or 0.0), 2)
             batch["paid_amount"] = round(
-                float(batch.get("paid_amount") or 0.0) + float(item.get("paid_amount") or item.get("payout_total") or 0.0),
+                float(batch.get("paid_amount") or 0.0)
+                + float(item.get("paid_amount") or item.get("payout_total") or item.get("payout_balance") or 0.0),
                 2,
             )
             batch["payout_balance"] = batch["paid_amount"]
@@ -15397,6 +15398,10 @@ class CardPipelineApp(tk.Tk):
             )
             batch["paid_amount"] = round(float(batch.get("paid_amount") or 0.0) + amount, 2)
             batch["payout_balance"] = batch["paid_amount"]
+        for batch in paid_batches.values():
+            paid_amount = float(batch.get("paid_amount") or batch.get("payout_balance") or 0.0)
+            batch["name"] = f"Payment {format_money(paid_amount)}"
+            batch["payout_basis"] = "Paid payout batch"
         return [
             *sorted(paid_batches.values(), key=lambda item: str(item.get("paid_at") or item.get("name") or ""), reverse=True),
             *sorted(open_items, key=lambda item: (str(item.get("stage") or ""), str(item.get("name") or "").lower())),
@@ -15451,7 +15456,7 @@ class CardPipelineApp(tk.Tk):
                 "cards": "Cards",
                 "expenses": "Expenses",
                 "net_profit": "Net Profit",
-                "balance": "Balance",
+                "balance": "Amount / Balance",
                 "basis": "Basis",
                 "paid_at": "Paid At",
             },
@@ -15570,10 +15575,11 @@ class CardPipelineApp(tk.Tk):
         popup: tk.Toplevel | None = None,
     ) -> None:
         payment = self._parse_money_text(amount_text)
-        if payment is None or payment <= 0:
+        total_balance = round(float(total_balance), 2)
+        if payment is None or payment < 0 or (payment == 0 and abs(total_balance) >= 0.005):
             messagebox.showerror("Invalid payment", "Enter a payment amount greater than $0.")
             return
-        payment = min(round(float(payment), 2), round(float(total_balance), 2))
+        payment = min(round(float(payment), 2), max(0.0, total_balance))
         remaining = payment
         paid_at = datetime.now().isoformat(timespec="seconds")
         for item in matching_items:
@@ -15598,11 +15604,45 @@ class CardPipelineApp(tk.Tk):
             marker["tracking_number"] = str(marker.get("tracking_number") or "")
             self.home_sheet_markers[key] = marker
             remaining = round(remaining - applied, 2)
+        closed_offsets = 0
+        if abs(round(total_balance - payment, 2)) < 0.005:
+            closed_offsets = self._mark_zero_balance_payout_offsets_paid(person, matching_items, paid_at)
         self._save_sheet_markers()
         self.refresh_home()
         if popup is not None:
             popup.destroy()
-        self.status_var.set(f"Recorded {format_money(payment)} payment for {person}; remaining open balance reduced.")
+        suffix = f" Closed {closed_offsets} offset row(s)." if closed_offsets else ""
+        self.status_var.set(f"Recorded {format_money(payment)} payment for {person}; remaining open balance reduced.{suffix}")
+
+    def _mark_zero_balance_payout_offsets_paid(self, person: str, matching_items: list[dict[str, object]], paid_at: str) -> int:
+        open_items: list[dict[str, object]] = []
+        open_total = 0.0
+        for item in matching_items:
+            if item.get("paid") or not item.get("payable", True):
+                continue
+            adjusted = self._apply_payout_marker_balance_state(item)
+            open_balance = round(float(adjusted.get("payout_balance") or 0.0), 2)
+            if abs(open_balance) >= 0.005:
+                open_items.append(item)
+                open_total = round(open_total + open_balance, 2)
+        if not open_items or abs(open_total) >= 0.005:
+            return 0
+        closed = 0
+        for item in open_items:
+            key = str(item["key"])
+            kind, _name = self._split_home_sheet_key(key)
+            marker = dict(self.home_sheet_markers.get(key, {}))
+            summary = self.home_sheet_summaries.get(key, {})
+            marker["assigned_person"] = str(item.get("person") or person or "").strip()
+            marker["paid"] = True
+            marker["paid_amount"] = round(float(item.get("payout_total") or item.get("payout_balance") or 0.0), 2)
+            marker["paid_at"] = paid_at
+            marker["all_received"] = bool(marker.get("all_received") or summary.get("all_received") or kind == "Received")
+            marker["tracking_number"] = str(marker.get("tracking_number") or "")
+            marker["closed_by_zero_balance_offset"] = True
+            self.home_sheet_markers[key] = marker
+            closed += 1
+        return closed
 
     def _apply_payout_person_paid(
         self,

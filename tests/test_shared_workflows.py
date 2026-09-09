@@ -4729,9 +4729,10 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         items = Dummy()._payout_history_items_for_person("Kevin Hambone")
 
-        self.assertEqual([item["name"] for item in items], ["Total paid at 2026-07-14T10:00:00", "Open.xlsx"])
+        self.assertEqual([item["name"] for item in items], ["Payment $50.00", "Open.xlsx"])
         self.assertEqual(items[0]["row_count"], 3)
         self.assertEqual(items[0]["payout_balance"], 50.0)
+        self.assertEqual(items[0]["payout_basis"], "Paid payout batch")
         self.assertEqual(sum(float(item["payout_balance"]) for item in items), 60.0)
 
     def test_payout_history_includes_manual_paid_adjustment_without_profit_row(self) -> None:
@@ -4764,9 +4765,66 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         items = Dummy()._payout_history_items_for_person("Tyler Hamlin")
 
-        self.assertEqual(items[0]["name"], "Total paid at 2026-08-15T19:24:32")
+        self.assertEqual(items[0]["name"], "Payment $3,000.00")
         self.assertEqual(items[0]["payout_balance"], 3000.0)
         self.assertEqual(items[1]["name"], "Open.xlsx")
+
+    def test_payout_payment_closes_zero_balance_offset_rows(self) -> None:
+        class Status:
+            value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class Dummy:
+            _apply_payout_person_payment = app.CardPipelineApp._apply_payout_person_payment
+            _mark_zero_balance_payout_offsets_paid = app.CardPipelineApp._mark_zero_balance_payout_offsets_paid
+            _apply_payout_marker_balance_state = app.CardPipelineApp._apply_payout_marker_balance_state
+            _money_value = app.CardPipelineApp._money_value
+            _parse_money_text = app.CardPipelineApp._parse_money_text
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+
+            def _save_sheet_markers(self):
+                self.saved = True
+
+            def refresh_home(self):
+                self.refreshed = True
+
+        dummy = Dummy()
+        dummy.home_sheet_markers = {}
+        dummy.home_sheet_summaries = {}
+        dummy.status_var = Status()
+        dummy.saved = False
+        dummy.refreshed = False
+        matching_items = [
+            {
+                "key": "SoldCard|Tyler Hamlin|positive",
+                "person": "Tyler Hamlin",
+                "paid": False,
+                "payable": True,
+                "payout_balance": 26.5,
+                "payout_total": 26.5,
+            },
+            {
+                "key": "SoldCard|Tyler Hamlin|negative",
+                "person": "Tyler Hamlin",
+                "paid": False,
+                "payable": True,
+                "payout_balance": -26.5,
+                "payout_total": -26.5,
+            },
+        ]
+
+        dummy._apply_payout_person_payment("Tyler Hamlin", matching_items, "$0.00", 0.0)
+
+        self.assertTrue(dummy.saved)
+        self.assertTrue(dummy.refreshed)
+        self.assertEqual(len(dummy.home_sheet_markers), 2)
+        for marker in dummy.home_sheet_markers.values():
+            self.assertTrue(marker["paid"])
+            self.assertTrue(marker["closed_by_zero_balance_offset"])
+            self.assertEqual(marker["assigned_person"], "Tyler Hamlin")
+        self.assertIn("Closed 2 offset row(s).", dummy.status_var.value)
 
     def test_save_payout_marker_blocks_pending_seller_paid(self) -> None:
         class PayoutDummy:
