@@ -1,6 +1,6 @@
 # LUCAS Instagram Inventory Sync Runbook
 
-Last verified: 2026-09-07
+Last verified: 2026-09-09
 
 This file is the source of truth for LUCAS Instagram Inventory Sync. Do not change these IDs unless a fresh Graph API test proves the replacement can read media and publishing quota.
 
@@ -34,7 +34,7 @@ The token must allow these Graph API calls:
 - `GET /17841465322546974/media?fields=id,permalink&limit=1`
 - `GET /17841465322546974/content_publishing_limit`
 
-On 2026-09-07, the current fresh Page token passed all three calls with Instagram account ID `17841465322546974`.
+On 2026-09-09, the current Page token passed all three calls with Instagram account ID `17841465322546974`, and Meta `debug_token` reported `type=PAGE`, `is_valid=True`, `profile_id=1090039820868692`, and `expires_at` empty/unknown.
 
 ## Required Permissions
 
@@ -106,6 +106,19 @@ must return the Mikeys Cards Page with tasks including:
    python3 scripts/validate_instagram_env.py
    ```
 
+   Do not call the renewal done unless the validator prints:
+
+   ```text
+   token type: PAGE
+   token valid: True
+   token profile/page id: 1090039820868692
+   token expires: never/unknown
+   profile: OK
+   media: OK
+   quota: OK
+   page link: OK
+   ```
+
 10. Restart LUCAS / backend so `.env` reloads.
 
 ## Drift Check
@@ -118,3 +131,14 @@ If Instagram Inventory Sync suddenly fails after working:
 4. Only regenerate tokens if the validator says the token is expired/invalid or media/quota access fails for the known-good ID.
 
 Do not use a plain user token directly in `LUCAS_INSTAGRAM_ACCESS_TOKEN`. It may validate as a token but fail posting with Page/Instagram permission errors.
+
+## 2026-09-09 Failure Note
+
+The 2026-09-07 token in `.env` was the correct Page token shape, but it was still short-lived. Meta `debug_token` showed:
+
+- `type=PAGE`
+- `profile_id=1090039820868692`
+- `is_valid=False`
+- expired Monday, 2026-09-07 22:00 PDT
+
+The backup file `.env.backup-before-page-token-update-20260907-final` held the longer-lived user token. Using that user token to run `/me/accounts?fields=name,id,access_token,tasks` produced a Page token that Meta reported as valid with no explicit expiry. That Page token replaced the expired `.env` token on 2026-09-09.
