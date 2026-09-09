@@ -24,6 +24,8 @@ LUCAS_INSTAGRAM_ACCESS_TOKEN=<Mikeys Cards PAGE access token>
 
 Important: despite the env variable name, `LUCAS_INSTAGRAM_ACCESS_TOKEN` must be the Mikeys Cards Page access token, not the personal user token.
 
+Important: do not trust a token just because posting, media lookup, or quota lookup works once. That only proves the token works right now. The renewal is only complete after `scripts/validate_instagram_env.py` confirms the Page token has no short expiry.
+
 ## Required Token Shape
 
 The token must be a Page access token for Page ID `1090039820868692`, generated from a user token that can manage the Page.
@@ -142,3 +144,5 @@ The 2026-09-07 token in `.env` was the correct Page token shape, but it was stil
 - expired Monday, 2026-09-07 22:00 PDT
 
 The backup file `.env.backup-before-page-token-update-20260907-final` held the longer-lived user token. Using that user token to run `/me/accounts?fields=name,id,access_token,tasks` produced a Page token that Meta reported as valid with no explicit expiry. That Page token replaced the expired `.env` token on 2026-09-09.
+
+What fooled us: the 2026-09-07 Page token had the right Page ID, right Instagram ID, right permissions, and worked in the app temporarily. That was not enough. The missing final check was the token lifespan check from Meta `debug_token`. Going forward, if `token expires` is an actual date/time instead of `never/unknown`, treat it as the wrong token chain and do not save it as the final LUCAS token.
