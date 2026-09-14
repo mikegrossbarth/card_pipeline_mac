@@ -907,6 +907,7 @@ class CardPipelineApp(tk.Tk):
         self.instagram_tunnel_public_url = ""
         self.instagram_tunnel_log_path = ROOT / "work" / "instagram-cloudflared.log"
         self.instagram_auto_sync_running = False
+        self.instagram_manual_sync_running = False
 
         self.events: queue.Queue[str] = queue.Queue()
         self.intake_rows: list[WorkbookRow] = []
@@ -5600,7 +5601,7 @@ class CardPipelineApp(tk.Tk):
     def _instagram_auto_sync_due(self, now: datetime | None = None) -> bool:
         if not self._personal_instagram_sync_enabled():
             return False
-        if getattr(self, "instagram_auto_sync_running", False):
+        if getattr(self, "instagram_auto_sync_running", False) or getattr(self, "instagram_manual_sync_running", False):
             return False
         state = self._load_instagram_inventory_state()
         today = (now or datetime.now()).date().isoformat()
@@ -6733,6 +6734,9 @@ class CardPipelineApp(tk.Tk):
         return errors
 
     def _run_instagram_inventory_sync(self, plan: dict[str, object], popup: tk.Toplevel, refresh_callback) -> None:
+        if getattr(self, "instagram_auto_sync_running", False) or getattr(self, "instagram_manual_sync_running", False):
+            messagebox.showinfo("Instagram Sync", "An Instagram inventory sync is already running. Wait for it to finish before starting another one.")
+            return
         config = plan.get("config") if isinstance(plan.get("config"), dict) else self._instagram_env_config()
         if not str(config.get("user_id") or "").strip() or not str(config.get("access_token") or "").strip():
             messagebox.showerror("Instagram Sync", "Missing Instagram user ID or access token in .env.")
@@ -6791,7 +6795,16 @@ class CardPipelineApp(tk.Tk):
             message += f"\n{skipped_count} ready card(s) will remain for the next batch."
         if not messagebox.askyesno("Instagram Sync", message):
             return
-        worker = threading.Thread(target=self._instagram_inventory_sync_worker, args=(sync_plan,), daemon=True)
+        self.instagram_manual_sync_running = True
+
+        def worker_target() -> None:
+            try:
+                self._instagram_inventory_sync_worker(sync_plan)
+            finally:
+                self.instagram_manual_sync_running = False
+                popup.after(0, refresh_callback)
+
+        worker = threading.Thread(target=worker_target, daemon=True)
         worker.start()
         popup.after(1000, refresh_callback)
 
@@ -6913,6 +6926,24 @@ class CardPipelineApp(tk.Tk):
         return marked
 
     def _instagram_inventory_sync_worker(self, plan: dict[str, object]) -> None:
+        try:
+            with shared_lock(CARD_PIPELINE_DIR, "instagram-inventory-sync", getattr(self, "lucas_identity", {}), timeout=1):
+                return CardPipelineApp._instagram_inventory_sync_worker_locked(self, plan)
+        except TimeoutError as error:
+            message = f"Instagram sync blocked: another Instagram inventory sync is already running ({error})."
+            events = getattr(self, "events", None)
+            if events is not None:
+                events.put(("status", message))
+            append_activity = getattr(self, "_append_activity", None)
+            if callable(append_activity):
+                append_activity(
+                    "Instagram Inventory Sync",
+                    "Instagram inventory sync blocked because another sync is already running.",
+                    {"error": str(error)},
+                )
+            return None
+
+    def _instagram_inventory_sync_worker_locked(self, plan: dict[str, object]) -> None:
         started = time.perf_counter()
         original_post_limit = len([item for item in plan.get("to_post") or [] if isinstance(item, dict)])
         original_post_keys = {
@@ -6962,7 +6993,8 @@ class CardPipelineApp(tk.Tk):
         seen_post_keys: set[str] = set()
         seen_post_identities: set[str] = set()
         seen_post_photo_ids: set[str] = set()
-        post_preflight_errors = self._instagram_media_preflight_errors(list(plan.get("to_post") or []))
+        preflight = getattr(self, "_instagram_media_preflight_errors", lambda _items: [])
+        post_preflight_errors = preflight(list(plan.get("to_post") or []))
         if post_preflight_errors:
             errors.extend(post_preflight_errors)
             self._append_activity(
@@ -7108,7 +7140,7 @@ class CardPipelineApp(tk.Tk):
                 if not key or not media_id:
                     continue
                 item_identity = str(item.get("inventory_identity") or "").strip() or self._instagram_post_entry_identity(item)
-                is_duplicate_removal = str(item.get("reason") or "").strip().lower() == "duplicate_inventory_post"
+                is_duplicate_removal = str(item.get("reason") or "").strip().lower() in {"duplicate_inventory_post", "duplicate_live_inventory_post"}
                 tracked_entry = posts.get(key) if isinstance(posts.get(key), dict) else {}
                 tracked_media_id = str(tracked_entry.get("media_id") or "").strip()
                 if not is_duplicate_removal:
