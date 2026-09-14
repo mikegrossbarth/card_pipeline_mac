@@ -13274,6 +13274,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             def _append_activity(self, action, summary, details=None):
                 self.activities.append((action, summary, details))
 
+            def _instagram_inventory_active_records(self):
+                return []
+
         dummy = InstagramDummy()
         marked = dummy._mark_instagram_posts_manually_deleted([
             {"inventory_key": "old-key", "media_id": "179-old", "caption": "Old Card"}
@@ -13285,6 +13288,22 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertEqual(dummy.state["removed_posts"][0]["media_id"], "179-old")
         self.assertEqual(dummy.state["removed_posts"][0]["reason"], "manual_delete_confirmed")
         self.assertEqual(dummy.activities[-1][0], "Instagram Manual Delete")
+
+    def test_instagram_manual_delete_urls_dedupes_permalinks(self) -> None:
+        class InstagramDummy:
+            _instagram_manual_delete_urls = app.CardPipelineApp._instagram_manual_delete_urls
+
+        urls = InstagramDummy()._instagram_manual_delete_urls(
+            [
+                {"permalink": "https://instagram.test/p/one"},
+                {"permalink": "  https://instagram.test/p/two  "},
+                {"permalink": "https://instagram.test/p/one"},
+                {"permalink": ""},
+                {"media_id": "missing-link"},
+            ]
+        )
+
+        self.assertEqual(urls, ["https://instagram.test/p/one", "https://instagram.test/p/two"])
 
     def test_instagram_inventory_sync_skips_post_when_preview_item_is_no_longer_active(self) -> None:
         class InstagramDummy:

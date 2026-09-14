@@ -6574,6 +6574,18 @@ class CardPipelineApp(tk.Tk):
                 return
             webbrowser.open(url)
 
+        def open_all_manual_delete_targets() -> None:
+            urls = self._instagram_manual_delete_urls(list(remove_items.values()))
+            if not urls:
+                messagebox.showinfo("Instagram Sync", "No Remove rows with Instagram URLs are available.")
+                return
+            if not messagebox.askyesno("Instagram Sync", f"Open {len(urls)} Instagram remove target(s) in browser tabs?"):
+                return
+            webbrowser.open_new(urls[0])
+            for url in urls[1:]:
+                webbrowser.open_new_tab(url)
+            self.status_var.set(f"Opened {len(urls)} Instagram remove target(s).")
+
         def copy_manual_delete_title() -> None:
             selected = selected_remove_items()
             if not selected:
@@ -6638,11 +6650,25 @@ class CardPipelineApp(tk.Tk):
         delete_actions = ttk.Frame(frame, style="Panel.TFrame")
         delete_actions.pack(fill=tk.X, pady=(8, 0))
         ttk.Button(delete_actions, text="Open Remove Target", command=open_manual_delete_target, style="Soft.TButton").pack(side=tk.LEFT)
+        ttk.Button(delete_actions, text="Open All Remove Targets", command=open_all_manual_delete_targets, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Copy Title", command=copy_manual_delete_title, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Mark Deleted", command=mark_manual_deleted, style="Primary.TButton").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(delete_actions, text="Close", command=popup.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
         table_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
         reload_plan()
+
+    def _instagram_manual_delete_urls(self, items: list[dict[str, object]]) -> list[str]:
+        urls: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("permalink") or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+        return urls
 
     def _instagram_api_json(self, endpoint: str, params: dict[str, object] | None = None, method: str = "GET") -> dict[str, object]:
         params = dict(params or {})
