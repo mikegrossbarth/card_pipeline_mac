@@ -5429,7 +5429,14 @@ class CardPipelineApp(tk.Tk):
             return ""
 
         threading.Thread(target=self._watch_instagram_background_tunnel, daemon=True).start()
-        return ""
+        deadline = time.monotonic() + 12
+        while time.monotonic() < deadline:
+            if self.instagram_tunnel_public_url:
+                return self.instagram_tunnel_public_url
+            if self.instagram_tunnel_process is None or self.instagram_tunnel_process.poll() is not None:
+                return ""
+            time.sleep(0.1)
+        return self.instagram_tunnel_public_url
 
     def _watch_instagram_background_tunnel(self) -> None:
         process = self.instagram_tunnel_process
