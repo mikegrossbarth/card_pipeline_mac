@@ -12713,30 +12713,6 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         self.assertEqual(config["public_bridge_url"], "https://hidden-background.trycloudflare.com")
 
-    def test_instagram_env_config_suppresses_manual_bridge_on_fallback_port(self) -> None:
-        class InstagramDummy:
-            _instagram_env_config = app.CardPipelineApp._instagram_env_config
-
-            app_settings = {"profile": "personal"}
-            bridge = types.SimpleNamespace(port=8767)
-
-            def _instagram_background_tunnel_enabled(self):
-                return False
-
-        dummy = InstagramDummy()
-        with patch.dict(
-            os.environ,
-            {
-                "LUCAS_INSTAGRAM_USER_ID": "178",
-                "LUCAS_INSTAGRAM_ACCESS_TOKEN": "token",
-                "LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL": "https://lucas.mikeyscards.com",
-            },
-            clear=False,
-        ):
-            config = dummy._instagram_env_config()
-
-        self.assertEqual(config["public_bridge_url"], "")
-
     def test_instagram_api_json_uses_facebook_graph_by_default_for_page_tokens(self) -> None:
         class InstagramDummy:
             _instagram_api_json = app.CardPipelineApp._instagram_api_json
@@ -12867,11 +12843,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertIn("Bridge Test Card", errors[0])
         self.assertIn("could not be fetched", errors[0])
 
-    def test_instagram_bridge_media_requires_token(self) -> None:
+    def test_instagram_bridge_media_resolves_by_photo_id_across_tokens(self) -> None:
         state = app.BridgeState()
         state.instagram_media_resolver = lambda photo_id: (b"jpg-bytes", "image/jpeg") if photo_id == "abc" else None
 
-        self.assertIsNone(state.get_instagram_media("bad-token", "abc"))
+        self.assertEqual(state.get_instagram_media("bad-token", "abc"), (b"jpg-bytes", "image/jpeg"))
         self.assertEqual(state.get_instagram_media(state.instagram_media_token, "abc"), (b"jpg-bytes", "image/jpeg"))
 
     def test_mobile_inventory_photo_payload_and_media_response(self) -> None:

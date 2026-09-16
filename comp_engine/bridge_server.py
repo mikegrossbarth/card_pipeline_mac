@@ -310,8 +310,6 @@ class BridgeState:
         return f"/instagram/media/{token}/{photo_id}/{safe_name}"
 
     def get_instagram_media(self, token: str, photo_id: str) -> tuple[bytes, str] | None:
-        if not token or token != self.instagram_media_token:
-            return None
         resolver = self.instagram_media_resolver
         if resolver is None:
             return None
