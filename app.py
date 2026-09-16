@@ -5472,6 +5472,15 @@ class CardPipelineApp(tk.Tk):
         background_enabled = self._instagram_background_tunnel_enabled() if hasattr(self, "_instagram_background_tunnel_enabled") else False
         background_url = self._ensure_instagram_background_tunnel() if background_enabled and hasattr(self, "_ensure_instagram_background_tunnel") else ""
         manual_bridge_url = str(os.environ.get("LUCAS_INSTAGRAM_PUBLIC_BRIDGE_URL") or os.environ.get("LUCAS_PUBLIC_BRIDGE_URL") or "").strip().rstrip("/")
+        if manual_bridge_url and not background_enabled:
+            bridge = getattr(self, "bridge", None)
+            expected_port = mobile_bridge_port(getattr(self, "app_settings", {}), SETTINGS_PATH)
+            try:
+                actual_port = int(getattr(bridge, "port", expected_port) or 0)
+            except (TypeError, ValueError):
+                actual_port = 0
+            if (bridge is not None and not getattr(bridge, "started", True)) or actual_port != expected_port:
+                manual_bridge_url = ""
         return {
             "user_id": str(os.environ.get("LUCAS_INSTAGRAM_USER_ID") or os.environ.get("LUCAS_INSTAGRAM_ACCOUNT_ID") or "").strip(),
             "access_token": str(os.environ.get("LUCAS_INSTAGRAM_ACCESS_TOKEN") or "").strip(),
