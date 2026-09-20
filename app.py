@@ -960,7 +960,7 @@ class CardPipelineApp(tk.Tk):
         self.review_input_mode = tk.StringVar(value="Barcode Scanner")
         self.comp_strategy_label = tk.StringVar(value="Date weighted")
         self.comp_low_outlier_pct_var = tk.StringVar(value="Off")
-        self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_EMPTY)
+        self.comp_scope_label = tk.StringVar(value=COMP_SCOPE_ALL)
         self.comp_source_label = tk.StringVar(value=COMP_SOURCE_CARD_LADDER)
         self.working_sheet_title = tk.StringVar()
         self.create_network_mode_var = tk.BooleanVar(value=bool(self.app_settings.get("network_mode")))
@@ -2747,7 +2747,31 @@ class CardPipelineApp(tk.Tk):
 
     def _save_inventory_ledger(self, rows: list[dict[str, object]]) -> None:
         INVENTORY_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(INVENTORY_LEDGER_PATH, {"items": rows})
+        rows_to_save = [item for item in rows if isinstance(item, dict)]
+        remove_sold = getattr(self, "_active_inventory_rows_excluding_sold_profit", None)
+        if callable(remove_sold):
+            rows_to_save, removed = remove_sold(rows_to_save)
+            if removed:
+                append_activity = getattr(self, "_append_activity", None)
+                if callable(append_activity):
+                    append_activity(
+                        "Inventory Save Blocked",
+                        "Removed {} sold card(s) from active inventory before saving.".format(len(removed)),
+                        {
+                            "removed_count": len(removed),
+                            "removed": [
+                                {
+                                    "inventory_key": record.get("inventory_key") or "",
+                                    "item_id": record.get("item_id") or "",
+                                    "cert_number": record.get("cert_number") or "",
+                                    "card_title": record.get("card_title") or "",
+                                    "source_sheet": record.get("source_sheet") or "",
+                                }
+                                for record in removed[:20]
+                            ],
+                        },
+                    )
+        atomic_write_json(INVENTORY_LEDGER_PATH, {"items": rows_to_save})
 
     def _load_inventory_deleted_tombstones(self) -> list[dict[str, object]]:
         if not INVENTORY_DELETED_TOMBSTONES_PATH.exists():
@@ -2943,6 +2967,67 @@ class CardPipelineApp(tk.Tk):
         if item_id:
             keys.add(f"item:{item_id}")
         return keys
+
+    def _active_inventory_rows_excluding_sold_profit(
+        self,
+        rows: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        profit_loader = getattr(self, "_load_profit_ledger", None)
+        if not callable(profit_loader):
+            return rows, []
+        sold_records = [record for record in profit_loader() if isinstance(record, dict)]
+        if not sold_records:
+            return rows, []
+        kept: list[dict[str, object]] = []
+        removed: list[dict[str, object]] = []
+        for record in rows:
+            if str(record.get("status") or "Active").strip().lower() != "active":
+                kept.append(record)
+                continue
+            if any(self._profit_record_blocks_inventory_row(record, sold_record) for sold_record in sold_records):
+                removed.append(record)
+            else:
+                kept.append(record)
+        return kept, removed
+
+    def _profit_record_blocks_inventory_row(self, inventory_record: dict[str, object], profit_record: dict[str, object]) -> bool:
+        if str(profit_record.get("record_type") or "").strip().lower() == "expense":
+            return False
+        if self._money_value(profit_record.get("sale_price")) is None:
+            return False
+
+        inventory_date = self._profit_record_date(inventory_record.get("date_added"))
+        sold_date = self._profit_record_date(profit_record.get("date_added") or profit_record.get("ledger_added_at"))
+        if inventory_date is not None and sold_date is not None and inventory_date > sold_date:
+            return False
+
+        inventory_key = str(inventory_record.get("inventory_key") or "").strip().lower()
+        profit_key = str(profit_record.get("inventory_key") or "").strip().lower()
+        if inventory_key and profit_key and inventory_key == profit_key:
+            return True
+
+        inventory_source = Path(str(inventory_record.get("source_sheet") or "")).name.strip().lower()
+        profit_sources = {
+            Path(str(profit_record.get(field) or "")).name.strip().lower()
+            for field in ("source_sheet", "original_source_sheet")
+        }
+        profit_sources.discard("")
+
+        inventory_item_id = str(inventory_record.get("item_id") or "").strip().lower()
+        profit_item_id = str(profit_record.get("item_id") or "").strip().lower()
+        if inventory_item_id and profit_item_id and inventory_item_id == profit_item_id:
+            if inventory_source and profit_sources:
+                return inventory_source in profit_sources
+            return not inventory_source or not profit_sources
+
+        inventory_cert = scan_to_cert(inventory_record.get("cert_number"))
+        profit_cert = scan_to_cert(profit_record.get("cert_number"))
+        if not inventory_cert or inventory_cert != profit_cert:
+            return False
+
+        if inventory_source and profit_sources:
+            return inventory_source in profit_sources
+        return not inventory_source or not profit_sources
 
     def _inventory_add_protection_reason(self, record: dict[str, object], existing_rows: list[dict[str, object]]) -> str:
         source_sheet = Path(str(record.get("source_sheet") or "")).name.strip().lower()
