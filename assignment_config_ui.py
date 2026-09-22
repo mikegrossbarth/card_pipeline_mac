@@ -1052,19 +1052,28 @@ class AssignmentRulesDialog(tk.Toplevel):
         price_frame.columnconfigure(1, weight=1)
         price_frame.columnconfigure(3, weight=1)
         price_frame.columnconfigure(5, weight=1)
+        price_frame.columnconfigure(7, weight=1)
+        price_frame.columnconfigure(9, weight=1)
         price_ranges = data.get("priceRanges") if data else None
         first_range = price_ranges[0] if isinstance(price_ranges, list) and price_ranges else {}
         min_var = tk.StringVar(value=str(first_range.get("min") or ""))
         max_var = tk.StringVar(value=str(first_range.get("max") or ""))
+        confidence_min, confidence_max = confidence_bounds_for_display(first_range)
+        confidence_min_var = tk.StringVar(value=confidence_min)
+        confidence_max_var = tk.StringVar(value=confidence_max)
         payout_value = (data or {}).get("payout") or (data or {}).get("rate") or first_range.get("payout") or first_range.get("rate") or ""
         payout_var = tk.StringVar(value=str(payout_value))
-        ttk.Label(price_frame, text="Price Range & Payout Percentage", style="Assign.TLabel").grid(row=0, column=0, columnspan=6, sticky=tk.W, pady=(0, 6))
+        ttk.Label(price_frame, text="Price, CY Confidence & Payout", style="Assign.TLabel").grid(row=0, column=0, columnspan=10, sticky=tk.W, pady=(0, 6))
         ttk.Label(price_frame, text="Min", style="Assign.TLabel").grid(row=1, column=0, sticky=tk.W, padx=(0, 6))
         bind_single_paste(ttk.Entry(price_frame, textvariable=min_var, width=12, style="Assign.TEntry")).grid(row=1, column=1, sticky=tk.W)
         ttk.Label(price_frame, text="Max", style="Assign.TLabel").grid(row=1, column=2, sticky=tk.W, padx=(14, 6))
         bind_single_paste(ttk.Entry(price_frame, textvariable=max_var, width=12, style="Assign.TEntry")).grid(row=1, column=3, sticky=tk.W)
-        ttk.Label(price_frame, text="Payout Percentage", style="Assign.TLabel").grid(row=1, column=4, sticky=tk.W, padx=(14, 6))
-        bind_single_paste(ttk.Entry(price_frame, textvariable=payout_var, width=12, style="Assign.TEntry")).grid(row=1, column=5, sticky=tk.W)
+        ttk.Label(price_frame, text="CY Conf Min", style="Assign.TLabel").grid(row=1, column=4, sticky=tk.W, padx=(14, 6))
+        bind_single_paste(ttk.Entry(price_frame, textvariable=confidence_min_var, width=8, style="Assign.TEntry")).grid(row=1, column=5, sticky=tk.W)
+        ttk.Label(price_frame, text="CY Conf Max", style="Assign.TLabel").grid(row=1, column=6, sticky=tk.W, padx=(14, 6))
+        bind_single_paste(ttk.Entry(price_frame, textvariable=confidence_max_var, width=8, style="Assign.TEntry")).grid(row=1, column=7, sticky=tk.W)
+        ttk.Label(price_frame, text="Payout %", style="Assign.TLabel").grid(row=1, column=8, sticky=tk.W, padx=(14, 6))
+        bind_single_paste(ttk.Entry(price_frame, textvariable=payout_var, width=10, style="Assign.TEntry")).grid(row=1, column=9, sticky=tk.W)
 
         grades_frame = ttk.Frame(frame, style="AssignPanel.TFrame")
         grades_frame.grid(row=4, column=0, sticky="ew", pady=(12, 0))
@@ -1090,7 +1099,16 @@ class AssignmentRulesDialog(tk.Toplevel):
             bind_single_paste(ttk.Entry(grades_frame, textvariable=max_grade, width=8, style="Assign.TEntry")).grid(row=grade_index, column=3, sticky=tk.W, pady=3)
             grade_vars[company] = {"allowed": allowed, "min": min_grade, "max": max_grade}
 
-        self.rule_rows.append({"frame": frame, "sports": sport_vars, "min": min_var, "max": max_var, "payout": payout_var, "grades": grade_vars})
+        self.rule_rows.append({
+            "frame": frame,
+            "sports": sport_vars,
+            "min": min_var,
+            "max": max_var,
+            "confidence_min": confidence_min_var,
+            "confidence_max": confidence_max_var,
+            "payout": payout_var,
+            "grades": grade_vars,
+        })
         self._renumber_rule_rows()
 
     def _remove_rule_row(self, frame: ttk.Frame) -> None:
@@ -1556,9 +1574,15 @@ class AssignmentRulesDialog(tk.Toplevel):
         return year
 
     def _rule_payload(self, row: dict[str, Any]) -> dict[str, Any]:
+        price_range = {"min": row["min"].get().strip(), "max": row["max"].get().strip()}
+        confidence_min = row.get("confidence_min").get().strip() if row.get("confidence_min") else ""
+        confidence_max = row.get("confidence_max").get().strip() if row.get("confidence_max") else ""
+        if confidence_min or confidence_max:
+            price_range["minConfidence"] = confidence_min
+            price_range["maxConfidence"] = confidence_max
         return {
             "sports": [sport for sport, var in row["sports"].items() if var.get()],
-            "priceRanges": [{"min": row["min"].get().strip(), "max": row["max"].get().strip()}],
+            "priceRanges": [price_range],
             "payout": row["payout"].get().strip(),
             "grades": {
                 company: {
@@ -2014,6 +2038,35 @@ def split_values(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
+def confidence_bounds_for_display(price_range: Any) -> tuple[str, str]:
+    if not isinstance(price_range, dict):
+        return "", ""
+    min_value = str(price_range.get("minConfidence") or price_range.get("min_confidence") or "").strip()
+    max_value = str(price_range.get("maxConfidence") or price_range.get("max_confidence") or "").strip()
+    if min_value or max_value:
+        return min_value, max_value
+    raw = (
+        price_range.get("confidence")
+        or price_range.get("confidenceRange")
+        or price_range.get("cyConfidence")
+        or price_range.get("cy_confidence")
+        or price_range.get("conf")
+    )
+    if raw is None:
+        return "", ""
+    if isinstance(raw, dict):
+        return (
+            str(raw.get("min") or raw.get("from") or "").strip(),
+            str(raw.get("max") or raw.get("to") or "").strip(),
+        )
+    parts = [part.strip() for part in re.split(r"\s*(?:-|to|through|–|—)\s*", str(raw), maxsplit=1) if part.strip()]
+    if len(parts) == 1:
+        return parts[0], parts[0]
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    return "", ""
 
 
 def normalize_value_source(value: Any) -> str:
