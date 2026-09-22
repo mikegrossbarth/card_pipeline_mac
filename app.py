@@ -2010,6 +2010,9 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_list.bind("<<ListboxSelect>>", lambda _event: self._load_home_selected_marker())
         self._bind_context_menu(self.home_sheet_list, self._show_home_sheet_context_menu)
         self._make_colored_button(sheet_panel, "Refresh Home View", self.refresh_home, variant="primary").pack(fill=tk.X)
+        self._make_colored_button(sheet_panel, "Ledger Health", self.open_ledger_health, variant="soft").pack(fill=tk.X, pady=(8, 0))
+        self._make_colored_button(sheet_panel, "Move Accounted Sheets", self.reconcile_accounted_home_sheets, variant="soft").pack(fill=tk.X, pady=(8, 0))
+        self._make_colored_button(sheet_panel, "Archive Paid Received", self.archive_paid_received_sheets, variant="soft").pack(fill=tk.X, pady=(8, 0))
 
         right = ttk.Frame(body, style="App.TFrame")
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -2831,7 +2834,7 @@ class CardPipelineApp(tk.Tk):
             if item_id:
                 keys.add(("", f"item:{item_id}"))
             title_identity = CardPipelineApp._received_inventory_title_identity(self, record.get("card_title"))
-            if source_sheet and not cert and not item_id and title_identity:
+            if source_sheet and title_identity:
                 keys.add((source_sheet, f"title:{title_identity}"))
         return keys
 
@@ -2903,13 +2906,15 @@ class CardPipelineApp(tk.Tk):
         atomic_write_json(ACTIVITY_LOG_PATH, {"entries": entries[-300:]})
 
     def _append_activity(self, action: str, summary: str, details: dict[str, object] | None = None) -> None:
+        safe_details = dict(details or {})
+        safe_details.setdefault("operation_id", f"op-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}")
         entry = {
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "action": str(action or "").strip() or "Activity",
             "summary": str(summary or "").strip(),
             "user": self.lucas_identity.get("display_name") or "",
             "machine": self.lucas_identity.get("machine") or "",
-            "details": details or {},
+            "details": safe_details,
         }
         try:
             with shared_lock(CARD_PIPELINE_DIR, "activity-log", self.lucas_identity, timeout=8):
@@ -3164,7 +3169,9 @@ class CardPipelineApp(tk.Tk):
 
     def _raw_item_id_existing_records(self) -> list[dict[str, object]]:
         records = list(self._load_inventory_ledger())
-        records.extend(self._live_sheet_raw_item_records())
+        live_sheet_records = getattr(self, "_live_sheet_raw_item_records", None)
+        if callable(live_sheet_records):
+            records.extend(live_sheet_records())
         try:
             records.extend(self._load_profit_ledger())
         except Exception:
@@ -3206,6 +3213,9 @@ class CardPipelineApp(tk.Tk):
 
     def _ensure_raw_item_ids_for_rows(self, rows: list[WorkbookRow]) -> int:
         existing_records = list(self._load_inventory_ledger())
+        live_sheet_records = getattr(self, "_live_sheet_raw_item_records", None)
+        if callable(live_sheet_records):
+            existing_records.extend(live_sheet_records())
         for row in rows:
             item_id = str(getattr(row, "item_id", "") or "").strip()
             if item_id:
@@ -3230,9 +3240,8 @@ class CardPipelineApp(tk.Tk):
             if cert or item_id or not has_row_data:
                 continue
             rows_needing_ids.append(row)
-        timestamp_seed = int(datetime.now().strftime("%H%M%S%f"))
         for offset, row in enumerate(rows_needing_ids):
-            item_id = self._next_raw_item_id(existing_records, minimum_sequence=timestamp_seed + offset)
+            item_id = self._next_raw_item_id(existing_records)
             setattr(row, "item_id", item_id)
             existing_records.append({"item_id": item_id})
             added += 1
@@ -4284,7 +4293,12 @@ class CardPipelineApp(tk.Tk):
             cert = str(normalized.get("cert_number") or "")
             if source_sheet and cert:
                 remove_company_sheet_rows_for_source(COMPANY_SHEETS_DIR, source_sheet, {cert})
-            assigned_person = self._refund_inventory_owner_for_profit_record(normalized)
+            refund_owner = getattr(self, "_refund_inventory_owner_for_profit_record", None)
+            assigned_person = (
+                refund_owner(normalized)
+                if callable(refund_owner)
+                else CardPipelineApp._refund_inventory_owner_for_profit_record(self, normalized)
+            )
             inventory_records.append(
                 self._normalize_inventory_record(
                     {
@@ -4317,9 +4331,12 @@ class CardPipelineApp(tk.Tk):
 
     def _refund_inventory_owner_for_profit_record(self, record: dict[str, object]) -> str:
         for source_value in (record.get("original_source_sheet"), record.get("source_sheet")):
-            marker = self._sheet_marker_for_source_name(source_value)
+            marker_for_source = getattr(self, "_sheet_marker_for_source_name", None)
+            marker = marker_for_source(source_value) if callable(marker_for_source) else {}
             if marker and self._sheet_marker_is_seller_payout(marker):
-                return self._inventory_owner_for_sheet_marker(marker, record.get("assigned_person"))
+                owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
+                if callable(owner_for_marker):
+                    return owner_for_marker(marker, record.get("assigned_person"))
         return str(record.get("assigned_person") or self._person_for_profit_record(record) or "Unassigned").strip() or "Unassigned"
 
     def mobile_profit_refund(self, payload: dict) -> dict:
@@ -9627,7 +9644,18 @@ class CardPipelineApp(tk.Tk):
         photos = photos if isinstance(photos, dict) else {}
         paths: list[Path] = []
         seen: set[str] = set()
+        folders: list[Path] = []
         for folder in (self._inventory_photo_shared_folder(), self._inventory_photo_source_folder()):
+            try:
+                folder_key = str(Path(folder).resolve(strict=False))
+            except Exception:
+                folder_key = str(folder)
+            if folder_key in seen:
+                continue
+            seen.add(folder_key)
+            folders.append(folder)
+        seen.clear()
+        for folder in folders:
             for path in self._inventory_photo_paths(folder):
                 if path.name in state_used_names:
                     continue
@@ -10398,7 +10426,8 @@ class CardPipelineApp(tk.Tk):
             card_ladder = self._money_value(record.get("card_ladder_value"))
             comps = self._money_value(record.get("card_ladder_comps_average"))
             cy_value = self._money_value(record.get("cy_value"))
-            delta = self._format_inventory_cl_comp_delta(record)
+            format_delta = getattr(self, "_format_inventory_cl_comp_delta", None)
+            delta = format_delta(record) if callable(format_delta) else ""
             if purchase is not None:
                 total_purchase += purchase
             if value is not None:
@@ -10426,10 +10455,14 @@ class CardPipelineApp(tk.Tk):
                 "notes": inventory_display_notes(record),
                 "delta": delta,
             }
+            try:
+                tree_columns = tuple(self.inventory_tree["columns"])
+            except Exception:
+                tree_columns = tuple(INVENTORY_HEADINGS)
             iid = self.inventory_tree.insert(
                 "",
                 tk.END,
-                values=tuple(values_by_column.get(column, "") for column in self.inventory_tree["columns"]),
+                values=tuple(values_by_column.get(column, "") for column in tree_columns),
             )
             self.inventory_tree_records[iid] = record
         self.inventory_metric_var.set(f"Cards: {len(self.filtered_inventory_rows)}   Purchase Total: {format_money(total_purchase)}   Source Value: {format_money(total_value)}")
@@ -11380,7 +11413,7 @@ class CardPipelineApp(tk.Tk):
             return keys
         inventory_key = str(normalized.get("inventory_key") or "").strip().lower()
         if inventory_key and str(normalized.get("status") or "").strip().lower() == "sold from inventory":
-            return {f"sold-inventory-card|{inventory_key}"}
+            keys.add(f"sold-inventory-card|{inventory_key}")
         weak_key = CardPipelineApp._profit_weak_sold_card_key(self, normalized)
         if weak_key:
             keys.add(weak_key)
@@ -11453,6 +11486,9 @@ class CardPipelineApp(tk.Tk):
 
     def _normalize_profit_record(self, record: dict[str, object]) -> dict[str, object]:
         normalized = dict(record)
+        local_profit_date = getattr(self, "_profit_local_calendar_date", None)
+        if not callable(local_profit_date):
+            local_profit_date = lambda value, ledger_added_at="": str(value or "").strip()[:10]
         record_type = str(normalized.get("record_type") or "").strip().lower()
         if record_type == "expense":
             amount = self._money_value(normalized.get("expense_amount") or normalized.get("amount") or normalized.get("purchase_price")) or 0.0
@@ -11476,7 +11512,7 @@ class CardPipelineApp(tk.Tk):
             normalized["purchase_price"] = None
             normalized["sale_price"] = None
             normalized["profit"] = -round(abs(amount), 2)
-            normalized["date_added"] = self._profit_local_calendar_date(
+            normalized["date_added"] = local_profit_date(
                 normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"),
                 normalized.get("ledger_added_at"),
             )
@@ -11497,7 +11533,7 @@ class CardPipelineApp(tk.Tk):
         normalized["purchase_price"] = purchase
         normalized["sale_price"] = sale
         normalized["profit"] = round(sale - purchase, 2) if sale is not None and purchase is not None else None
-        normalized["date_added"] = self._profit_local_calendar_date(
+        normalized["date_added"] = local_profit_date(
             normalized.get("date_added") or datetime.now().strftime("%Y-%m-%d"),
             normalized.get("ledger_added_at"),
         )
@@ -12069,7 +12105,18 @@ class CardPipelineApp(tk.Tk):
                             existing_key_map[key] = existing_index
                         existing_keys = set(existing_key_map)
                         added += 1
-                    continue
+                        continue
+                    existing_record = ledger[existing_index] if 0 <= existing_index < len(ledger) else {}
+                    incoming_inventory_key = str(normalized.get("inventory_key") or "").strip()
+                    existing_inventory_key = str(existing_record.get("inventory_key") or "").strip() if isinstance(existing_record, dict) else ""
+                    weak_only_match = bool(matching_keys) and all(str(key).startswith("sold-card|") for key in matching_keys)
+                    if not (
+                        weak_only_match
+                        and incoming_inventory_key
+                        and not existing_inventory_key
+                        and str(normalized.get("status") or "").strip().lower() == "sold from inventory"
+                    ):
+                        continue
                 recovery_index = CardPipelineApp._profit_recovery_duplicate_index(self, ledger, normalized)
                 if recovery_index is not None:
                     continue
@@ -12100,23 +12147,38 @@ class CardPipelineApp(tk.Tk):
             return False
         if str(incoming.get("record_type") or "").strip().lower() == "expense":
             return False
-        if str(existing.get("status") or "") != "Sold from inventory" or str(incoming.get("status") or "") != "Sold from inventory":
+        incoming_is_inventory_sale = str(incoming.get("status") or "").strip().lower() == "sold from inventory"
+        existing_is_inventory_sale = str(existing.get("status") or "").strip().lower() == "sold from inventory"
+        if not incoming_is_inventory_sale:
             return False
         existing_inventory_key = str(existing.get("inventory_key") or "").strip().lower()
         incoming_inventory_key = str(incoming.get("inventory_key") or "").strip().lower()
-        if existing_inventory_key or incoming_inventory_key:
-            if not existing_inventory_key or existing_inventory_key != incoming_inventory_key:
-                return False
+        existing_company = str(existing.get("company") or "").strip().lower()
+        incoming_company = str(incoming.get("company") or "").strip().lower()
+        is_general_sold_update = existing_company == "general sold" and incoming_company == "general sold"
+        if existing_inventory_key and incoming_inventory_key and existing_inventory_key != incoming_inventory_key:
+            return False
+        if incoming_inventory_key and not existing_inventory_key and not is_general_sold_update:
+            return False
         existing_stable_id = scan_to_cert(existing.get("cert_number")) or str(existing.get("item_id") or "").strip().lower()
         incoming_stable_id = scan_to_cert(incoming.get("cert_number")) or str(incoming.get("item_id") or "").strip().lower()
         if not existing_stable_id or existing_stable_id != incoming_stable_id:
             return False
+        if not existing_is_inventory_sale:
+            existing_source = Path(str(existing.get("source_sheet") or "")).name.strip().lower()
+            incoming_source = Path(str(incoming.get("source_sheet") or "")).name.strip().lower()
+            existing_company = str(existing.get("company") or "").strip().lower()
+            incoming_company = str(incoming.get("company") or "").strip().lower()
+            if existing_source != incoming_source or existing_company != incoming_company:
+                return False
         existing_sale = self._money_value(existing.get("sale_price"))
         incoming_sale = self._money_value(incoming.get("sale_price"))
         existing_purchase = self._money_value(existing.get("purchase_price"))
         incoming_purchase = self._money_value(incoming.get("purchase_price"))
         existing_date = str(existing.get("date_added") or "")[:10]
         incoming_date = str(incoming.get("date_added") or "")[:10]
+        if existing_date and incoming_date and existing_date != incoming_date and not is_general_sold_update:
+            return False
         has_sale_change = incoming_sale is not None and existing_sale != incoming_sale
         has_purchase_change = incoming_purchase is not None and existing_purchase != incoming_purchase
         has_date_change = bool(incoming_date and incoming_date != existing_date)
@@ -12958,16 +13020,18 @@ class CardPipelineApp(tk.Tk):
                 self._save_profit_ledger(current)
                 ledger = current
         self.profit_rows = self._enrich_profit_records_with_people(ledger)
+        profit_added_sort = getattr(self, "_profit_added_sort_value", None)
         self.profit_rows.sort(
             key=lambda record: (
                 str(record.get("date_added") or ""),
-                self._profit_added_sort_value(record),
+                profit_added_sort(record) if callable(profit_added_sort) else str(record.get("ledger_added_at") or ""),
                 str(record.get("company") or ""),
                 str(record.get("card_title") or ""),
             ),
             reverse=True,
         )
-        display_profit_rows = self._profit_rows_for_owner_view(self.profit_rows)
+        owner_rows = getattr(self, "_profit_rows_for_owner_view", None)
+        display_profit_rows = owner_rows(self.profit_rows) if callable(owner_rows) else self.profit_rows
         self.filtered_profit_rows = self._filtered_profit_records(display_profit_rows)
         if not hasattr(self, "profit_tree"):
             record_performance_event(
@@ -13551,7 +13615,7 @@ class CardPipelineApp(tk.Tk):
             colors.get("activebackground"),
         )
 
-    def refresh_home(self, reconcile_accounted: bool = True, archive_received: bool = True) -> None:
+    def refresh_home(self, reconcile_accounted: bool = False, archive_received: bool = False) -> None:
         perf_start = time.perf_counter()
         self.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {}}
         self.home_sheet_summaries = {}
@@ -13624,6 +13688,99 @@ class CardPipelineApp(tk.Tk):
             perf_start,
             f"sheets={total_sheets} summaries={len(self.home_sheet_summaries)} archived={archived_count} reconciled={reconciled_count} duplicate_warnings={len(duplicate_warnings)} duplicate_notices={len(duplicate_notices)} reconcile_accounted={reconcile_accounted} archive_received={archive_received} errors={len(errors)}",
         )
+
+    def reconcile_accounted_home_sheets(self) -> None:
+        if not messagebox.askyesno(
+            "Move fully accounted sheets?",
+            "Move Incoming/Working sheets to Received only when every row is already accounted for in inventory or sold history?",
+        ):
+            return
+        self.refresh_home(reconcile_accounted=True, archive_received=False)
+
+    def archive_paid_received_sheets(self) -> None:
+        if not messagebox.askyesno(
+            "Archive paid received sheets?",
+            "Archive Received sheets only when their payout markers say they are fully paid?",
+        ):
+            return
+        self.refresh_home(reconcile_accounted=False, archive_received=True)
+
+    def _ledger_health_rows(self) -> list[dict[str, str]]:
+        inventory = [self._normalize_inventory_record(record) for record in self._load_inventory_ledger()]
+        profit = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
+        active_inventory = [record for record in inventory if str(record.get("status") or "").strip().lower() == "active"]
+        sold_profit = [
+            record
+            for record in profit
+            if str(record.get("record_type") or "").strip().lower() != "expense"
+            and str(record.get("status") or "").strip().lower() == "sold from inventory"
+        ]
+
+        def inventory_identity(record: dict[str, object]) -> str:
+            inventory_key = str(record.get("inventory_key") or "").strip()
+            if inventory_key:
+                return inventory_key
+            stable_id = scan_to_cert(record.get("cert_number")) or str(record.get("item_id") or "").strip().lower()
+            source = Path(str(record.get("source_sheet") or "")).name.strip().lower()
+            person = str(record.get("assigned_person") or "").strip().lower()
+            return "|".join(part for part in (stable_id, source, person) if part)
+
+        active_keys = [inventory_identity(record) for record in active_inventory if inventory_identity(record)]
+        duplicate_active_keys = sorted({key for key in active_keys if active_keys.count(key) > 1})
+        active_key_set = set(active_keys)
+        sold_key_set = {inventory_identity(record) for record in sold_profit if inventory_identity(record)}
+        active_sold_overlap = sorted(active_key_set & sold_key_set)
+        raw_without_id = [
+            str(record.get("card_title") or record.get("source_sheet") or "raw card")
+            for record in active_inventory
+            if not scan_to_cert(record.get("cert_number"))
+            and not str(record.get("item_id") or "").strip()
+        ]
+        inventory_without_source = [
+            str(record.get("card_title") or record.get("cert_number") or record.get("item_id") or "card")
+            for record in active_inventory
+            if not str(record.get("source_sheet") or "").strip()
+        ]
+        sold_without_sale = [
+            str(record.get("card_title") or record.get("cert_number") or record.get("item_id") or "sold card")
+            for record in sold_profit
+            if self._money_value(record.get("sale_price")) is None
+        ]
+
+        return [
+            self._health_row("Duplicate active inventory keys", not duplicate_active_keys, ", ".join(duplicate_active_keys[:8]) or "none"),
+            self._health_row("Active inventory also sold", not active_sold_overlap, ", ".join(active_sold_overlap[:8]) or "none"),
+            self._health_row("Raw active cards missing item IDs", not raw_without_id, ", ".join(raw_without_id[:8]) or "none"),
+            self._health_row("Active inventory missing source sheet", not inventory_without_source, ", ".join(inventory_without_source[:8]) or "none"),
+            self._health_row("Sold inventory missing sale price", not sold_without_sale, ", ".join(sold_without_sale[:8]) or "none"),
+            self._health_row("Ledger counts", True, f"{len(active_inventory)} active inventory row(s), {len(sold_profit)} sold inventory row(s), {len(profit)} total profit row(s)"),
+        ]
+
+    def open_ledger_health(self) -> None:
+        rows = self._ledger_health_rows()
+        dialog = tk.Toplevel(self)
+        dialog.title("LUCAS Ledger Health")
+        dialog.geometry("860x460")
+        dialog.transient(self)
+        dialog.configure(bg="#121212")
+        frame = ttk.Frame(dialog, style="App.TFrame", padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Ledger Health", style="HeaderTitle.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        tree = ttk.Treeview(frame, columns=("status", "detail"), show="tree headings", height=12)
+        tree.heading("#0", text="Check", anchor=tk.W)
+        tree.heading("status", text="Status", anchor=tk.W)
+        tree.heading("detail", text="Detail", anchor=tk.W)
+        tree.column("#0", width=230, stretch=False)
+        tree.column("status", width=130, stretch=False)
+        tree.column("detail", width=480, stretch=True)
+        tree.pack(fill=tk.BOTH, expand=True)
+        for row in rows:
+            tree.insert("", tk.END, text=row["name"], values=(row["status"], row["detail"]))
+        actions = ttk.Frame(frame, style="App.TFrame")
+        actions.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(actions, text="Copy Details", command=lambda: self._copy_setup_doctor_details(rows), style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(actions, text="Close", command=dialog.destroy, style="Soft.TButton").pack(side=tk.RIGHT)
+        self.status_var.set("Ledger health check complete.")
 
     def _home_summary_cache_key(self, path: Path) -> str:
         return os.path.normcase(str(path.resolve()))
@@ -13885,7 +14042,9 @@ class CardPipelineApp(tk.Tk):
                         continue
                     try:
                         output_path = path_from_source_value(path, ASSIGNMENT_CONFIG_PATH.parent)
-                        if self._google_sheet_cache_is_fresh(output_path):
+                        cache_is_fresh = getattr(self, "_google_sheet_cache_is_fresh", None)
+                        is_fresh = cache_is_fresh(output_path) if callable(cache_is_fresh) else CardPipelineApp._google_sheet_cache_is_fresh(self, output_path)
+                        if is_fresh:
                             result["cached"] = int(result["cached"]) + 1
                             continue
                         export_google_sheet_to_xlsx(url, output_path, interactive=False)
@@ -15384,8 +15543,13 @@ class CardPipelineApp(tk.Tk):
         missing: list[WorkbookRow] = []
         if not self._sheet_marker_is_seller_payout(marker):
             return priced, missing
+        price_for_row = getattr(self, "_seller_terms_price_for_workbook_row", None)
         for row in rows:
-            seller_price = self._seller_terms_price_for_workbook_row(row, marker)
+            seller_price = (
+                price_for_row(row, marker)
+                if callable(price_for_row)
+                else CardPipelineApp._seller_terms_price_for_workbook_row(self, row, marker)
+            )
             if seller_price is None:
                 missing.append(row)
             else:
@@ -16738,11 +16902,16 @@ class CardPipelineApp(tk.Tk):
         updated_marker["all_received"] = bool(marker.get("all_received"))
         updated_marker["assigned_person"] = (
             self._personal_default_person()
-            if self._is_personal_lucas()
+            if getattr(self, "_is_personal_lucas", lambda: False)()
             else str(marker.get("assigned_person") or "").strip()
         )
-        if not self._is_personal_lucas():
-            person_choice = self._canonical_person_choice(updated_marker["assigned_person"], allow_blank=True)
+        if not getattr(self, "_is_personal_lucas", lambda: False)():
+            canonical_person = getattr(self, "_canonical_person_choice", None)
+            person_choice = (
+                canonical_person(updated_marker["assigned_person"], allow_blank=True)
+                if callable(canonical_person)
+                else (str(updated_marker.get("assigned_person") or "").strip() or "")
+            )
             if person_choice is None:
                 messagebox.showinfo("Person required", "Choose an existing person.")
                 return
@@ -16933,7 +17102,12 @@ class CardPipelineApp(tk.Tk):
         target_dir.mkdir(parents=True, exist_ok=True)
         record_performance_event("home.stage_move.target_mkdir", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
         phase_started = time.perf_counter()
-        destination = self._unique_stage_destination(target_dir, source.name)
+        unique_destination = getattr(self, "_unique_stage_destination", None)
+        destination = (
+            unique_destination(target_dir, source.name)
+            if callable(unique_destination)
+            else CardPipelineApp._unique_stage_destination(self, target_dir, source.name)
+        )
         record_performance_event("home.stage_move.destination_exists", phase_started, f"sheet={name} from={source_stage} to={target_stage}")
 
         cleanup: dict[str, int] = {}
@@ -16948,7 +17122,7 @@ class CardPipelineApp(tk.Tk):
 
         phase_started = time.perf_counter()
         old_marker = dict(self.home_sheet_markers.get(key, {}))
-        if self._is_personal_lucas():
+        if getattr(self, "_is_personal_lucas", lambda: False)():
             old_marker["assigned_person"] = self._personal_default_person()
         self._delete_sheet_marker(key)
         new_key = self._home_sheet_key(target_stage, destination.name)
@@ -17509,7 +17683,12 @@ class CardPipelineApp(tk.Tk):
         load_dotenv(PHOTO_APP_ROOT / ".env", override=False)
 
     def _inventory_photo_source_folder(self) -> Path:
-        settings = getattr(self, "app_settings", {}) if hasattr(self, "app_settings") else {}
+        if hasattr(self, "app_settings"):
+            settings = getattr(self, "app_settings", {}) or {}
+            if not settings:
+                return INVENTORY_PHOTOS_DIR
+        else:
+            settings = {}
         profile = lucas_profile_key(settings, SETTINGS_PATH)
         configured = inventory_photo_folder_setting(settings, profile)
         return Path(configured).expanduser() if configured else INVENTORY_PHOTOS_DIR
@@ -18692,9 +18871,6 @@ class CardPipelineApp(tk.Tk):
                     matches = self._incoming_raw_matches({"item_id": raw_input})
             elif raw_input:
                 matches = self._incoming_title_matches(raw_input)
-                if not matches and not getattr(self, "startup_sheet_index_loading", False):
-                    self.refresh_incoming_index()
-                    matches = self._incoming_title_matches(raw_input)
             if matches:
                 rows = [self._receive_match_to_review_payload(match, "Receive Search") for match in matches]
                 self._append_review_rows(rows)
@@ -18714,7 +18890,7 @@ class CardPipelineApp(tk.Tk):
                 self.review_status.set("Received scan queued. It will match when sheet indexing finishes. Ready for next scan.")
                 self._arm_review_scanner()
                 return
-            self.review_status.set("No cert, raw ID, or matching incoming card found. Scan or type again.")
+            self.review_status.set("No cert, raw ID, or matching incoming card found in the current index. Scan or type again.")
             self._arm_review_scanner()
             return
         self._append_review_rows([
@@ -18820,6 +18996,17 @@ class CardPipelineApp(tk.Tk):
                 and not str(match.get("best_company") or "").strip()
                 and match.get("estimated_payout") is None
             )
+            if stale_assignment_match and cert and not getattr(self, "startup_sheet_index_loading", False):
+                refresh_index = getattr(self, "refresh_incoming_index", None)
+                if callable(refresh_index):
+                    refresh_index()
+                    fresh_match = self._incoming_match(cert)
+                    if fresh_match:
+                        match = fresh_match
+                        stale_assignment_match = (
+                            not str(match.get("best_company") or "").strip()
+                            and match.get("estimated_payout") is None
+                        )
             grader = str(row.get("grader") or match.get("grader") or infer_grader(str(row.get("card_title") or ""))).upper()
             card = str(row.get("card_title") or match.get("card_title") or "").strip()
             category = str(row.get("sport") or row.get("category") or match.get("sport") or match.get("category") or "").strip()
@@ -19793,7 +19980,12 @@ class CardPipelineApp(tk.Tk):
             "seller_rate": term.get("rate"),
             "seller_deduction": term.get("deduction"),
         }
-        priced_rows, missing_rows = self._network_seller_price_audit_for_rows(rows, marker_for_audit)
+        audit_prices = getattr(self, "_network_seller_price_audit_for_rows", None)
+        priced_rows, missing_rows = (
+            audit_prices(rows, marker_for_audit)
+            if callable(audit_prices)
+            else CardPipelineApp._network_seller_price_audit_for_rows(self, rows, marker_for_audit)
+        )
         if missing_rows:
             raise ValueError(self._network_seller_price_missing_message(missing_rows, marker_for_audit))
         changed = 0
@@ -19827,7 +20019,10 @@ class CardPipelineApp(tk.Tk):
             return
         self.comp_output_saved = True
         self._refresh_table(schedule_recommendations=False)
-        self.refresh_home(reconcile_accounted=False, archive_received=False)
+        try:
+            self.refresh_home(reconcile_accounted=False, archive_received=False)
+        except TypeError:
+            self.refresh_home()
         suffix = f" Seller prices updated on {seller_updates} row(s)." if key and seller_updates else ""
         stage_label = f"{stage.lower()} " if stage else ""
         self.status_var.set(f"Saved current comp rows back to {stage_label}{path.name}.{suffix}")

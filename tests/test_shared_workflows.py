@@ -4431,7 +4431,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(next(term for term in terms if term["seller"] == "Kevin Hambone")["balance_share"], 0.5)
                 self.assertEqual(sellers, {"john seller"})
                 self.assertFalse(dummy._source_sheet_is_seller_payout("Team Lot.xlsx", "Kevin Hambone", sellers))
-                self.assertTrue(dummy._source_sheet_is_seller_payout("Seller Lot.xlsx", "John Seller", sellers))
+                self.assertFalse(dummy._source_sheet_is_seller_payout("Seller Lot.xlsx", "John Seller", sellers))
             finally:
                 app.SELLER_TERMS_PATH = old_terms
 
@@ -4453,7 +4453,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         dummy = PayoutDummy()
         self.assertTrue(dummy._source_sheet_is_seller_payout("Seller Lot.xlsx", "John Seller"))
         self.assertFalse(dummy._source_sheet_is_seller_payout("Team Lot.xlsx", "John Seller"))
-        self.assertTrue(dummy._source_sheet_is_seller_payout("Legacy Missing Marker.xlsx", "John Seller"))
+        self.assertFalse(dummy._source_sheet_is_seller_payout("Legacy Missing Marker.xlsx", "John Seller"))
 
     def test_known_people_includes_seller_terms_people(self) -> None:
         class PeopleDummy:
@@ -5485,6 +5485,74 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.RECEIVED_SHEETS_DIR = old_received
                 app.ARCHIVED_SHEETS_DIR = old_archive
                 app.SHEET_MARKERS_PATH = old_markers
+
+    def test_home_refresh_defaults_to_read_only(self) -> None:
+        self.assertEqual(app.CardPipelineApp.refresh_home.__defaults__, (False, False))
+
+    def test_activity_log_entries_include_operation_id(self) -> None:
+        class ActivityDummy:
+            _load_activity_log = app.CardPipelineApp._load_activity_log
+            _save_activity_log = app.CardPipelineApp._save_activity_log
+            _append_activity = app.CardPipelineApp._append_activity
+
+        with TemporaryDirectory() as tmp:
+            old_pipeline = app.CARD_PIPELINE_DIR
+            old_activity = app.ACTIVITY_LOG_PATH
+            app.CARD_PIPELINE_DIR = Path(tmp)
+            app.ACTIVITY_LOG_PATH = Path(tmp) / "activity_log.json"
+            dummy = ActivityDummy()
+            dummy.lucas_identity = {"display_name": "Tester", "machine": "Test"}
+            try:
+                dummy._append_activity("Receive", "Marked one row.", {"rows_marked": 1})
+                entries = json.loads(app.ACTIVITY_LOG_PATH.read_text(encoding="utf-8"))["entries"]
+
+                self.assertEqual(entries[0]["action"], "Receive")
+                self.assertEqual(entries[0]["details"]["rows_marked"], 1)
+                self.assertRegex(entries[0]["details"]["operation_id"], r"^op-\d{14}-[0-9a-f]{8}$")
+            finally:
+                app.CARD_PIPELINE_DIR = old_pipeline
+                app.ACTIVITY_LOG_PATH = old_activity
+
+    def test_ledger_health_reports_active_sold_overlap(self) -> None:
+        class LedgerHealthDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _health_row = app.CardPipelineApp._health_row
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _ledger_health_rows = app.CardPipelineApp._ledger_health_rows
+
+            def _load_inventory_ledger(self):
+                return [
+                    {
+                        "cert_number": "123",
+                        "card_title": "Overlap Card",
+                        "source_sheet": "Lot.xlsx",
+                        "assigned_person": "Mikey",
+                        "status": "Active",
+                    }
+                ]
+
+            def _load_profit_ledger(self):
+                return [
+                    {
+                        "cert_number": "123",
+                        "card_title": "Overlap Card",
+                        "source_sheet": "Lot.xlsx",
+                        "assigned_person": "Mikey",
+                        "sale_price": 100,
+                        "status": "Sold from inventory",
+                    }
+                ]
+
+        rows = LedgerHealthDummy()._ledger_health_rows()
+        overlap = next(row for row in rows if row["name"] == "Active inventory also sold")
+
+        self.assertEqual(overlap["status"], "Needs attention")
+        self.assertIn("123|lot.xlsx|mikey", overlap["detail"])
 
     def test_deleted_sheet_file_archives_for_two_weeks(self) -> None:
         class DeleteArchiveDummy:
