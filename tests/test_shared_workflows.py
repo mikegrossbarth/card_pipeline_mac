@@ -2190,6 +2190,58 @@ class AssignmentEngineTests(unittest.TestCase):
         self.assertEqual(recommendation.company, "CY Alias Buyer")
         self.assertEqual(recommendation.payout, 120)
 
+    def test_company_rule_can_require_cy_confidence_range(self) -> None:
+        rules = assignment_engine.parse_rules(
+            json.dumps(
+                {
+                    "rules": [
+                        {
+                            "sports": ["football"],
+                            "priceRanges": [
+                                {"min": "10", "max": "100", "confidence": "2-6"},
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
+        engine = assignment_engine.AssignmentEngine(
+            [
+                assignment_engine.AssignmentCompany(
+                    "Court Yard 2",
+                    rules,
+                    [assignment_engine.PayoutTier(1, 100000, 0.9)],
+                    value_source="cy_estimate",
+                )
+            ]
+        )
+        accepted_row = WorkbookRow(
+            excel_row=2,
+            cert_number="10",
+            grader="PSA",
+            card_title="2025 Panini Donruss Optic Uptown #8 Puka Nacua PSA 9",
+            category="football",
+            cy_value=95,
+            cy_confidence=2,
+        )
+        rejected_row = WorkbookRow(
+            excel_row=3,
+            cert_number="11",
+            grader="PSA",
+            card_title="2025 Panini Donruss Optic Uptown #8 Puka Nacua PSA 9",
+            category="football",
+            cy_value=95,
+            cy_confidence=1,
+        )
+
+        accepted = engine.evaluate(accepted_row)[0]
+        rejected = engine.evaluate(rejected_row)[0]
+
+        self.assertTrue(accepted.accepted)
+        self.assertEqual(accepted.payout, 85.5)
+        self.assertFalse(rejected.accepted)
+        self.assertIn("CY confidence 1", rejected.reason)
+
     def test_cy_estimate_value_source_rejects_company_when_cy_missing(self) -> None:
         row = WorkbookRow(
             excel_row=2,

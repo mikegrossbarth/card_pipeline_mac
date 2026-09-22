@@ -475,6 +475,8 @@ class AssignmentRule:
     min_price_exclusive: bool = False
     min_year: int | None = None
     max_year: int | None = None
+    min_confidence: float | None = None
+    max_confidence: float | None = None
     grade_companies: tuple[str, ...] = ()
     min_grade: float | None = None
     max_grade: float | None = None
@@ -624,8 +626,9 @@ class AssignmentEngine:
                 decisions.append(AssignmentDecision(company.name, False, reason="missing comp/card ladder value"))
                 continue
             card_text = card_row_text(row, source_value)
-            if not company_accepts(company.rules, card_text, source_value, grader):
-                decisions.append(AssignmentDecision(company.name, False, reason=company_rejection_reason(company.rules, card_text, source_value, grader), source_value=source_value))
+            cy_confidence = to_number(getattr(row, "cy_confidence", None))
+            if not company_accepts(company.rules, card_text, source_value, grader, cy_confidence):
+                decisions.append(AssignmentDecision(company.name, False, reason=company_rejection_reason(company.rules, card_text, source_value, grader, cy_confidence), source_value=source_value))
                 continue
             payout_tiers = company_policy.payout_tiers if company_policy and company_policy.payout_tiers else company.payout_tiers
             payout_match = payout_match_for_value(payout_tiers, source_value, card_text, company.rules)
@@ -784,21 +787,21 @@ def card_row_text(row: Any, source_value: float) -> str:
     return " ".join(str(part or "") for part in parts).strip()
 
 
-def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -> bool:
+def company_accepts(rules: CompanyRules, text: str, price: float, grader: str, cy_confidence: float | None = None) -> bool:
     if not rules.accept_all and not (rules.include or rules.exclude or rules.ranges or rules.blocks or rules.grade_rules or rules.rule_groups or rules.min_year is not None or rules.max_year is not None):
         return False
     haystack = clean_text(text)
     grade_company, grade = parse_grade(text, grader)
 
     for rule in rules.blocks:
-        if rule_matches(rule, haystack, price):
+        if rule_matches(rule, haystack, price, cy_confidence):
             return False
     if any(term_matches(term, haystack) for term in rules.exclude):
         return False
     if not year_range_matches(rules.min_year, rules.max_year, haystack):
         return False
     if rules.rule_groups:
-        return any(company_accepts(group, text, price, grader) for group in rules.rule_groups)
+        return any(company_accepts(group, text, price, grader, cy_confidence) for group in rules.rule_groups)
 
     if rules.grade_rules:
         grade_rule = rules.grade_rules.get(clean_text(grade_company))
@@ -814,18 +817,18 @@ def company_accepts(rules: CompanyRules, text: str, price: float, grader: str) -
     if rules.include and not any(term_matches(term, haystack) for term in rules.include):
         return False
     if rules.ranges:
-        return any(rule_matches(rule, haystack, price) for rule in rules.ranges)
+        return any(rule_matches(rule, haystack, price, cy_confidence) for rule in rules.ranges)
     return True
 
 
-def company_rejection_reason(rules: CompanyRules, text: str, price: float, grader: str) -> str:
+def company_rejection_reason(rules: CompanyRules, text: str, price: float, grader: str, cy_confidence: float | None = None) -> str:
     if not rules.accept_all and not (rules.include or rules.exclude or rules.ranges or rules.blocks or rules.grade_rules or rules.rule_groups or rules.min_year is not None or rules.max_year is not None):
         return "no active company rules loaded"
     haystack = clean_text(text)
     grade_company, grade = parse_grade(text, grader)
 
     for rule in rules.blocks:
-        if rule_matches(rule, haystack, price):
+        if rule_matches(rule, haystack, price, cy_confidence):
             return f"blocked by rule: {describe_assignment_rule(rule)}"
     for term in rules.exclude:
         if term_matches(term, haystack):
@@ -835,7 +838,7 @@ def company_rejection_reason(rules: CompanyRules, text: str, price: float, grade
         actual = str(year) if year is not None else "blank"
         return f"card year {actual} is outside company year range: {describe_year_range(rules.min_year, rules.max_year)}"
     if rules.rule_groups:
-        group_reasons = [company_rejection_reason(group, text, price, grader) for group in rules.rule_groups]
+        group_reasons = [company_rejection_reason(group, text, price, grader, cy_confidence) for group in rules.rule_groups]
         unique_reasons = unique_values([reason for reason in group_reasons if reason])
         if unique_reasons:
             return "no rule group matched: " + "; ".join(unique_reasons[:3])
@@ -861,7 +864,8 @@ def company_rejection_reason(rules: CompanyRules, text: str, price: float, grade
     if rules.ranges:
         category_matches = [rule for rule in rules.ranges if not rule.matcher or term_matches(rule.matcher, haystack)]
         if category_matches:
-            return f"matched {describe_rule_matchers(category_matches)}, but value {format_rule_money(price)} is outside allowed range(s): {describe_rules(category_matches)}"
+            confidence_label = "blank" if cy_confidence is None else f"{cy_confidence:g}"
+            return f"matched {describe_rule_matchers(category_matches)}, but value {format_rule_money(price)} or CY confidence {confidence_label} is outside allowed range(s): {describe_rules(category_matches)}"
         return "no matching category/value rule; checked: " + describe_rules(rules.ranges)
     return "card does not match company rules"
 
@@ -918,6 +922,10 @@ def describe_assignment_rule(rule: AssignmentRule) -> str:
         low_year = str(rule.min_year) if rule.min_year is not None else "any year"
         high_year = str(rule.max_year) if rule.max_year is not None else "current"
         parts.append(f"years {low_year} to {high_year}")
+    if rule.min_confidence is not None or rule.max_confidence is not None:
+        low_confidence = f"{rule.min_confidence:g}" if rule.min_confidence is not None else "any"
+        high_confidence = f"{rule.max_confidence:g}" if rule.max_confidence is not None else "any"
+        parts.append(f"CY confidence {low_confidence} to {high_confidence}")
     if rule.grade_companies:
         parts.append("graders " + "/".join(rule.grade_companies))
     if rule.min_grade is not None:
@@ -1679,7 +1687,16 @@ def parse_custom_rule_group(payload: dict[str, Any]) -> CompanyRules:
             max_price = to_number(price_range.get("max") or price_range.get("maxPrice"))
             if min_price is None and max_price is None:
                 continue
-            group.ranges.append(AssignmentRule(min_price=min_price, max_price=max_price))
+            min_confidence, max_confidence = parse_confidence_bounds(
+                price_range.get("confidence")
+                or price_range.get("confidenceRange")
+                or price_range.get("cyConfidence")
+                or price_range.get("cy_confidence")
+                or price_range.get("conf")
+            )
+            min_confidence = to_number(price_range.get("minConfidence") or price_range.get("min_confidence")) if min_confidence is None else min_confidence
+            max_confidence = to_number(price_range.get("maxConfidence") or price_range.get("max_confidence")) if max_confidence is None else max_confidence
+            group.ranges.append(AssignmentRule(min_price=min_price, max_price=max_price, min_confidence=min_confidence, max_confidence=max_confidence))
     grades = payload.get("grades") or {}
     if isinstance(grades, dict):
         for company, grade_payload in grades.items():
@@ -1690,6 +1707,25 @@ def parse_custom_rule_group(payload: dict[str, Any]) -> CompanyRules:
                     max_grade=to_number(grade_payload.get("max")),
                 )
     return group
+
+
+def parse_confidence_bounds(value: Any) -> tuple[float | None, float | None]:
+    if isinstance(value, dict):
+        return (
+            to_number(value.get("min") or value.get("minConfidence") or value.get("from")),
+            to_number(value.get("max") or value.get("maxConfidence") or value.get("to")),
+        )
+    text = str(value or "").strip()
+    if not text:
+        return None, None
+    range_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:-|–|—|to|through|thru)\s*(\d+(?:\.\d+)?)", text, re.I)
+    if range_match:
+        return to_number(range_match.group(1)), to_number(range_match.group(2))
+    plus_match = re.search(r"(\d+(?:\.\d+)?)\s*\+", text)
+    if plus_match:
+        return to_number(plus_match.group(1)), None
+    numeric = to_number(text)
+    return numeric, numeric
 
 
 def parse_rule_line(line: str, block: bool = False) -> AssignmentRule:
@@ -2358,7 +2394,7 @@ def source_lines(text: str) -> list[str]:
     return rows
 
 
-def rule_matches(rule: AssignmentRule, haystack: str, price: float) -> bool:
+def rule_matches(rule: AssignmentRule, haystack: str, price: float, cy_confidence: float | None = None) -> bool:
     if rule.matcher and not term_matches(rule.matcher, haystack):
         return False
     if rule.min_price is not None:
@@ -2368,6 +2404,13 @@ def rule_matches(rule: AssignmentRule, haystack: str, price: float) -> bool:
             return False
     if rule.max_price is not None and price > rule.max_price:
         return False
+    if rule.min_confidence is not None or rule.max_confidence is not None:
+        if cy_confidence is None:
+            return False
+        if rule.min_confidence is not None and cy_confidence < rule.min_confidence:
+            return False
+        if rule.max_confidence is not None and cy_confidence > rule.max_confidence:
+            return False
     if rule.min_year is not None or rule.max_year is not None:
         year = card_year_from_text(haystack)
         if year is None:
