@@ -1734,7 +1734,7 @@ class CardPipelineApp(tk.Tk):
         comp_options.pack(fill=tk.X, pady=(10, 0))
         ttk.Button(comp_actions, text="Save Back to Source Sheet", command=self.save_comp_to_source_sheet, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Update Best Company/Payouts", command=self.update_all_comp_assignments, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(comp_actions, text="Run Card Ladder / CY", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(comp_actions, text="Run All Comps", command=self.run_all_comps, style="Primary.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Stop Run", command=self.stop_comp_run, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Clear Comp Rows", command=self.clear_comp_rows, style="Soft.TButton").pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Button(comp_actions, text="Lot Price Fill", command=self.open_lot_purchase_fill_popup, style="Soft.TButton").pack(side=tk.LEFT, padx=(8, 0))
@@ -1755,7 +1755,7 @@ class CardPipelineApp(tk.Tk):
             width=18,
         )
         self.comp_source_combo.pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Label(comp_options, text="Comp Source", style="Panel.TLabel").pack(side=tk.RIGHT)
+        ttk.Label(comp_options, text="Run", style="Panel.TLabel").pack(side=tk.RIGHT)
         self.comp_method_combo = ttk.Combobox(
             comp_options,
             textvariable=self.comp_strategy_label,

@@ -54,12 +54,9 @@ PAYOUT_SOURCE_LABELS = {
     "file": "Local payout file",
 }
 VALUE_SOURCE_LABELS = {
-    "": "",
     "comps": "Comps",
     "card_ladder": "Card Ladder value",
     "cy_estimate": "CY Estimate",
-    "purchase_price": "Purchase price",
-    "estimated_payout": "Estimated payout",
 }
 VALUE_SOURCE_VALUES_BY_LABEL = {label: value for value, label in VALUE_SOURCE_LABELS.items()}
 ROLE_OPTIONS = ("", "Owner")
