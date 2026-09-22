@@ -273,6 +273,37 @@ def save_app_settings(settings: dict[str, object]) -> None:
     atomic_write_json(SETTINGS_PATH, settings)
 
 
+def team_owner_name_from_settings(settings: dict[str, object] | None = None, identity: dict[str, object] | None = None) -> str:
+    settings = settings or {}
+    identity = identity or {}
+    configured = (
+        os.environ.get("LUCAS_TEAM_OWNER")
+        or settings.get("team_owner")
+        or settings.get("owner_name")
+        or settings.get("owner")
+    )
+    owner = str(configured or "").strip()
+    if owner:
+        return owner
+    identity_name = str(identity.get("display_name") or "").strip()
+    return identity_name or "Owner"
+
+
+def normalize_seller_terms_value_source(value: object) -> str:
+    key = re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+    if key in {"cardladder", "cardladdervalue", "cl", "clvalue"}:
+        return "card_ladder"
+    if key in {"comps", "comp", "compsaverage", "cardladdercomps", "cardladdercompsaverage"}:
+        return "comps"
+    if key in {"cy", "cyestimate", "cyvalue"}:
+        return "cy_estimate"
+    if key in {"purchase", "purchaseprice", "buy", "buyprice"}:
+        return "purchase_price"
+    if key in {"payout", "estimatedpayout"}:
+        return "estimated_payout"
+    return ""
+
+
 def lucas_profile_key(settings: dict[str, object] | None = None, settings_path: Path | None = None) -> str:
     return "personal" if is_personal_lucas_profile(settings, settings_path) else "team"
 
@@ -2235,18 +2266,16 @@ class CardPipelineApp(tk.Tk):
         ttk.Label(summary_panel, text="Active Balances", style="Panel.TLabel").pack(anchor=tk.W)
         self.payout_summary_tree = self._build_home_tree(
             summary_panel,
-            columns=("person", "sheet", "sheets", "cards", "expenses", "total_net_profit", "unpaid_net_profit", "balance"),
+            columns=("person", "sheet", "card_profit", "expenses", "open_net_profit", "balance"),
             headings={
                 "person": "Person",
                 "sheet": "Sheet",
-                "sheets": "Sheets",
-                "cards": "Cards",
+                "card_profit": "Card Profit",
                 "expenses": "Expenses",
-                "total_net_profit": "Total Net Profit",
-                "unpaid_net_profit": "Unpaid Net Profit",
-                "balance": "Balance Owed",
+                "open_net_profit": "Open Net Profit",
+                "balance": "Owed Now",
             },
-            widths={"person": 160, "sheet": 220, "sheets": 65, "cards": 65, "expenses": 100, "total_net_profit": 120, "unpaid_net_profit": 125, "balance": 120},
+            widths={"person": 170, "sheet": 220, "card_profit": 125, "expenses": 110, "open_net_profit": 130, "balance": 115},
             height=18,
         )
         self.payout_summary_tree.tag_configure("total_divider", background="#1f1f1f", foreground="#ffffff", font=("Segoe UI Semibold", 10))
@@ -2261,7 +2290,7 @@ class CardPipelineApp(tk.Tk):
         self.payout_detail_tree = self._build_home_tree(
             detail_panel,
             columns=("sheet", "stage", "person", "cards", "received", "volume", "status"),
-            headings={"sheet": "Sheet", "stage": "Stage", "person": "Person", "cards": "Cards", "received": "Received", "volume": "Balance", "status": "Status"},
+            headings={"sheet": "Sheet", "stage": "Stage", "person": "Person", "cards": "Cards", "received": "Received", "volume": "Owed Now", "status": "Status"},
             widths={"sheet": 280, "stage": 90, "person": 150, "cards": 80, "received": 95, "volume": 130, "status": 140},
             height=18,
         )
@@ -3406,6 +3435,15 @@ class CardPipelineApp(tk.Tk):
         card_title = str(row.card_title or "")
         sport = CardPipelineApp._inventory_sport_from_value(self, getattr(row, "category", ""), card_title)
         cert = str(row.cert_number or "").strip()
+        purchase_price = row.existing_value
+        marker_loader = getattr(self, "_sheet_marker_for_source_name", None)
+        marker = marker_loader(source_sheet) if callable(marker_loader) else {}
+        is_seller_marker = getattr(self, "_sheet_marker_is_seller_payout", lambda _marker: False)
+        if is_seller_marker(marker):
+            seller_price = self._seller_terms_price_for_workbook_row(row, marker)
+            if seller_price is None:
+                raise ValueError(self._network_seller_price_missing_message([row], marker))
+            purchase_price = seller_price
         return self._normalize_inventory_record(
             {
                 "date_added": datetime.now().strftime("%Y-%m-%d"),
@@ -3416,7 +3454,7 @@ class CardPipelineApp(tk.Tk):
                 "cert_number": cert,
                 "grader": row.grader,
                 "card_title": row.card_title,
-                "purchase_price": row.existing_value,
+                "purchase_price": purchase_price,
                 "card_ladder_value": row.card_ladder_value,
                 "card_ladder_comps_average": row.card_ladder_comps_average,
                 "cy_value": row.cy_value,
@@ -4246,13 +4284,14 @@ class CardPipelineApp(tk.Tk):
             cert = str(normalized.get("cert_number") or "")
             if source_sheet and cert:
                 remove_company_sheet_rows_for_source(COMPANY_SHEETS_DIR, source_sheet, {cert})
+            assigned_person = self._refund_inventory_owner_for_profit_record(normalized)
             inventory_records.append(
                 self._normalize_inventory_record(
                     {
                         "date_added": datetime.now().strftime("%Y-%m-%d"),
                         "item_type": normalized.get("item_type") or ("Raw" if str(normalized.get("item_id") or "").upper().startswith("RAW-") else "Graded"),
                         "item_id": normalized.get("item_id") or "",
-                        "assigned_person": normalized.get("assigned_person") or self._person_for_profit_record(normalized) or "Unassigned",
+                        "assigned_person": assigned_person,
                         "sport": CardPipelineApp._inventory_sport_from_value(self, normalized.get("sport") or normalized.get("category"), normalized.get("card_title")),
                         "cert_number": normalized.get("cert_number") or "",
                         "grader": normalized.get("grader") or "",
@@ -4275,6 +4314,13 @@ class CardPipelineApp(tk.Tk):
             restore_photos(inventory_records)
         self.add_inventory_records(inventory_records, refresh=False, allow_sold_restore=True)
         return refunded, inventory_records
+
+    def _refund_inventory_owner_for_profit_record(self, record: dict[str, object]) -> str:
+        for source_value in (record.get("original_source_sheet"), record.get("source_sheet")):
+            marker = self._sheet_marker_for_source_name(source_value)
+            if marker and self._sheet_marker_is_seller_payout(marker):
+                return self._inventory_owner_for_sheet_marker(marker, record.get("assigned_person"))
+        return str(record.get("assigned_person") or self._person_for_profit_record(record) or "Unassigned").strip() or "Unassigned"
 
     def mobile_profit_refund(self, payload: dict) -> dict:
         ledger = [self._normalize_profit_record(record) for record in self._load_profit_ledger()]
@@ -5066,6 +5112,7 @@ class CardPipelineApp(tk.Tk):
         person: str,
         company_keys: set[tuple[str, str]] | None = None,
         accounted_keys: set[tuple[str, str]] | None = None,
+        marker: dict[str, object] | None = None,
     ) -> list[dict[str, object]]:
         assigned_person = str(person or "").strip() or "Unassigned"
         if not path.exists():
@@ -5102,6 +5149,15 @@ class CardPipelineApp(tk.Tk):
                 continue
             sport = CardPipelineApp._inventory_sport_from_value(self, row.get("sport") or row.get("category"), card_title)
             item_type = "Graded" if cert else "Raw"
+            purchase_price = row.get("purchase_price")
+            is_seller_marker = getattr(self, "_sheet_marker_is_seller_payout", lambda _marker: False)
+            seller_price_for_row = getattr(self, "_seller_terms_price_for_sheet_row", None)
+            if marker and is_seller_marker(marker) and callable(seller_price_for_row):
+                seller_price = seller_price_for_row(row, marker)
+                if seller_price is None:
+                    workbook_row = self._workbook_rows_from_simple_records([row], source_name=path.name)[0]
+                    raise ValueError(self._network_seller_price_missing_message([workbook_row], marker))
+                purchase_price = seller_price
             candidates.append(
                 self._normalize_inventory_record(
                     {
@@ -5113,7 +5169,7 @@ class CardPipelineApp(tk.Tk):
                         "cert_number": cert,
                         "grader": row.get("grader") or "",
                         "card_title": card_title,
-                        "purchase_price": row.get("purchase_price"),
+                        "purchase_price": purchase_price,
                         "card_ladder_value": row.get("card_ladder_value"),
                         "card_ladder_comps_average": row.get("card_ladder_comps_average"),
                         "cy_value": row.get("cy_value"),
@@ -5140,19 +5196,36 @@ class CardPipelineApp(tk.Tk):
                 continue
             for path in sorted(directory.glob("*.xlsx"), key=lambda item: item.name.lower()):
                 marker = self.home_sheet_markers.get(self._home_sheet_key(stage, path.name), {})
-                person = str(marker.get("assigned_person") or "").strip() or default_person
+                owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
+                fallback_person = str(marker.get("assigned_person") or "").strip() or default_person
+                person = owner_for_marker(marker, fallback_person) if callable(owner_for_marker) else fallback_person
                 if not person:
                     continue
-                candidates.extend(self._received_inventory_candidate_records_for_sheet(stage, path, person, company_keys, accounted_keys))
+                candidates.extend(self._received_inventory_candidate_records_for_sheet(stage, path, person, company_keys, accounted_keys, marker))
         return candidates
 
     def _sync_received_inventory_to_ledger(self, filtered_only: bool = False) -> tuple[int, int]:
         return 0, 0
 
     def _sync_received_sheet_inventory_to_ledger(self, stage: str, path: Path, person: str) -> tuple[int, int]:
-        records = self._received_inventory_candidate_records_for_sheet(stage, path, person)
+        marker = self.home_sheet_markers.get(self._home_sheet_key(stage, path.name), {}) if hasattr(self, "home_sheet_markers") else {}
+        records = self._received_inventory_candidate_records_for_sheet(stage, path, person, marker=marker)
         added = self.add_inventory_records(records, refresh=False)
         return added, len(records)
+
+    def _sheet_marker_for_source_name(self, source_sheet: object) -> dict[str, object]:
+        source_name = Path(str(source_sheet or "")).name
+        if not source_name or not hasattr(self, "home_sheet_markers"):
+            return {}
+        for stage in ("Working", "Incoming", "Received"):
+            marker = self.home_sheet_markers.get(self._home_sheet_key(stage, source_name), {})
+            if marker:
+                return marker
+        for key, marker in self.home_sheet_markers.items():
+            _stage, name = self._split_home_sheet_key(key)
+            if Path(name).name == source_name:
+                return marker
+        return {}
 
     def _inventory_workbook_row(self, record: dict[str, object], excel_row: int) -> WorkbookRow:
         inventory_value = self._money_value(record.get("inventory_value"))
@@ -5461,6 +5534,27 @@ class CardPipelineApp(tk.Tk):
         if self._is_personal_lucas():
             return self._personal_default_person()
         return str(person or "").strip() or "Unassigned"
+
+    def _team_owner_name(self) -> str:
+        if self._is_personal_lucas():
+            return self._personal_default_person()
+        for term in self._load_seller_terms():
+            if str(term.get("role") or "").strip().lower() == "owner":
+                owner = str(term.get("seller") or "").strip()
+                if owner:
+                    return owner
+        return team_owner_name_from_settings(
+            getattr(self, "app_settings", {}),
+            getattr(self, "lucas_identity", {}) if isinstance(getattr(self, "lucas_identity", {}), dict) else {},
+        )
+
+    def _inventory_owner_for_sheet_marker(self, marker: dict[str, object], fallback_person: object = "") -> str:
+        if self._is_personal_lucas():
+            return self._personal_default_person()
+        if self._sheet_marker_is_seller_payout(marker):
+            owner = str(marker.get("inventory_owner") or "").strip()
+            return owner or self._team_owner_name()
+        return str(fallback_person or marker.get("assigned_person") or "").strip() or "Unassigned"
 
     def _personal_instagram_sync_enabled(self) -> bool:
         if not self._is_personal_lucas():
@@ -11443,13 +11537,17 @@ class CardPipelineApp(tk.Tk):
             return existing
         for stage in ("Incoming", "Received", "Working"):
             marker = self.home_sheet_markers.get(self._home_sheet_key(stage, source_sheet), {})
-            person = str(marker.get("assigned_person") or "").strip()
+            owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
+            fallback_person = str(marker.get("assigned_person") or "").strip()
+            person = owner_for_marker(marker, fallback_person) if callable(owner_for_marker) else fallback_person
             if person:
                 return person
         for key, marker in self.home_sheet_markers.items():
             _stage, name = self._split_home_sheet_key(key)
             if Path(name).name == source_sheet:
-                person = str(marker.get("assigned_person") or "").strip()
+                owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
+                fallback_person = str(marker.get("assigned_person") or "").strip()
+                person = owner_for_marker(marker, fallback_person) if callable(owner_for_marker) else fallback_person
                 if person:
                     return person
         return existing
@@ -11464,10 +11562,14 @@ class CardPipelineApp(tk.Tk):
 
     def _filtered_profit_records(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
         needle = self.profit_person_var.get().strip().lower() if hasattr(self, "profit_person_var") else ""
-        if needle == "my profit" and not self._is_personal_lucas():
+        owner_view_label = getattr(self, "_profit_owner_view_label", lambda: DEFAULT_PROFIT_OWNER_VIEW)()
+        if owner_view_label == "My Profit":
             needle = ""
-        if needle and not self._is_personal_lucas():
-            allowed_people = [person.lower() for person in self._profit_filter_people(self._known_people())]
+        is_personal = getattr(self, "_is_personal_lucas", lambda: False)()
+        if needle and not is_personal:
+            known_people = self._known_people() if hasattr(self, "_known_people") else []
+            filter_people = getattr(self, "_profit_filter_people", lambda people: people)
+            allowed_people = [person.lower() for person in filter_people(known_people)]
             if allowed_people and not any(needle in person for person in allowed_people):
                 return []
         search = self.profit_search_var.get().strip().lower() if hasattr(self, "profit_search_var") else ""
@@ -11495,6 +11597,8 @@ class CardPipelineApp(tk.Tk):
         if self._is_personal_lucas() or self._profit_owner_view_label() != "My Profit":
             return rows
         seller_names = self._seller_terms_seller_names()
+        owner_name = getattr(self, "_team_owner_name", lambda: "")()
+        owner = str(owner_name or "").strip()
         adjusted: list[dict[str, object]] = []
         for record in rows:
             normalized = dict(record)
@@ -11504,6 +11608,8 @@ class CardPipelineApp(tk.Tk):
             if profit is not None and person and person.lower() != "unassigned" and not self._source_sheet_is_seller_payout(source_sheet, person, seller_names):
                 share = self._team_balance_share_for_person(person)
                 normalized["profit"] = round(float(profit) * (1.0 - share), 2)
+                if owner:
+                    normalized["assigned_person"] = owner
             adjusted.append(normalized)
         return adjusted
 
@@ -11561,7 +11667,10 @@ class CardPipelineApp(tk.Tk):
 
     def _profit_owner_view_label(self) -> str:
         person = self.profit_person_var.get().strip().lower() if hasattr(self, "profit_person_var") else ""
-        if not self._is_personal_lucas() and person == "my profit":
+        if self._is_personal_lucas():
+            return DEFAULT_PROFIT_OWNER_VIEW
+        owner = str(getattr(self, "_team_owner_name", lambda: "")() or "").strip().lower()
+        if person == "my profit" or (owner and person == owner):
             return "My Profit"
         return DEFAULT_PROFIT_OWNER_VIEW
 
@@ -14355,7 +14464,8 @@ class CardPipelineApp(tk.Tk):
                 deduction = self._seller_terms_rate(term.get("deduction"))
         if rate is None and deduction is None and not term:
             return None
-        return {"seller": seller, "sheet_type": sheet_type, "rate": rate, "deduction": deduction}
+        value_source = str((term or {}).get("value_source") or "").strip()
+        return {"seller": seller, "sheet_type": sheet_type, "rate": rate, "deduction": deduction, "value_source": value_source}
 
     def _seller_terms_value_label(self, sheet_type: str, deduction: float | None = None) -> str:
         if deduction is not None:
@@ -14399,7 +14509,12 @@ class CardPipelineApp(tk.Tk):
                 continue
             payout_total += seller_price
             ready_count += 1
-        value_label = self._seller_terms_value_label(sheet_type, deduction=deduction)
+        value_label_for_term = getattr(self, "_seller_terms_value_label_for_term", None)
+        value_label = (
+            value_label_for_term(term, sheet_type, deduction=deduction)
+            if callable(value_label_for_term)
+            else self._seller_terms_value_label(sheet_type, deduction=deduction)
+        )
         pending = missing_count > 0
         warning = ""
         if pending:
@@ -14437,6 +14552,8 @@ class CardPipelineApp(tk.Tk):
         summary_view = self._payout_summary_view_label()
         for item in self._payout_sheet_items():
             person = item["person"] or "Unassigned"
+            if not self._include_payout_summary_item(item):
+                continue
             if filter_person and filter_person not in person.lower():
                 continue
             summary_key = person
@@ -14452,13 +14569,10 @@ class CardPipelineApp(tk.Tk):
                 {
                     "person": person,
                     "sheet": summary_sheet,
-                    "sheets": 0,
-                    "cards": 0,
-                    "expenses": 0.0,
-                    "total_net_profit": 0.0,
                     "unpaid_sheets": 0,
                     "unpaid_cards": 0,
                     "unpaid_expenses": 0.0,
+                    "unpaid_card_net_profit": 0.0,
                     "unpaid_net_profit": 0.0,
                     "balance": 0.0,
                     "item_keys": [],
@@ -14467,33 +14581,33 @@ class CardPipelineApp(tk.Tk):
             item_keys = balance.setdefault("item_keys", [])
             if isinstance(item_keys, list):
                 item_keys.append(str(item["key"]))
-            balance["sheets"] = int(balance["sheets"]) + 1
-            balance["cards"] = int(balance["cards"]) + int(item["row_count"])
-            balance["expenses"] = float(balance["expenses"]) + float(item.get("expense_total") or 0.0)
-            balance["total_net_profit"] = float(balance["total_net_profit"]) + float(item.get("net_profit_total") or 0.0)
             if not item["paid"] and item.get("payable", True):
+                open_net_profit = self._summary_unpaid_net_profit_for_item(item)
                 balance["unpaid_sheets"] = int(balance["unpaid_sheets"]) + 1
                 balance["unpaid_cards"] = int(balance["unpaid_cards"]) + int(item["row_count"])
                 balance["unpaid_expenses"] = float(balance["unpaid_expenses"]) + float(item.get("expense_total") or 0.0)
-                balance["unpaid_net_profit"] = float(balance["unpaid_net_profit"]) + float(item.get("net_profit_total") or 0.0)
+                if str(item.get("payout_kind") or "") != "team_expense":
+                    balance["unpaid_card_net_profit"] = float(balance["unpaid_card_net_profit"]) + open_net_profit
+                balance["unpaid_net_profit"] = float(balance["unpaid_net_profit"]) + open_net_profit
                 balance["balance"] = float(balance["balance"]) + float(item["payout_balance"])
-            iid = f"payout:{detail_count}"
-            self.payout_detail_keys[iid] = str(item["key"])
-            self.payout_detail_tree.insert(
-                "",
-                tk.END,
-                iid=iid,
-                values=(
-                    item["name"],
-                    item["stage"],
-                    item["person"],
-                    item["row_count"],
-                    f"{item['received_count']}/{item['row_count']}",
-                    format_money(float(item["payout_balance"])),
-                    item["status"],
-                ),
-            )
-            detail_count += 1
+            if self._show_payout_detail_item(item):
+                iid = f"payout:{detail_count}"
+                self.payout_detail_keys[iid] = str(item["key"])
+                self.payout_detail_tree.insert(
+                    "",
+                    tk.END,
+                    iid=iid,
+                    values=(
+                        item["name"],
+                        item["stage"],
+                        item["person"],
+                        item["row_count"],
+                        f"{item['received_count']}/{item['row_count']}",
+                        format_money(float(item["payout_balance"])),
+                        item["status"],
+                    ),
+                )
+                detail_count += 1
 
         for index, (_summary_key, values) in enumerate(sorted(balances.items(), key=lambda pair: (-float(pair[1]["balance"]), str(pair[1].get("person") or "").lower(), str(pair[1].get("sheet") or "").lower()))):
             iid = f"payout-summary:{index}"
@@ -14508,43 +14622,58 @@ class CardPipelineApp(tk.Tk):
                 values=(
                     person,
                     str(values.get("sheet") or "All"),
-                    int(values["sheets"]),
-                    int(values["cards"]),
-                    format_money(float(values["expenses"])),
-                    format_money(float(values["total_net_profit"])),
+                    format_money(float(values.get("unpaid_card_net_profit") or 0.0)),
+                    self._payout_offsets_display(values),
                     format_money(float(values["unpaid_net_profit"])),
                     format_money(float(values["balance"])),
                 ),
             )
 
         total_balance = sum(float(values["balance"]) for values in balances.values())
-        total_sheets = sum(int(values["sheets"]) for values in balances.values())
-        total_cards = sum(int(values["cards"]) for values in balances.values())
-        total_expenses = sum(float(values["expenses"]) for values in balances.values())
-        total_net_profit = sum(float(values["total_net_profit"]) for values in balances.values())
         total_unpaid_net_profit = sum(float(values["unpaid_net_profit"]) for values in balances.values())
         if balances:
             self.payout_summary_tree.insert(
                 "",
                 tk.END,
                 tags=("total_divider",),
-                values=("------", "------", "------", "------", "------", "------", "------", "------"),
+                values=("------", "------", "------", "------", "------", "------"),
             )
             self.payout_summary_tree.insert(
                 "",
                 tk.END,
                 tags=("total_row",),
-                values=("TOTAL", "", total_sheets, total_cards, format_money(total_expenses), format_money(total_net_profit), format_money(total_unpaid_net_profit), format_money(total_balance)),
+                values=("TOTAL", "", "", "", format_money(total_unpaid_net_profit), format_money(total_balance)),
             )
         filter_label = self.payout_person_var.get().strip()
         suffix = f" | Filter: {filter_label}" if filter_label else ""
         view_suffix = f" | View: {summary_view}"
-        self.payout_status_var.set(f"{detail_count} payout row(s) | Active balance: {format_money(total_balance)}{suffix}{view_suffix}")
+        self.payout_status_var.set(f"{detail_count} payment sheet row(s) | Total owed now: {format_money(total_balance)}{suffix}{view_suffix}")
         record_performance_event(
             "payouts.refresh",
             perf_start,
-            f"details={detail_count} people={len(balances)} total_net={total_net_profit:.2f} unpaid_net={total_unpaid_net_profit:.2f} expenses={total_expenses:.2f} balance={total_balance:.2f}",
+            f"details={detail_count} people={len(balances)} unpaid_net={total_unpaid_net_profit:.2f} balance={total_balance:.2f}",
         )
+
+    def _show_payout_detail_item(self, item: dict[str, object]) -> bool:
+        return str(item.get("payout_kind") or "") == "seller_sheet"
+
+    def _include_payout_summary_item(self, item: dict[str, object]) -> bool:
+        person = str(item.get("person") or "").strip()
+        return bool(person) and person.lower() != "unassigned"
+
+    def _payout_offsets_display(self, values: dict[str, object]) -> str:
+        expense_offsets = float(values.get("unpaid_expenses") or 0.0)
+        if abs(expense_offsets) < 0.005:
+            return ""
+        return f"-{format_money(abs(expense_offsets))}"
+
+    def _summary_unpaid_net_profit_for_item(self, item: dict[str, object]) -> float:
+        if item.get("payout_kind") not in {"team_card", "team_expense"}:
+            return round(float(item.get("net_profit_total") or 0.0), 2)
+        share = self._team_balance_share_for_person(str(item.get("person") or ""))
+        if abs(float(share or 0.0)) < 0.0001:
+            return 0.0
+        return round(float(item.get("payout_balance") or 0.0) / float(share), 2)
 
     def _apply_payout_marker_balance_state(self, item: dict[str, object]) -> dict[str, object]:
         key = str(item.get("key") or "")
@@ -14590,8 +14719,7 @@ class CardPipelineApp(tk.Tk):
                     received_count = int(summary.get("received_count") or row_count)
                 status = "Paid" if paid else self._payout_sheet_status(stage, marker, summary)
                 person = str(marker.get("assigned_person") or "").strip()
-                person_key = person.lower()
-                is_seller_payout = self._sheet_marker_is_seller_payout(marker) or bool(person_key and person_key in seller_names)
+                is_seller_payout = self._sheet_marker_is_seller_payout(marker)
                 if not is_seller_payout:
                     continue
                 purchase_total = float(summary.get("purchase_total") or 0.0)
@@ -14701,6 +14829,8 @@ class CardPipelineApp(tk.Tk):
         profit = self._money_value(record.get("profit"))
         if not person or not source_sheet or profit is None or profit == 0:
             return None
+        if person.lower() in seller_names:
+            return None
         if self._source_sheet_is_seller_payout(source_sheet, person, seller_names):
             return None
         key = self._sold_card_payout_key(person, record)
@@ -14748,6 +14878,8 @@ class CardPipelineApp(tk.Tk):
         source_sheet = Path(str(record.get("source_sheet") or "")).name.strip() or "Expenses"
         profit = self._money_value(record.get("profit"))
         if not person or profit is None or profit == 0:
+            return None
+        if person.lower() in seller_names:
             return None
         if source_sheet.lower() != "expenses" and self._source_sheet_is_seller_payout(source_sheet, person, seller_names):
             return None
@@ -14991,8 +15123,7 @@ class CardPipelineApp(tk.Tk):
                     return True
         if saw_marker:
             return False
-        seller_names = seller_names if seller_names is not None else self._seller_terms_seller_names()
-        return bool(str(person or "").strip().lower() in seller_names)
+        return False
 
     def _active_payout_balance(
         self,
@@ -15066,8 +15197,9 @@ class CardPipelineApp(tk.Tk):
         for row in rows:
             normalized = {re.sub(r"[^a-z0-9]+", "", str(key or "").lower()): value for key, value in row.items()}
             seller = str(normalized.get("seller") or normalized.get("person") or normalized.get("name") or "").strip()
+            role = str(normalized.get("role") or "").strip().lower()
             sheet_type = str(normalized.get("sheettype") or normalized.get("type") or normalized.get("company") or "").strip()
-            value_source = str(normalized.get("valuesource") or normalized.get("source") or "").strip()
+            value_source = normalize_seller_terms_value_source(normalized.get("valuesource") or normalized.get("source") or "")
             rate = self._seller_terms_rate(normalized.get("sellerrate") or normalized.get("rate") or normalized.get("payout") or normalized.get("percentage"))
             deduction = self._seller_terms_rate(normalized.get("deduction") or normalized.get("sellerdeduction") or normalized.get("deductionpercent") or normalized.get("deductionpercentage"))
             balance_share = self._seller_terms_rate(normalized.get("balanceshare") or normalized.get("balancesharepercent") or normalized.get("teamshare") or normalized.get("profitshare") or normalized.get("payoutshare"))
@@ -15075,8 +15207,8 @@ class CardPipelineApp(tk.Tk):
             max_raw = normalized.get("maxvalue") or normalized.get("max") or normalized.get("maximum") or normalized.get("ceiling")
             min_value = self._seller_terms_min_value(min_raw)
             max_value = self._seller_terms_max_value(max_raw)
-            if seller and ((sheet_type and (rate is not None or deduction is not None)) or balance_share is not None):
-                terms.append({"seller": seller, "sheet_type": sheet_type, "value_source": value_source, "min_value": min_value, "max_value": max_value, "rate": rate, "deduction": deduction, "balance_share": balance_share})
+            if seller and (role == "owner" or (sheet_type and (rate is not None or deduction is not None)) or balance_share is not None):
+                terms.append({"seller": seller, "role": role, "sheet_type": sheet_type, "value_source": value_source, "min_value": min_value, "max_value": max_value, "rate": rate, "deduction": deduction, "balance_share": balance_share})
         return terms
 
     def _refresh_seller_terms_dropdowns(self) -> None:
@@ -15147,6 +15279,37 @@ class CardPipelineApp(tk.Tk):
                 return term
         return fallback if source_value is None else None
 
+    def _seller_terms_value_from_source(self, row: WorkbookRow, value_source: object) -> float | None:
+        key = re.sub(r"[^a-z0-9]+", "", str(value_source or "").strip().lower())
+        if not key:
+            return None
+        if key in {"cardladder", "cardladdervalue", "cl", "clvalue"}:
+            return self._money_value(getattr(row, "card_ladder_value", None))
+        if key in {"comps", "comp", "compsaverage", "cardladdercomps", "cardladdercompsaverage"}:
+            return self._money_value(getattr(row, "card_ladder_comps_average", None))
+        if key in {"cy", "cyestimate", "cyvalue"}:
+            return self._money_value(getattr(row, "cy_value", None))
+        if key in {"purchase", "purchaseprice", "buy", "buyprice"}:
+            return self._money_value(getattr(row, "existing_value", None))
+        if key in {"payout", "estimatedpayout"}:
+            return self._money_value(getattr(row, "estimated_payout", None))
+        return None
+
+    def _seller_terms_value_label_for_term(self, term: dict[str, object] | None, sheet_type: str, deduction: float | None = None) -> str:
+        value_source = str((term or {}).get("value_source") or "").strip()
+        source_key = re.sub(r"[^a-z0-9]+", "", value_source.lower())
+        if source_key in {"cardladder", "cardladdervalue", "cl", "clvalue"}:
+            return "Card Ladder value"
+        if source_key in {"comps", "comp", "compsaverage", "cardladdercomps", "cardladdercompsaverage"}:
+            return "Comps"
+        if source_key in {"cy", "cyestimate", "cyvalue"}:
+            return "CY Estimate"
+        if source_key in {"purchase", "purchaseprice", "buy", "buyprice"}:
+            return "Purchase price"
+        if source_key in {"payout", "estimatedpayout"}:
+            return f"{sheet_type} payout"
+        return self._seller_terms_value_label(sheet_type, deduction=deduction)
+
     def _seller_terms_company_decision(self, row: WorkbookRow, company_name: str):
         company_key = company_name.strip().lower()
         decisions = list(self.assignment_engine.evaluate(row))
@@ -15158,6 +15321,23 @@ class CardPipelineApp(tk.Tk):
         return None, decisions
 
     def _seller_terms_company_price(self, row: WorkbookRow, company_name: str, rate: float | None = None, deduction: float | None = None, term: dict[str, object] | None = None) -> float | None:
+        if term is not None and str(term.get("value_source") or "").strip():
+            source_value = self._seller_terms_value_from_source(row, term.get("value_source"))
+            if source_value is None or not self._seller_terms_value_in_range(source_value, term):
+                return None
+            rate = self._seller_terms_rate(term.get("rate"))
+            deduction = self._seller_terms_rate(term.get("deduction"))
+            if deduction is not None:
+                base_payout = self._money_value(getattr(row, "estimated_payout", None))
+                if base_payout is None:
+                    decision, _decisions = self._seller_terms_company_decision(row, company_name)
+                    base_payout = self._money_value(getattr(decision, "payout", None)) if decision is not None else None
+                if base_payout is None:
+                    return None
+                return max(0.0, round(base_payout - (source_value * deduction), 2))
+            if rate is not None:
+                return round(source_value * rate, 2)
+            return None
         decision, _decisions = self._seller_terms_company_decision(row, company_name)
         if decision is None:
             return None
@@ -15178,11 +15358,77 @@ class CardPipelineApp(tk.Tk):
             return round(decision.source_value * rate, 2)
         return None
 
+    def _seller_terms_price_for_workbook_row(self, row: WorkbookRow, marker: dict[str, object]) -> float | None:
+        seller = str(marker.get("assigned_person") or "").strip()
+        sheet_type = str(marker.get("seller_sheet_type") or "").strip()
+        if not seller or not sheet_type:
+            return None
+        match_for_row = getattr(self, "_seller_terms_match_for_row", None)
+        row_term, _decision = match_for_row(seller, sheet_type, row) if callable(match_for_row) else (None, None)
+        if row_term is not None:
+            return self._seller_terms_company_price(row, sheet_type, term=row_term)
+        rate = self._seller_terms_rate(marker.get("seller_rate"))
+        deduction = self._seller_terms_rate(marker.get("seller_deduction"))
+        if deduction is not None:
+            return self._seller_terms_company_price(row, sheet_type, deduction=deduction)
+        if rate is not None:
+            return self._seller_terms_company_price(row, sheet_type, rate=rate)
+        return None
+
+    def _seller_terms_missing_row_label(self, row: WorkbookRow) -> str:
+        pieces = [scan_to_cert(getattr(row, "cert_number", "")), str(getattr(row, "item_id", "") or "").strip(), str(getattr(row, "card_title", "") or "").strip()]
+        return " / ".join(piece for piece in pieces if piece) or f"row {getattr(row, 'excel_row', '') or '?'}"
+
+    def _network_seller_price_audit_for_rows(self, rows: list[WorkbookRow], marker: dict[str, object]) -> tuple[list[tuple[WorkbookRow, float]], list[WorkbookRow]]:
+        priced: list[tuple[WorkbookRow, float]] = []
+        missing: list[WorkbookRow] = []
+        if not self._sheet_marker_is_seller_payout(marker):
+            return priced, missing
+        for row in rows:
+            seller_price = self._seller_terms_price_for_workbook_row(row, marker)
+            if seller_price is None:
+                missing.append(row)
+            else:
+                priced.append((row, seller_price))
+        return priced, missing
+
+    def _network_seller_price_missing_message(self, rows: list[WorkbookRow], marker: dict[str, object]) -> str:
+        seller = str(marker.get("assigned_person") or "seller").strip() or "seller"
+        sheet_type = str(marker.get("seller_sheet_type") or "People Rule").strip() or "People Rule"
+        labels = [self._seller_terms_missing_row_label(row) for row in rows[:5]]
+        suffix = "\n" + "\n".join(f"- {label}" for label in labels) if labels else ""
+        if len(rows) > 5:
+            suffix += f"\n- ...and {len(rows) - 5} more"
+        return f"Sheet cannot be made: {len(rows)} Network Mode row(s) are missing values needed to calculate the {seller} / {sheet_type} seller price. Fix the missing values or People Rule before saving or receiving this sheet.{suffix}"
+
+    def _seller_terms_price_for_sheet_row(self, row: dict[str, object], marker: dict[str, object]) -> float | None:
+        workbook_row = WorkbookRow(
+            excel_row=0,
+            cert_number=str(row.get("cert_number") or ""),
+            grader=str(row.get("grader") or ""),
+            card_title=str(row.get("card_title") or ""),
+            item_id=str(row.get("item_id") or ""),
+            category=str(row.get("sport") or row.get("category") or ""),
+            existing_value=self._money_value(row.get("purchase_price")),
+            card_ladder_value=self._money_value(row.get("card_ladder_value")),
+            card_ladder_comps_average=self._money_value(row.get("card_ladder_comps_average")),
+            cy_value=self._money_value(row.get("cy_value")),
+            cy_confidence=row.get("cy_confidence"),
+            best_company=str(row.get("best_company") or ""),
+            estimated_payout=self._money_value(row.get("estimated_payout")),
+        )
+        return self._seller_terms_price_for_workbook_row(workbook_row, marker)
+
     def _seller_terms_match_for_row(self, seller: str, sheet_type: str, row: WorkbookRow) -> tuple[dict[str, object] | None, object | None]:
         decision, _decisions = self._seller_terms_company_decision(row, sheet_type)
+        fallback = self._seller_terms_match(seller, sheet_type, None)
+        if fallback is not None and str(fallback.get("value_source") or "").strip():
+            source_value = self._seller_terms_value_from_source(row, fallback.get("value_source"))
+            ranged = self._seller_terms_match(seller, sheet_type, source_value) if source_value is not None else fallback
+            return ranged or fallback, decision
         source_value = getattr(decision, "source_value", None) if decision is not None else None
         if source_value is None:
-            return self._seller_terms_match(seller, sheet_type, None), decision
+            return fallback, decision
         return self._seller_terms_match(seller, sheet_type, source_value), decision
 
     def _seller_terms_no_match_details(self, rows: list[WorkbookRow], company_name: str, limit: int = 5) -> str:
@@ -15365,6 +15611,9 @@ class CardPipelineApp(tk.Tk):
             return options
         needle = str(filter_text or "").strip().lower()
         base_people = self._profit_filter_people(base_people)
+        owner = str(getattr(self, "_team_owner_name", lambda: "")() or "").strip()
+        if owner and owner.lower() not in {person.lower() for person in base_people}:
+            base_people = [owner, *base_people]
         options = ([""] if allow_blank else []) + base_people
         if not needle or "my profit".startswith(needle) or needle in "my profit":
             return [*([""] if allow_blank else []), "My Profit", *[person for person in base_people if person.lower() != "my profit"]]
@@ -15418,6 +15667,8 @@ class CardPipelineApp(tk.Tk):
             return counts
         for marker in self.home_sheet_markers.values():
             if str(marker.get("assigned_person") or "").strip().lower() == target:
+                if self._sheet_marker_is_seller_payout(marker) and not bool(marker.get("paid")):
+                    continue
                 marker["assigned_person"] = ""
                 counts["markers"] += 1
         if counts["markers"]:
@@ -15804,6 +16055,8 @@ class CardPipelineApp(tk.Tk):
             closed_offsets = self._mark_zero_balance_payout_offsets_paid(person, matching_items, paid_at)
         self._save_sheet_markers()
         self.refresh_home()
+        if hasattr(self, "refresh_payouts_tab"):
+            self.refresh_payouts_tab()
         if popup is not None:
             popup.destroy()
         suffix = f" Closed {closed_offsets} offset row(s)." if closed_offsets else ""
@@ -15860,6 +16113,8 @@ class CardPipelineApp(tk.Tk):
             self.home_sheet_markers[key] = marker
         self._save_sheet_markers()
         self.refresh_home()
+        if hasattr(self, "refresh_payouts_tab"):
+            self.refresh_payouts_tab()
         if popup is not None:
             popup.destroy()
         self.status_var.set(f"Marked {len(matching_items)} payout row(s) paid for {person}: {format_money(total_balance)}.")
@@ -15925,6 +16180,8 @@ class CardPipelineApp(tk.Tk):
         person_combo = ttk.Combobox(frame, textvariable=person_var, width=34)
         person_combo.grid(row=2, column=1, sticky="ew", pady=(0, 10))
         self._bind_person_autocomplete(person_combo)
+        if self._sheet_marker_is_seller_payout(marker):
+            person_combo.configure(state="disabled")
         paid_state = tk.NORMAL if payable or bool(marker.get("paid")) else tk.DISABLED
         ttk.Checkbutton(frame, text="Paid", variable=paid_var, state=paid_state, style="Panel.TCheckbutton").grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 14))
         buttons = ttk.Frame(frame, style="Panel.TFrame")
@@ -15960,6 +16217,10 @@ class CardPipelineApp(tk.Tk):
         if person_choice is None:
             messagebox.showinfo("Person required", "Choose an existing person.")
             return
+        existing_person = str(marker.get("assigned_person") or "").strip()
+        if self._sheet_marker_is_seller_payout(marker) and existing_person and person_choice != existing_person:
+            messagebox.showinfo("Network payout locked", "Network payout assignments cannot be changed from the payout panel.")
+            return
         marker["assigned_person"] = person_choice
         marker["paid"] = bool(paid)
         if paid:
@@ -15971,6 +16232,8 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_markers[key] = marker
         self._save_sheet_markers()
         self.refresh_home()
+        if hasattr(self, "refresh_payouts_tab"):
+            self.refresh_payouts_tab()
         if popup is not None:
             popup.destroy()
         self.status_var.set(f"Updated payout marker for {self._split_home_sheet_key(key)[1]}.")
@@ -16206,7 +16469,9 @@ class CardPipelineApp(tk.Tk):
                 if target_stage == "Received" and moved_key:
                     received_stage, received_name = self._split_home_sheet_key(moved_key)
                     marker = self.home_sheet_markers.get(moved_key, {})
-                    person = str(marker.get("assigned_person") or "").strip() or "Unassigned"
+                    owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
+                    fallback_person = str(marker.get("assigned_person") or "").strip() or "Unassigned"
+                    person = owner_for_marker(marker, fallback_person) if callable(owner_for_marker) else fallback_person
                     if received_stage == "Received" and received_name:
                         phase_started = time.perf_counter()
                         inventory_rows_added, inventory_candidate_rows = self._sync_received_sheet_inventory_to_ledger(
@@ -16465,6 +16730,8 @@ class CardPipelineApp(tk.Tk):
         existing_marker = dict(self.home_sheet_markers.get(self.home_selected_sheet_key, {}))
         incoming_proper = bool(marker.get("incoming_proper"))
         old_assigned_person = str(existing_marker.get("assigned_person") or "").strip()
+        owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
+        old_inventory_owner = owner_for_marker(existing_marker, old_assigned_person) if callable(owner_for_marker) else old_assigned_person
         updated_marker = dict(existing_marker)
         updated_marker["paid"] = bool(existing_marker.get("paid"))
         updated_marker["tracking_number"] = str(marker.get("tracking_number") or "").strip()
@@ -16497,6 +16764,9 @@ class CardPipelineApp(tk.Tk):
                 updated_marker["seller_terms_applied"] = True
                 updated_marker["seller_rate"] = seller_term.get("rate")
                 updated_marker["seller_deduction"] = seller_term.get("deduction")
+                updated_marker["inventory_owner"] = getattr(self, "_team_owner_name", lambda: "Owner")()
+            elif not str(updated_marker.get("inventory_owner") or "").strip():
+                updated_marker["inventory_owner"] = getattr(self, "_team_owner_name", lambda: "Owner")()
         marker = updated_marker
         key = self.home_selected_sheet_key
         source_kind, _ = self._split_home_sheet_key(key)
@@ -16531,14 +16801,17 @@ class CardPipelineApp(tk.Tk):
                     marker = self._marker_for_stage(marker, current_kind)
                 self.home_sheet_markers[key] = marker
                 _current_kind, current_name = self._split_home_sheet_key(key)
-                if old_assigned_person != str(marker.get("assigned_person") or "").strip():
-                    inventory_rows_reassigned = self._retarget_inventory_rows_for_source(current_name, str(marker.get("assigned_person") or ""))
-                    profit_rows_reassigned = self._retarget_profit_rows_for_source(current_name, str(marker.get("assigned_person") or ""))
-                if _current_kind == "Received" and marker["all_received"] and str(marker.get("assigned_person") or "").strip():
+                owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
+                fallback_owner = str(marker.get("assigned_person") or "").strip()
+                inventory_owner = owner_for_marker(marker, fallback_owner) if callable(owner_for_marker) else fallback_owner
+                if old_inventory_owner != inventory_owner:
+                    inventory_rows_reassigned = self._retarget_inventory_rows_for_source(current_name, inventory_owner)
+                    profit_rows_reassigned = self._retarget_profit_rows_for_source(current_name, inventory_owner)
+                if _current_kind == "Received" and marker["all_received"] and inventory_owner:
                     inventory_rows_added, inventory_candidate_rows = self._sync_received_sheet_inventory_to_ledger(
                         _current_kind,
                         self._sheet_path_for_stage(_current_kind, current_name),
-                        str(marker.get("assigned_person") or ""),
+                        inventory_owner,
                     )
                 self._save_sheet_markers()
         except Exception as error:
@@ -16626,6 +16899,7 @@ class CardPipelineApp(tk.Tk):
         if sheet_type:
             marker["seller_terms_applied"] = True
             marker["seller_sheet_type"] = sheet_type
+            marker["inventory_owner"] = getattr(self, "_team_owner_name", lambda: "Owner")()
             if term:
                 rate = term.get("rate")
                 deduction = term.get("deduction")
@@ -19053,7 +19327,7 @@ class CardPipelineApp(tk.Tk):
                 if moved_received:
                     self._save_sheet_markers()
         except Exception as error:
-            messagebox.showerror("Shared folder busy", str(error))
+            messagebox.showerror("Receive update failed", str(error))
             self.status_var.set(f"Receive update failed: {error}")
             return
         self._drop_marked_receive_rows_from_index(marked_certs, marked_row_refs)
@@ -19509,25 +19783,21 @@ class CardPipelineApp(tk.Tk):
     def _apply_seller_terms_to_rows_for_marker(self, rows: list[WorkbookRow], marker: dict[str, object]) -> int:
         term = self._seller_term_for_marker(marker)
         if not term:
+            if self._sheet_marker_is_seller_payout(marker):
+                raise ValueError(self._network_seller_price_missing_message(rows, marker))
             return 0
-        sheet_type = str(term.get("sheet_type") or "").strip()
-        rate = self._seller_terms_rate(term.get("rate"))
-        deduction = self._seller_terms_rate(term.get("deduction"))
-        seller = str(term.get("seller") or marker.get("assigned_person") or "").strip()
+        marker_for_audit = {
+            **marker,
+            "assigned_person": str(term.get("seller") or marker.get("assigned_person") or "").strip(),
+            "seller_sheet_type": str(term.get("sheet_type") or marker.get("seller_sheet_type") or "").strip(),
+            "seller_rate": term.get("rate"),
+            "seller_deduction": term.get("deduction"),
+        }
+        priced_rows, missing_rows = self._network_seller_price_audit_for_rows(rows, marker_for_audit)
+        if missing_rows:
+            raise ValueError(self._network_seller_price_missing_message(missing_rows, marker_for_audit))
         changed = 0
-        for row in rows:
-            row_term, _decision = self._seller_terms_match_for_row(seller, sheet_type, row) if seller else (None, None)
-            seller_price = (
-                self._seller_terms_company_price(row, sheet_type, term=row_term)
-                if row_term is not None
-                else (
-                    self._seller_terms_company_price(row, sheet_type, deduction=deduction)
-                    if deduction is not None
-                    else self._seller_terms_company_price(row, sheet_type, rate=rate)
-                )
-            )
-            if seller_price is None:
-                continue
+        for row, seller_price in priced_rows:
             if row.existing_value != seller_price:
                 row.existing_value = seller_price
                 changed += 1
@@ -19543,7 +19813,12 @@ class CardPipelineApp(tk.Tk):
             messagebox.showinfo("No source sheet", "Choose and load an incoming or working sheet before saving back to its source.")
             return
         key, marker = self._marker_for_sheet_name(path.name, (stage,) if stage else ("Working", "Incoming"))
-        seller_updates = self._apply_seller_terms_to_rows_for_marker(self.state.rows, marker)
+        try:
+            seller_updates = self._apply_seller_terms_to_rows_for_marker(self.state.rows, marker)
+        except ValueError as error:
+            messagebox.showwarning("Sheet cannot be saved", str(error))
+            self.status_var.set(str(error).splitlines()[0])
+            return
         try:
             with shared_lock(CARD_PIPELINE_DIR, "workbook-writes", self.lucas_identity):
                 write_working_sheet(path, self.state.rows, self.row_sources)
@@ -19588,24 +19863,19 @@ class CardPipelineApp(tk.Tk):
                     f"No People Rules were found for {seller} / {seller_sheet_type}. Open People Rules or turn Network Mode off for a normal Open Team sheet.",
                 )
                 return
-            rate = self._money_value(seller_term.get("rate"))
-            deduction = self._money_value(seller_term.get("deduction"))
-            applicable_rows = 0
-            for row in self.intake_rows:
-                row_term, _decision = self._seller_terms_match_for_row(seller, seller_sheet_type, row)
-                seller_price = (
-                    self._seller_terms_company_price(row, seller_sheet_type, term=row_term)
-                    if row_term is not None
-                    else (
-                        self._seller_terms_company_price(row, seller_sheet_type, deduction=deduction)
-                        if deduction is not None
-                        else self._seller_terms_company_price(row, seller_sheet_type, rate=rate)
-                    )
-                )
-                if seller_price is not None:
-                    applicable_rows += 1
-            if applicable_rows <= 0:
-                self.status_var.set(self._seller_terms_no_match_message(self.intake_rows, seller_sheet_type, deduction))
+            seller_marker = {
+                "assigned_person": seller,
+                "seller_terms_applied": True,
+                "seller_sheet_type": seller_sheet_type,
+                "seller_rate": seller_term.get("rate"),
+                "seller_deduction": seller_term.get("deduction"),
+            }
+            _priced_rows, missing_rows = self._network_seller_price_audit_for_rows(self.intake_rows, seller_marker)
+            if missing_rows:
+                message = self._network_seller_price_missing_message(missing_rows, seller_marker)
+                messagebox.showwarning("Sheet cannot be made", message)
+                self.status_var.set(message.splitlines()[0])
+                return
         self.apply_create_seller_terms(show_status=False)
         path = working_sheet_path(WORKING_SHEETS_DIR, title)
         saved_row_ids = {id(row) for row in self.intake_rows}
@@ -20504,13 +20774,17 @@ class CardPipelineApp(tk.Tk):
             return ""
         for stage in ("Working", "Incoming", "Received"):
             marker = self.home_sheet_markers.get(self._home_sheet_key(stage, source_name), {})
-            person = str(marker.get("assigned_person") or "").strip()
+            owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
+            fallback_person = str(marker.get("assigned_person") or "").strip()
+            person = owner_for_marker(marker, fallback_person) if callable(owner_for_marker) else fallback_person
             if person:
                 return person
         for key, marker in self.home_sheet_markers.items():
             _stage, name = self._split_home_sheet_key(key)
             if Path(name).name == source_name:
-                person = str(marker.get("assigned_person") or "").strip()
+                owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
+                fallback_person = str(marker.get("assigned_person") or "").strip()
+                person = owner_for_marker(marker, fallback_person) if callable(owner_for_marker) else fallback_person
                 if person:
                     return person
         return ""
@@ -20599,13 +20873,17 @@ class CardPipelineApp(tk.Tk):
             return ""
         for stage in ("Working", "Incoming", "Received"):
             marker = self.home_sheet_markers.get(self._home_sheet_key(stage, source_name), {})
-            person = str(marker.get("assigned_person") or "").strip()
+            owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
+            fallback_person = str(marker.get("assigned_person") or "").strip()
+            person = owner_for_marker(marker, fallback_person) if callable(owner_for_marker) else fallback_person
             if person:
                 return person
         for key, marker in self.home_sheet_markers.items():
             _stage, name = self._split_home_sheet_key(key)
             if Path(name).name == source_name:
-                person = str(marker.get("assigned_person") or "").strip()
+                owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
+                fallback_person = str(marker.get("assigned_person") or "").strip()
+                person = owner_for_marker(marker, fallback_person) if callable(owner_for_marker) else fallback_person
                 if person:
                     return person
         return ""

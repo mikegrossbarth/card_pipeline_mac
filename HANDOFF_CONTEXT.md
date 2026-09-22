@@ -411,6 +411,33 @@ Team LUCAS mobile setup in progress:
   - `/Users/michaelgrossbarth/Library/LaunchAgents/com.lucas.team-tunnel.plist`
   - `/Users/michaelgrossbarth/Library/LaunchAgents/com.lucas.team-app.plist`
 - The temporary repo copies under `work/cloudflared/` were deleted so they do not get committed. Confirm installed local files if continuing.
+
+## Active Bridge Ownership - 2026-09-16 Correction
+
+The current intended production architecture is: the always-on Windows/server computer owns the Personal LUCAS mobile bridge and Instagram photo bridge. Mac is a workstation and must not run Personal Instagram live sync or the `lucas-personal` Cloudflare connector unless ownership is deliberately moved.
+
+Rules:
+- `lucas.mikeyscards.com` must have exactly one active `lucas-personal` connector.
+- That connector should be Windows/server for normal operation.
+- Run Instagram Inventory Sync only from the same machine that owns `lucas.mikeyscards.com`.
+- If Mac generates Instagram media URLs while Cloudflare routes to Windows, Meta will fetch the Windows bridge with a Mac-only media token/path and the photos will return HTTP 404.
+- If both Mac and Windows are connected to `lucas-personal`, Cloudflare can round-robin between them and cause intermittent 404s.
+
+Mac-side guard:
+- Mac `.env` should keep `LUCAS_ENABLE_PERSONAL_INSTAGRAM_SYNC=0`.
+- Mac `.env` should keep `LUCAS_INSTAGRAM_BACKGROUND_TUNNEL=0`.
+- Do not start `/Users/michaelgrossbarth/.cloudflared/lucas-personal.yml` on Mac during normal Windows/server-owned operation.
+
+Windows/server recovery checks:
+```powershell
+cloudflared tunnel info lucas-personal
+curl.exe -sS http://127.0.0.1:8766/status
+curl.exe -sS https://lucas.mikeyscards.com/status
+```
+
+The two status calls must show the same `instanceId`. If they do not, the public hostname is routing to a different bridge than the one generating Instagram photo URLs.
+
+If `cloudflared tunnel info lucas-personal` shows no active connection, start or restart the Windows/server `lucas-personal` Cloudflare service. If it shows an extra non-Windows connector, clean up that connector before posting.
 - Team public URL was not fully verified before stop. Next step should be:
 
 ```bash

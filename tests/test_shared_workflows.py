@@ -4522,6 +4522,78 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertTrue(showinfo.called)
         self.assertFalse(dummy.applied_terms)
 
+    def test_save_working_sheet_warns_when_network_row_missing_required_value(self) -> None:
+        class Var:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        class SaveDummy:
+            save_working_sheet = app.CardPipelineApp.save_working_sheet
+            _network_mode_enabled = app.CardPipelineApp._network_mode_enabled
+            _money_value = app.CardPipelineApp._money_value
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_value_from_source = app.CardPipelineApp._seller_terms_value_from_source
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+            _seller_terms_match = app.CardPipelineApp._seller_terms_match
+            _seller_terms_match_for_row = app.CardPipelineApp._seller_terms_match_for_row
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _seller_terms_price_for_workbook_row = app.CardPipelineApp._seller_terms_price_for_workbook_row
+            _seller_terms_missing_row_label = app.CardPipelineApp._seller_terms_missing_row_label
+            _network_seller_price_audit_for_rows = app.CardPipelineApp._network_seller_price_audit_for_rows
+            _network_seller_price_missing_message = app.CardPipelineApp._network_seller_price_missing_message
+
+            def __init__(self):
+                self.intake_rows = [
+                    WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Priced", card_ladder_value=1000),
+                    WorkbookRow(excel_row=3, cert_number="2", grader="PSA", card_title="Missing CL"),
+                ]
+                self.working_sheet_title = Var("Network Lot")
+                self.create_network_mode_var = Var(True)
+                self.seller_terms_seller_var = Var("Dylan")
+                self.seller_terms_sheet_type_var = Var("Fanatics")
+                self.status_var = Var("")
+                self.applied_terms = False
+                self.assignment_engine = types.SimpleNamespace(evaluate=lambda row: [])
+
+            def _commit_cell_edit(self):
+                pass
+
+            def _load_seller_terms(self):
+                return [
+                    {
+                        "seller": "Dylan",
+                        "sheet_type": "Fanatics",
+                        "value_source": "card_ladder",
+                        "min_value": 0,
+                        "max_value": 1_000_000_000,
+                        "rate": 0.9,
+                    }
+                ]
+
+            def apply_create_seller_terms(self, show_status=True):
+                self.applied_terms = True
+                return 1
+
+        dummy = SaveDummy()
+        with patch.object(app.messagebox, "showwarning") as showwarning:
+            dummy.save_working_sheet()
+
+        self.assertTrue(showwarning.called)
+        self.assertEqual(showwarning.call_args.args[0], "Sheet cannot be made")
+        self.assertIn("missing values needed", showwarning.call_args.args[1])
+        self.assertIn("2 / Missing CL", showwarning.call_args.args[1])
+        self.assertFalse(dummy.applied_terms)
+
     def test_save_working_sheet_requires_network_person_and_sheet_type(self) -> None:
         class Var:
             def __init__(self, value=""):
@@ -4629,6 +4701,121 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertFalse(dummy._seller_terms_value_in_range(1_000_000_000.01, term))
         self.assertEqual(dummy._seller_terms_range_label(term), "$0.00 to $1,000,000,000.00")
 
+    def test_people_rules_owner_sets_team_owner(self) -> None:
+        class OwnerDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
+            _load_seller_terms = app.CardPipelineApp._load_seller_terms
+            _team_owner_name = app.CardPipelineApp._team_owner_name
+            _is_personal_lucas = lambda self: False
+
+            def __init__(self):
+                self.app_settings = {}
+                self.lucas_identity = {"display_name": "Tester"}
+
+        with TemporaryDirectory() as tmp:
+            old_terms = app.SELLER_TERMS_PATH
+            app.SELLER_TERMS_PATH = Path(tmp) / "seller_terms.csv"
+            app.SELLER_TERMS_PATH.write_text(
+                "Person,Role,Sheet Type,Value Source,Min Value,Max Value,Seller Rate,Deduction,Balance Share\n"
+                "Danny,Owner,,,,,,,\n"
+                "Dylan,,Fanatics,Card Ladder value,,,90%,,\n",
+                encoding="utf-8",
+            )
+            try:
+                dummy = OwnerDummy()
+                self.assertEqual(dummy._team_owner_name(), "Danny")
+                terms = dummy._load_seller_terms()
+            finally:
+                app.SELLER_TERMS_PATH = old_terms
+
+        self.assertEqual(next(term for term in terms if term["seller"] == "Danny")["role"], "owner")
+        dylan = next(term for term in terms if term["seller"] == "Dylan")
+        self.assertEqual(dylan["value_source"], "card_ladder")
+        self.assertEqual(dylan["rate"], 0.9)
+
+    def test_seller_terms_value_source_uses_card_ladder_without_company_acceptance(self) -> None:
+        class SellerPriceDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_value_from_source = app.CardPipelineApp._seller_terms_value_from_source
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+
+            def __init__(self):
+                rejected = types.SimpleNamespace(company="Fanatics", accepted=False, payout=None, source_value=None, reason="not accepted")
+                self.assignment_engine = types.SimpleNamespace(evaluate=lambda row: [rejected])
+
+        row = WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Card", card_ladder_value=1000.0)
+        term = {"seller": "Dylan", "sheet_type": "Fanatics", "value_source": "card_ladder", "min_value": 0, "max_value": 1_000_000_000, "rate": 0.9}
+
+        self.assertEqual(SellerPriceDummy()._seller_terms_company_price(row, "Fanatics", term=term), 900.0)
+
+    def test_seller_terms_value_source_deduction_uses_estimated_payout(self) -> None:
+        class SellerPriceDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_value_from_source = app.CardPipelineApp._seller_terms_value_from_source
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+
+            def __init__(self):
+                rejected = types.SimpleNamespace(company="Fanatics", accepted=False, payout=None, source_value=None, reason="not accepted")
+                self.assignment_engine = types.SimpleNamespace(evaluate=lambda row: [rejected])
+
+        row = WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Card", card_ladder_value=1000.0, estimated_payout=950.0)
+        term = {"seller": "Dylan", "sheet_type": "Fanatics", "value_source": "card_ladder", "min_value": 0, "max_value": 1_000_000_000, "deduction": 0.1}
+
+        self.assertEqual(SellerPriceDummy()._seller_terms_company_price(row, "Fanatics", term=term), 850.0)
+
+    def test_seller_payout_summary_supports_value_source_rate_and_deduction(self) -> None:
+        class SellerSummaryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_value_from_source = app.CardPipelineApp._seller_terms_value_from_source
+            _seller_terms_match = app.CardPipelineApp._seller_terms_match
+            _seller_terms_match_for_row = app.CardPipelineApp._seller_terms_match_for_row
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _seller_term_for_marker = app.CardPipelineApp._seller_term_for_marker
+            _seller_terms_value_label = app.CardPipelineApp._seller_terms_value_label
+            _seller_terms_value_label_for_term = app.CardPipelineApp._seller_terms_value_label_for_term
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+            _seller_payout_summary_for_rows = app.CardPipelineApp._seller_payout_summary_for_rows
+
+            def __init__(self, term):
+                self.term = term
+                self.assignment_engine = types.SimpleNamespace(evaluate=lambda row: [])
+
+            def _load_seller_terms(self):
+                return [self.term]
+
+        row = WorkbookRow(excel_row=2, cert_number="1", grader="PSA", card_title="Card", card_ladder_value=1000.0, estimated_payout=950.0)
+        rate_term = {"seller": "Dylan", "sheet_type": "Fanatics", "value_source": "card_ladder", "min_value": 0, "max_value": 1_000_000_000, "rate": 0.9}
+        deduction_term = {"seller": "Dylan", "sheet_type": "Fanatics", "value_source": "card_ladder", "min_value": 0, "max_value": 1_000_000_000, "deduction": 0.1}
+        marker = {"assigned_person": "Dylan", "seller_terms_applied": True, "seller_sheet_type": "Fanatics"}
+
+        rate_summary = SellerSummaryDummy(rate_term)._seller_payout_summary_for_rows([row], marker)
+        deduction_summary = SellerSummaryDummy(deduction_term)._seller_payout_summary_for_rows([row], marker)
+
+        self.assertFalse(rate_summary["seller_payout_pending"])
+        self.assertEqual(rate_summary["seller_payout_total"], 900.0)
+        self.assertEqual(rate_summary["seller_payout_value_label"], "Card Ladder value")
+        self.assertFalse(deduction_summary["seller_payout_pending"])
+        self.assertEqual(deduction_summary["seller_payout_total"], 850.0)
+        self.assertEqual(deduction_summary["seller_payout_value_label"], "Card Ladder value")
+
     def test_seller_terms_pending_until_required_values_exist(self) -> None:
         class SellerSummaryDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -4689,6 +4876,9 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _marker_for_stage = app.CardPipelineApp._marker_for_stage
             save_home_sheet_markers = app.CardPipelineApp.save_home_sheet_markers
             _is_personal_lucas = lambda self: False
+
+            def _canonical_person_choice(self, person, allow_blank=False):
+                return str(person or "").strip()
 
             def _seller_terms_match(self, seller, sheet_type):
                 return {"seller": seller, "sheet_type": sheet_type, "rate": 0.85, "deduction": None}
@@ -4871,7 +5061,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_save_payout_marker_blocks_pending_seller_paid(self) -> None:
         class PayoutDummy:
             _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
             save_payout_sheet_marker = app.CardPipelineApp.save_payout_sheet_marker
+
+            def _canonical_person_choice(self, person, allow_blank=False):
+                return str(person or "").strip()
 
             def _payout_item_for_key(self, key):
                 return {"key": key, "payable": False, "status": "Seller owed money but no Comps input"}
@@ -4883,6 +5077,63 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             dummy.save_payout_sheet_marker("Received|Lot.xlsx", "John Seller", True)
         self.assertTrue(showinfo.called)
         self.assertFalse(dummy.home_sheet_markers["Received|Lot.xlsx"]["paid"])
+
+    def test_save_payout_marker_blocks_network_person_change(self) -> None:
+        class Status:
+            def set(self, value):
+                self.value = value
+
+        class PayoutDummy:
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            save_payout_sheet_marker = app.CardPipelineApp.save_payout_sheet_marker
+
+            def _canonical_person_choice(self, person, allow_blank=False):
+                return str(person or "").strip()
+
+            def _payout_item_for_key(self, key):
+                return {"key": key, "payable": True, "paid": False}
+
+            def _save_sheet_markers(self):
+                self.saved = True
+
+            def refresh_home(self):
+                self.refreshed = True
+
+        dummy = PayoutDummy()
+        dummy.home_sheet_markers = {
+            "Received|Dylan Network.xlsx": {
+                "assigned_person": "Dylan",
+                "seller_terms_applied": True,
+                "seller_sheet_type": "Fanatics",
+                "seller_rate": 0.9,
+                "inventory_owner": "Danny",
+                "paid": False,
+            }
+        }
+        dummy.home_sheet_summaries = {"Received|Dylan Network.xlsx": {"all_received": True}}
+        dummy.status_var = Status()
+        dummy.saved = False
+        dummy.refreshed = False
+
+        with patch.object(app.messagebox, "showinfo") as showinfo:
+            dummy.save_payout_sheet_marker("Received|Dylan Network.xlsx", "Kevin", False)
+
+        self.assertTrue(showinfo.called)
+        marker = dummy.home_sheet_markers["Received|Dylan Network.xlsx"]
+        self.assertEqual(marker["assigned_person"], "Dylan")
+        self.assertEqual(marker["seller_rate"], 0.9)
+        self.assertEqual(marker["inventory_owner"], "Danny")
+        self.assertFalse(marker["paid"])
+        self.assertFalse(dummy.saved)
+
+        dummy.save_payout_sheet_marker("Received|Dylan Network.xlsx", "Dylan", True)
+
+        marker = dummy.home_sheet_markers["Received|Dylan Network.xlsx"]
+        self.assertEqual(marker["assigned_person"], "Dylan")
+        self.assertTrue(marker["paid"])
+        self.assertTrue(dummy.saved)
+        self.assertTrue(dummy.refreshed)
 
     def test_save_comp_to_source_sheet_recalculates_seller_purchase(self) -> None:
         class Var:
@@ -5063,13 +5314,16 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
     def test_people_rules_column_map_keeps_rate_and_deduction_after_min_max(self) -> None:
         self.assertEqual(
             assignment_config_ui.SELLER_TERMS_FIELDS,
-            ("Person", "Sheet Type", "Min Value", "Max Value", "Seller Rate", "Deduction", "Balance Share"),
+            ("Person", "Role", "Sheet Type", "Value Source", "Min Value", "Max Value", "Seller Rate", "Deduction", "Balance Share"),
         )
-        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Min Value"], 2)
-        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Max Value"], 3)
-        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Seller Rate"], 4)
-        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Deduction"], 5)
-        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Balance Share"], 6)
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Role"], 1)
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Sheet Type"], 2)
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Value Source"], 3)
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Min Value"], 4)
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Max Value"], 5)
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Seller Rate"], 6)
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Deduction"], 7)
+        self.assertEqual(assignment_config_ui.SELLER_TERMS_FIELD_COLUMNS["Balance Share"], 8)
 
     def test_people_rules_blank_bounds_default_to_zero_and_large_max(self) -> None:
         self.assertEqual(assignment_config_ui.seller_terms_min_value(""), 0.0)
@@ -5379,6 +5633,236 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
         self.assertFalse(partial_sold_items[0]["paid"])
         self.assertEqual(partial_sold_items[0]["status"], "Partial")
 
+    def test_network_seller_payouts_are_sheet_rows_not_individual_cards(self) -> None:
+        class PayoutDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
+            _sold_payout_key = app.CardPipelineApp._sold_payout_key
+            _realized_profit_groups_by_person_sheet = app.CardPipelineApp._realized_profit_groups_by_person_sheet
+            _loose_expense_adjustments_by_person = app.CardPipelineApp._loose_expense_adjustments_by_person
+            _active_payout_balance = app.CardPipelineApp._active_payout_balance
+            _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
+            _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _apply_payout_marker_balance_state = app.CardPipelineApp._apply_payout_marker_balance_state
+            _team_payout_record_sort_key = app.CardPipelineApp._team_payout_record_sort_key
+            _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
+            _expense_payout_key = app.CardPipelineApp._expense_payout_key
+            _legacy_group_paid_state = app.CardPipelineApp._legacy_group_paid_state
+            _team_record_paid_state = app.CardPipelineApp._team_record_paid_state
+            _team_sold_card_payout_item = app.CardPipelineApp._team_sold_card_payout_item
+            _team_expense_payout_item = app.CardPipelineApp._team_expense_payout_item
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
+            _profit_record_payout_time = app.CardPipelineApp._profit_record_payout_time
+            _empty_realized_profit_group = app.CardPipelineApp._empty_realized_profit_group
+            _add_profit_record_to_realized_group = app.CardPipelineApp._add_profit_record_to_realized_group
+            _payout_realized_groups_for_marker = app.CardPipelineApp._payout_realized_groups_for_marker
+            _team_balance_share_for_person = app.CardPipelineApp._team_balance_share_for_person
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_seller_names = app.CardPipelineApp._seller_terms_seller_names
+
+            def __init__(self):
+                self.home_sheet_paths = {"Incoming": {}, "Working": {}, "Received": {"Dylan Network.xlsx": Path("Dylan Network.xlsx")}}
+                self.home_sheet_markers = {
+                    "Received|Dylan Network.xlsx": {
+                        "assigned_person": "Dylan",
+                        "seller_terms_applied": True,
+                        "seller_sheet_type": "Fanatics",
+                    }
+                }
+                self.home_sheet_summaries = {
+                    "Received|Dylan Network.xlsx": {
+                        "row_count": 2,
+                        "received_count": 2,
+                        "purchase_total": 1.0,
+                        "estimated_payout_total": 1200.0,
+                        "seller_payout_total": 900.0,
+                        "seller_payout_payable": True,
+                        "seller_payout_pending": False,
+                        "seller_payout_value_label": "Card Ladder value",
+                    }
+                }
+                self.ledger = [
+                    {
+                        "assigned_person": "Dylan",
+                        "source_sheet": "Dylan Sold Cards.xlsx",
+                        "purchase_price": 100.0,
+                        "sale_price": 200.0,
+                        "profit": 100.0,
+                        "company": "Fanatics",
+                        "cert_number": "111",
+                        "date_added": "2026-08-10",
+                    }
+                ]
+
+            def _load_seller_terms(self):
+                return [
+                    {"seller": "Dylan", "sheet_type": "Fanatics", "value_source": "card_ladder", "rate": 0.9},
+                    {"seller": "Dylan", "balance_share": 0.5},
+                ]
+
+            def _load_profit_ledger(self):
+                return self.ledger
+
+        items = PayoutDummy()._payout_sheet_items()
+        seller_items = [item for item in items if item["payout_kind"] == "seller_sheet"]
+        card_items = [item for item in items if item["payout_kind"] == "team_card"]
+
+        self.assertEqual(len(seller_items), 1)
+        self.assertEqual(seller_items[0]["payout_balance"], 900.0)
+        self.assertEqual(card_items, [])
+        self.assertEqual(sum(float(item["payout_balance"]) for item in items if item["person"] == "Dylan"), 900.0)
+
+    def test_payout_detail_panel_only_displays_seller_sheet_rows(self) -> None:
+        class PayoutDummy:
+            _show_payout_detail_item = app.CardPipelineApp._show_payout_detail_item
+            _include_payout_summary_item = app.CardPipelineApp._include_payout_summary_item
+            _summary_unpaid_net_profit_for_item = app.CardPipelineApp._summary_unpaid_net_profit_for_item
+
+            def _team_balance_share_for_person(self, person):
+                return 0.5
+
+        dummy = PayoutDummy()
+
+        self.assertTrue(dummy._show_payout_detail_item({"payout_kind": "seller_sheet"}))
+        self.assertFalse(dummy._show_payout_detail_item({"payout_kind": "team_card"}))
+        self.assertFalse(dummy._show_payout_detail_item({"payout_kind": "team_expense"}))
+        self.assertTrue(dummy._include_payout_summary_item({"person": "Dylan", "payout_kind": "seller_sheet"}))
+        self.assertFalse(dummy._include_payout_summary_item({"person": "Unassigned", "payout_kind": "team_card"}))
+        self.assertFalse(dummy._include_payout_summary_item({"person": "", "payout_kind": "team_expense"}))
+        self.assertEqual(
+            dummy._summary_unpaid_net_profit_for_item(
+                {"person": "James Copeland", "payout_kind": "team_card", "net_profit_total": 5975.0, "payout_balance": 735.33}
+            ),
+            1470.66,
+        )
+        self.assertEqual(
+            dummy._summary_unpaid_net_profit_for_item(
+                {"person": "James Copeland", "payout_kind": "team_expense", "net_profit_total": -75.0, "payout_balance": -37.5}
+            ),
+            -75.0,
+        )
+
+    def test_network_partial_and_full_sheet_payments_reduce_person_total_balance(self) -> None:
+        class Status:
+            def set(self, value):
+                self.value = value
+
+        class PayoutDummy:
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _money_value = app.CardPipelineApp._money_value
+            _parse_money_text = app.CardPipelineApp._parse_money_text
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            _enrich_profit_records_with_people = app.CardPipelineApp._enrich_profit_records_with_people
+            _realized_profit_groups_by_person_sheet = app.CardPipelineApp._realized_profit_groups_by_person_sheet
+            _active_payout_balance = app.CardPipelineApp._active_payout_balance
+            _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
+            _payout_sheet_items = app.CardPipelineApp._payout_sheet_items
+            _apply_payout_marker_balance_state = app.CardPipelineApp._apply_payout_marker_balance_state
+            _team_payout_record_sort_key = app.CardPipelineApp._team_payout_record_sort_key
+            _sold_card_payout_key = app.CardPipelineApp._sold_card_payout_key
+            _expense_payout_key = app.CardPipelineApp._expense_payout_key
+            _legacy_group_paid_state = app.CardPipelineApp._legacy_group_paid_state
+            _team_record_paid_state = app.CardPipelineApp._team_record_paid_state
+            _team_sold_card_payout_item = app.CardPipelineApp._team_sold_card_payout_item
+            _team_expense_payout_item = app.CardPipelineApp._team_expense_payout_item
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _source_sheet_is_seller_payout = app.CardPipelineApp._source_sheet_is_seller_payout
+            _profit_record_payout_time = app.CardPipelineApp._profit_record_payout_time
+            _empty_realized_profit_group = app.CardPipelineApp._empty_realized_profit_group
+            _add_profit_record_to_realized_group = app.CardPipelineApp._add_profit_record_to_realized_group
+            _payout_realized_groups_for_marker = app.CardPipelineApp._payout_realized_groups_for_marker
+            _team_balance_share_for_person = app.CardPipelineApp._team_balance_share_for_person
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_seller_names = app.CardPipelineApp._seller_terms_seller_names
+            _mark_zero_balance_payout_offsets_paid = app.CardPipelineApp._mark_zero_balance_payout_offsets_paid
+            _apply_payout_person_payment = app.CardPipelineApp._apply_payout_person_payment
+            _payout_item_for_key = app.CardPipelineApp._payout_item_for_key
+            save_payout_sheet_marker = app.CardPipelineApp.save_payout_sheet_marker
+
+            def __init__(self):
+                self.home_sheet_paths = {
+                    "Incoming": {},
+                    "Working": {},
+                    "Received": {
+                        "Dylan A.xlsx": Path("Dylan A.xlsx"),
+                        "Dylan B.xlsx": Path("Dylan B.xlsx"),
+                    },
+                }
+                self.home_sheet_markers = {
+                    "Received|Dylan A.xlsx": {"assigned_person": "Dylan", "seller_terms_applied": True, "seller_sheet_type": "Fanatics"},
+                    "Received|Dylan B.xlsx": {"assigned_person": "Dylan", "seller_terms_applied": True, "seller_sheet_type": "Fanatics"},
+                }
+                self.home_sheet_summaries = {
+                    "Received|Dylan A.xlsx": {
+                        "row_count": 3,
+                        "received_count": 3,
+                        "seller_payout_total": 900.0,
+                        "seller_payout_payable": True,
+                        "seller_payout_pending": False,
+                        "seller_payout_value_label": "Card Ladder value",
+                    },
+                    "Received|Dylan B.xlsx": {
+                        "row_count": 2,
+                        "received_count": 2,
+                        "seller_payout_total": 400.0,
+                        "seller_payout_payable": True,
+                        "seller_payout_pending": False,
+                        "seller_payout_value_label": "Card Ladder value",
+                    },
+                }
+                self.status_var = Status()
+                self.saved = False
+                self.home_refreshes = 0
+                self.payout_refreshes = 0
+
+            def _load_seller_terms(self):
+                return [{"seller": "Dylan", "sheet_type": "Fanatics", "value_source": "card_ladder", "rate": 0.9}]
+
+            def _load_profit_ledger(self):
+                return []
+
+            def _save_sheet_markers(self):
+                self.saved = True
+
+            def refresh_home(self):
+                self.home_refreshes += 1
+
+            def refresh_payouts_tab(self):
+                self.payout_refreshes += 1
+
+            def _canonical_person_choice(self, person, allow_blank=False):
+                return str(person or "").strip()
+
+        dummy = PayoutDummy()
+        items = dummy._payout_sheet_items()
+        self.assertEqual(sum(float(item["payout_balance"]) for item in items if item["person"] == "Dylan"), 1300.0)
+
+        dummy._apply_payout_person_payment("Dylan", items, "$500.00", 1300.0)
+
+        self.assertEqual(dummy.home_sheet_markers["Received|Dylan A.xlsx"]["paid_amount"], 500.0)
+        self.assertFalse(dummy.home_sheet_markers["Received|Dylan A.xlsx"]["paid"])
+        self.assertEqual(sum(float(item["payout_balance"]) for item in dummy._payout_sheet_items() if item["person"] == "Dylan"), 800.0)
+        self.assertEqual(dummy.payout_refreshes, 1)
+
+        dummy.save_payout_sheet_marker("Received|Dylan B.xlsx", "Dylan", True)
+
+        self.assertTrue(dummy.home_sheet_markers["Received|Dylan B.xlsx"]["paid"])
+        self.assertEqual(sum(float(item["payout_balance"]) for item in dummy._payout_sheet_items() if item["person"] == "Dylan"), 400.0)
+        self.assertEqual(dummy.payout_refreshes, 2)
+
     def test_team_general_sold_blank_paid_marker_does_not_hide_card_payouts(self) -> None:
         class PayoutDummy:
             _home_sheet_key = app.CardPipelineApp._home_sheet_key
@@ -5589,6 +6073,8 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _marker_for_stage = app.CardPipelineApp._marker_for_stage
             _money_value = app.CardPipelineApp._money_value
             _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
@@ -9111,6 +9597,226 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.SHEET_MARKERS_PATH = old_markers
 
+    def test_network_received_sheet_inventory_uses_owner_and_seller_purchase_price(self) -> None:
+        class NetworkInventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_match = app.CardPipelineApp._seller_terms_match
+            _seller_terms_value_from_source = app.CardPipelineApp._seller_terms_value_from_source
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+            _seller_terms_match_for_row = app.CardPipelineApp._seller_terms_match_for_row
+            _seller_terms_price_for_workbook_row = app.CardPipelineApp._seller_terms_price_for_workbook_row
+            _seller_terms_price_for_sheet_row = app.CardPipelineApp._seller_terms_price_for_sheet_row
+
+            def __init__(self):
+                self.assignment_engine = types.SimpleNamespace(evaluate=lambda row: [])
+
+            def _load_seller_terms(self):
+                return [
+                    {
+                        "seller": "Dylan",
+                        "sheet_type": "Fanatics",
+                        "value_source": "card_ladder",
+                        "min_value": 0,
+                        "max_value": 1_000_000_000,
+                        "rate": 0.9,
+                    }
+                ]
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Dylan Lot.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder Value", "Comps"])
+            sheet.append(["159587172", "PSA", "Test Network Card PSA 10", 1, 1000, 900])
+            workbook.save(path)
+
+            marker = {"assigned_person": "Dylan", "seller_terms_applied": True, "seller_sheet_type": "Fanatics", "inventory_owner": "Danny"}
+            records = NetworkInventoryDummy()._received_inventory_candidate_records_for_sheet("Received", path, "Danny", set(), set(), marker)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["assigned_person"], "Danny")
+        self.assertEqual(records[0]["purchase_price"], 900.0)
+        self.assertEqual(records[0]["cert_number"], "159587172")
+
+    def test_network_received_sheet_inventory_uses_deduction_purchase_price(self) -> None:
+        class NetworkInventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_match = app.CardPipelineApp._seller_terms_match
+            _seller_terms_value_from_source = app.CardPipelineApp._seller_terms_value_from_source
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+            _seller_terms_match_for_row = app.CardPipelineApp._seller_terms_match_for_row
+            _seller_terms_price_for_workbook_row = app.CardPipelineApp._seller_terms_price_for_workbook_row
+            _seller_terms_price_for_sheet_row = app.CardPipelineApp._seller_terms_price_for_sheet_row
+
+            def __init__(self):
+                self.assignment_engine = types.SimpleNamespace(evaluate=lambda row: [])
+
+            def _load_seller_terms(self):
+                return [
+                    {
+                        "seller": "Dylan",
+                        "sheet_type": "Fanatics",
+                        "value_source": "card_ladder",
+                        "min_value": 0,
+                        "max_value": 1_000_000_000,
+                        "deduction": 0.1,
+                    }
+                ]
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Dylan Deduction Lot.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder Value", "Estimated Payout"])
+            sheet.append(["159587172", "PSA", "Test Network Card PSA 10", 1, 1000, 950])
+            workbook.save(path)
+
+            marker = {"assigned_person": "Dylan", "seller_terms_applied": True, "seller_sheet_type": "Fanatics", "inventory_owner": "Danny"}
+            records = NetworkInventoryDummy()._received_inventory_candidate_records_for_sheet("Received", path, "Danny", set(), set(), marker)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["assigned_person"], "Danny")
+        self.assertEqual(records[0]["purchase_price"], 850.0)
+        self.assertEqual(records[0]["cert_number"], "159587172")
+
+    def test_network_seller_price_audit_requires_every_row(self) -> None:
+        class NetworkAuditDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_value_from_source = app.CardPipelineApp._seller_terms_value_from_source
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+            _seller_terms_match = app.CardPipelineApp._seller_terms_match
+            _seller_terms_match_for_row = app.CardPipelineApp._seller_terms_match_for_row
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _seller_terms_price_for_workbook_row = app.CardPipelineApp._seller_terms_price_for_workbook_row
+            _seller_terms_missing_row_label = app.CardPipelineApp._seller_terms_missing_row_label
+            _network_seller_price_audit_for_rows = app.CardPipelineApp._network_seller_price_audit_for_rows
+            _network_seller_price_missing_message = app.CardPipelineApp._network_seller_price_missing_message
+
+            def __init__(self):
+                self.assignment_engine = types.SimpleNamespace(evaluate=lambda row: [])
+
+            def _load_seller_terms(self):
+                return [
+                    {
+                        "seller": "Dylan",
+                        "sheet_type": "Fanatics",
+                        "value_source": "card_ladder",
+                        "min_value": 0,
+                        "max_value": 1_000_000_000,
+                        "rate": 0.9,
+                    }
+                ]
+
+        rows = [
+            WorkbookRow(excel_row=2, cert_number="111", grader="PSA", card_title="Priced Card", card_ladder_value=1000.0),
+            WorkbookRow(excel_row=3, cert_number="222", grader="PSA", card_title="Missing Value"),
+        ]
+        marker = {"assigned_person": "Dylan", "seller_terms_applied": True, "seller_sheet_type": "Fanatics"}
+        dummy = NetworkAuditDummy()
+
+        priced, missing = dummy._network_seller_price_audit_for_rows(rows, marker)
+
+        self.assertEqual([(row.cert_number, price) for row, price in priced], [("111", 900.0)])
+        self.assertEqual([row.cert_number for row in missing], ["222"])
+        self.assertIn("222", dummy._network_seller_price_missing_message(missing, marker))
+
+    def test_network_received_sheet_inventory_blocks_missing_seller_price(self) -> None:
+        class NetworkInventoryDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _inventory_sport_from_value = app.CardPipelineApp._inventory_sport_from_value
+            _received_inventory_title_identity = app.CardPipelineApp._received_inventory_title_identity
+            _workbook_rows_from_simple_records = app.CardPipelineApp._workbook_rows_from_simple_records
+            _received_inventory_candidate_records_for_sheet = app.CardPipelineApp._received_inventory_candidate_records_for_sheet
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_min_value = app.CardPipelineApp._seller_terms_min_value
+            _seller_terms_max_value = app.CardPipelineApp._seller_terms_max_value
+            _seller_terms_value_in_range = app.CardPipelineApp._seller_terms_value_in_range
+            _seller_terms_match = app.CardPipelineApp._seller_terms_match
+            _seller_terms_match_for_row = app.CardPipelineApp._seller_terms_match_for_row
+            _seller_terms_value_from_source = app.CardPipelineApp._seller_terms_value_from_source
+            _seller_terms_company_decision = app.CardPipelineApp._seller_terms_company_decision
+            _seller_terms_company_price = app.CardPipelineApp._seller_terms_company_price
+            _seller_terms_price_for_workbook_row = app.CardPipelineApp._seller_terms_price_for_workbook_row
+            _seller_terms_price_for_sheet_row = app.CardPipelineApp._seller_terms_price_for_sheet_row
+            _seller_terms_missing_row_label = app.CardPipelineApp._seller_terms_missing_row_label
+            _network_seller_price_missing_message = app.CardPipelineApp._network_seller_price_missing_message
+
+            def __init__(self):
+                self.assignment_engine = types.SimpleNamespace(evaluate=lambda row: [])
+
+            def _load_seller_terms(self):
+                return [
+                    {
+                        "seller": "Dylan",
+                        "sheet_type": "Fanatics",
+                        "value_source": "card_ladder",
+                        "min_value": 0,
+                        "max_value": 1_000_000_000,
+                        "rate": 0.9,
+                    }
+                ]
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Dylan Lot.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Certification Number", "Grader", "Card Description", "Purchase Price", "Card Ladder Value", "Comps"])
+            sheet.append(["159587172", "PSA", "Test Network Card PSA 10", 1, None, None])
+            workbook.save(path)
+
+            marker = {"assigned_person": "Dylan", "seller_terms_applied": True, "seller_sheet_type": "Fanatics", "inventory_owner": "Danny"}
+            with self.assertRaisesRegex(ValueError, "Sheet cannot be made"):
+                NetworkInventoryDummy()._received_inventory_candidate_records_for_sheet("Received", path, "Danny", set(), set(), marker)
+
+    def test_network_sheet_writeback_blocks_when_people_rule_is_missing(self) -> None:
+        class NetworkWritebackDummy:
+            _seller_terms_rate = app.CardPipelineApp._seller_terms_rate
+            _seller_terms_match = app.CardPipelineApp._seller_terms_match
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _seller_term_for_marker = app.CardPipelineApp._seller_term_for_marker
+            _seller_terms_missing_row_label = app.CardPipelineApp._seller_terms_missing_row_label
+            _network_seller_price_missing_message = app.CardPipelineApp._network_seller_price_missing_message
+            _apply_seller_terms_to_rows_for_marker = app.CardPipelineApp._apply_seller_terms_to_rows_for_marker
+
+            def _load_seller_terms(self):
+                return []
+
+        rows = [WorkbookRow(excel_row=2, cert_number="111", grader="PSA", card_title="Network Card")]
+        marker = {"assigned_person": "Dylan", "seller_terms_applied": True, "seller_sheet_type": "Fanatics"}
+
+        with self.assertRaisesRegex(ValueError, "Sheet cannot be made"):
+            NetworkWritebackDummy()._apply_seller_terms_to_rows_for_marker(rows, marker)
+
     def test_inventory_rows_can_be_removed_for_deleted_source_sheet(self) -> None:
         class InventoryDummy:
             _money_value = app.CardPipelineApp._money_value
@@ -9189,9 +9895,12 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
             _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
             _profit_record_key = app.CardPipelineApp._profit_record_key
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
             _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
             _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
             _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
             delete_person_records = app.CardPipelineApp.delete_person_records
 
             def _save_sheet_markers(self):
@@ -9229,6 +9938,64 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 self.assertEqual(inventory[1]["assigned_person"], "Mikey")
                 self.assertEqual(profit[0]["assigned_person"], "")
                 self.assertEqual(profit[1]["assigned_person"], "Mikey")
+            finally:
+                app.INVENTORY_LEDGER_PATH = old_inventory
+                app.PROFIT_LEDGER_PATH = old_profit
+
+    def test_delete_person_records_preserves_open_network_payout_metadata(self) -> None:
+        class DeletePersonDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            delete_person_records = app.CardPipelineApp.delete_person_records
+
+            def _save_sheet_markers(self):
+                self.saved_markers = True
+
+        with TemporaryDirectory() as tmp:
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            old_profit = app.PROFIT_LEDGER_PATH
+            app.INVENTORY_LEDGER_PATH = Path(tmp) / "inventory_ledger.json"
+            app.PROFIT_LEDGER_PATH = Path(tmp) / "profit_ledger.json"
+            dummy = DeletePersonDummy()
+            dummy.home_sheet_markers = {
+                "Received|Dylan Open.xlsx": {
+                    "assigned_person": "Dylan",
+                    "seller_terms_applied": True,
+                    "seller_sheet_type": "Fanatics",
+                    "seller_rate": 0.9,
+                    "inventory_owner": "Danny",
+                    "paid": False,
+                },
+                "Received|Dylan Paid.xlsx": {
+                    "assigned_person": "Dylan",
+                    "seller_terms_applied": True,
+                    "seller_sheet_type": "Fanatics",
+                    "seller_rate": 0.9,
+                    "inventory_owner": "Danny",
+                    "paid": True,
+                },
+            }
+            dummy.saved_markers = False
+            try:
+                counts = dummy.delete_person_records("Dylan")
+
+                self.assertEqual(counts, {"markers": 1, "inventory": 0, "profit": 0})
+                open_marker = dummy.home_sheet_markers["Received|Dylan Open.xlsx"]
+                self.assertEqual(open_marker["assigned_person"], "Dylan")
+                self.assertTrue(open_marker["seller_terms_applied"])
+                self.assertEqual(open_marker["seller_sheet_type"], "Fanatics")
+                self.assertEqual(open_marker["seller_rate"], 0.9)
+                self.assertEqual(open_marker["inventory_owner"], "Danny")
+                self.assertEqual(dummy.home_sheet_markers["Received|Dylan Paid.xlsx"]["assigned_person"], "")
+                self.assertTrue(dummy.saved_markers)
             finally:
                 app.INVENTORY_LEDGER_PATH = old_inventory
                 app.PROFIT_LEDGER_PATH = old_profit
@@ -11866,6 +12633,87 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 app.PROFIT_LEDGER_PATH = old_profit
                 app.INVENTORY_LEDGER_PATH = old_inventory
 
+    def test_network_refund_returns_inventory_to_owner_not_seller(self) -> None:
+        class RefundDummy:
+            _money_value = app.CardPipelineApp._money_value
+            _profit_record_date = app.CardPipelineApp._profit_record_date
+            _profit_local_calendar_date = app.CardPipelineApp._profit_local_calendar_date
+            _profit_record_key = app.CardPipelineApp._profit_record_key
+            _normalize_profit_record = app.CardPipelineApp._normalize_profit_record
+            _load_profit_ledger = app.CardPipelineApp._load_profit_ledger
+            _save_profit_ledger = app.CardPipelineApp._save_profit_ledger
+            _inventory_record_key = app.CardPipelineApp._inventory_record_key
+            _normalize_inventory_record = app.CardPipelineApp._normalize_inventory_record
+            _load_inventory_ledger = app.CardPipelineApp._load_inventory_ledger
+            _save_inventory_ledger = app.CardPipelineApp._save_inventory_ledger
+            _home_sheet_key = app.CardPipelineApp._home_sheet_key
+            _split_home_sheet_key = app.CardPipelineApp._split_home_sheet_key
+            _sheet_marker_for_source_name = app.CardPipelineApp._sheet_marker_for_source_name
+            _sheet_marker_is_seller_payout = app.CardPipelineApp._sheet_marker_is_seller_payout
+            _inventory_owner_for_sheet_marker = app.CardPipelineApp._inventory_owner_for_sheet_marker
+            _refund_inventory_owner_for_profit_record = app.CardPipelineApp._refund_inventory_owner_for_profit_record
+            _refund_profit_records_to_inventory = app.CardPipelineApp._refund_profit_records_to_inventory
+            _person_for_profit_record = app.CardPipelineApp._person_for_profit_record
+            add_inventory_records = app.CardPipelineApp.add_inventory_records
+            _enrich_inventory_record_assignment = lambda self, record: record
+            refresh_inventory_tab = lambda self: None
+
+            def _is_personal_lucas(self):
+                return False
+
+            def _team_owner_name(self):
+                return "Danny"
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_company = app.COMPANY_SHEETS_DIR
+            old_profit = app.PROFIT_LEDGER_PATH
+            old_inventory = app.INVENTORY_LEDGER_PATH
+            app.COMPANY_SHEETS_DIR = root / "COMPANY SHEETS"
+            app.PROFIT_LEDGER_PATH = root / "profit_ledger.json"
+            app.INVENTORY_LEDGER_PATH = root / "inventory_ledger.json"
+            dummy = RefundDummy()
+            dummy.home_sheet_markers = {
+                "Received|Dylan Network.xlsx": {
+                    "assigned_person": "Dylan",
+                    "seller_terms_applied": True,
+                    "seller_sheet_type": "Fanatics",
+                    "inventory_owner": "Danny",
+                    "paid": True,
+                    "paid_amount": 850.0,
+                }
+            }
+            record = dummy._normalize_profit_record(
+                {
+                    "date_added": "2026-06-17",
+                    "company": "Fanatics",
+                    "source_sheet": "Fanatics General Sold",
+                    "original_source_sheet": "Dylan Network.xlsx",
+                    "cert_number": "159587172",
+                    "grader": "PSA",
+                    "card_title": "Network Card",
+                    "purchase_price": 850,
+                    "sale_price": 950,
+                    "assigned_person": "Dylan",
+                }
+            )
+            app.PROFIT_LEDGER_PATH.write_text(json.dumps([record]), encoding="utf-8")
+            try:
+                refunded, inventory_records = dummy._refund_profit_records_to_inventory([record])
+
+                self.assertEqual(refunded, 1)
+                self.assertEqual(inventory_records[0]["assigned_person"], "Danny")
+                inventory = json.loads(app.INVENTORY_LEDGER_PATH.read_text(encoding="utf-8"))["items"]
+                self.assertEqual(inventory[0]["assigned_person"], "Danny")
+                self.assertEqual(inventory[0]["cert_number"], "159587172")
+                self.assertEqual(json.loads(app.PROFIT_LEDGER_PATH.read_text(encoding="utf-8")), [])
+                self.assertTrue(dummy.home_sheet_markers["Received|Dylan Network.xlsx"]["paid"])
+                self.assertEqual(dummy.home_sheet_markers["Received|Dylan Network.xlsx"]["paid_amount"], 850.0)
+            finally:
+                app.COMPANY_SHEETS_DIR = old_company
+                app.PROFIT_LEDGER_PATH = old_profit
+                app.INVENTORY_LEDGER_PATH = old_inventory
+
     def test_profit_records_are_enriched_with_assigned_person_from_sheet_marker(self) -> None:
         class ProfitDummy:
             _profit_record_key = app.CardPipelineApp._profit_record_key
@@ -12100,7 +12948,13 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
 
         dummy = ProfitDummy()
         dummy.profit_person_var = types.SimpleNamespace(get=lambda: "My Profit")
-        dummy.home_sheet_markers = {}
+        dummy.home_sheet_markers = {
+            "Received|Seller Buy.xlsx": {
+                "assigned_person": "John Seller",
+                "seller_terms_applied": True,
+                "seller_sheet_type": "Fanatics",
+            }
+        }
         rows = [
             {"assigned_person": "Kevin Hambone", "source_sheet": "Kevin General Sold", "profit": 100.0},
             {"assigned_person": "John Seller", "source_sheet": "Seller Buy.xlsx", "profit": 40.0},
