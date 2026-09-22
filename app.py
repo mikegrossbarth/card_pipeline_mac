@@ -62,6 +62,12 @@ from assignment_config_ui import open_assignment_rules_dialog, open_people_rules
 from google_sheets_import import export_google_sheet_to_xlsx  # noqa: E402
 from lucas_diagnostics import diagnostic_json, lucas_version_label, setup_doctor_results  # noqa: E402
 from shared_state import atomic_write_json, local_identity, shared_lock  # noqa: E402
+import instagram_service  # noqa: E402
+import inventory_service  # noqa: E402
+import payout_service  # noqa: E402
+import photo_state_service  # noqa: E402
+import receive_service  # noqa: E402
+import sheet_lifecycle_service  # noqa: E402
 
 from intake_io import (  # noqa: E402
     append_company_sheet_rows,
@@ -5749,30 +5755,10 @@ class CardPipelineApp(tk.Tk):
         return "https://www.instagram.com/"
 
     def _instagram_inventory_identity(self, record: dict[str, object] | None) -> str:
-        if not isinstance(record, dict):
-            return ""
-        cert = scan_to_cert(record.get("cert_number"))
-        if cert and len(cert) >= 5:
-            return f"cert:{cert}"
-        item_id = str(record.get("item_id") or "").strip().lower()
-        if item_id:
-            return f"item:{re.sub(r'[^a-z0-9]+', '', item_id)}"
-        title = str(record.get("card_title") or record.get("caption") or "").strip().lower()
-        title = re.sub(r"[^a-z0-9]+", " ", title)
-        title = re.sub(r"\s+", " ", title).strip()
-        return f"title:{title}" if title else ""
+        return instagram_service.instagram_inventory_identity(record)
 
     def _instagram_post_entry_identity(self, entry: dict[str, object]) -> str:
-        explicit = str(entry.get("inventory_identity") or "").strip()
-        if explicit:
-            return explicit
-        return self._instagram_inventory_identity(
-            {
-                "cert_number": entry.get("cert_number"),
-                "item_id": entry.get("item_id"),
-                "card_title": entry.get("card_title") or entry.get("caption"),
-            }
-        )
+        return instagram_service.instagram_post_entry_identity(entry)
 
     def _instagram_record_duplicate_post(self, state: dict[str, object], record: dict[str, object], post: dict[str, object], method: str, score: float) -> None:
         media_id = str(post.get("id") or post.get("media_id") or "").strip()
@@ -6275,13 +6261,7 @@ class CardPipelineApp(tk.Tk):
         return posts
 
     def _instagram_match_text_tokens(self, value: object) -> set[str]:
-        text = str(value or "").lower()
-        tokens = set(re.findall(r"[a-z0-9]+", text))
-        stop_words = {
-            "the", "and", "with", "for", "card", "cards", "auto", "rc", "rookie", "psa", "bgs",
-            "cgc", "sgc", "gem", "mint", "auto", "autograph", "number", "serial", "refractor",
-        }
-        return {token for token in tokens if len(token) >= 3 and token not in stop_words}
+        return instagram_service.instagram_match_text_tokens(value)
 
     def _instagram_record_duplicate_media(
         self,
@@ -9624,13 +9604,8 @@ class CardPipelineApp(tk.Tk):
         return bool({key for key in keys if key} & sold_photo_paths)
 
     def _inventory_photo_state_matches_sold_cert(self, existing: dict[str, object], sold_certs: set[str] | None = None) -> bool:
-        if not existing:
-            return False
         sold_certs = sold_certs if sold_certs is not None else self._sold_inventory_cert_numbers()
-        if not sold_certs:
-            return False
-        photo_certs = {scan_to_cert(cert) for cert in (existing.get("certs") or []) if scan_to_cert(cert)}
-        return bool(photo_certs & sold_certs)
+        return photo_state_service.photo_state_matches_sold_cert(existing, sold_certs)
 
     def _inventory_unattached_photo_paths(self) -> list[Path]:
         used = self._inventory_photo_used_path_keys()
@@ -13716,19 +13691,18 @@ class CardPipelineApp(tk.Tk):
             and str(record.get("status") or "").strip().lower() == "sold from inventory"
         ]
 
-        def inventory_identity(record: dict[str, object]) -> str:
-            inventory_key = str(record.get("inventory_key") or "").strip()
-            if inventory_key:
-                return inventory_key
-            stable_id = scan_to_cert(record.get("cert_number")) or str(record.get("item_id") or "").strip().lower()
-            source = Path(str(record.get("source_sheet") or "")).name.strip().lower()
-            person = str(record.get("assigned_person") or "").strip().lower()
-            return "|".join(part for part in (stable_id, source, person) if part)
-
-        active_keys = [inventory_identity(record) for record in active_inventory if inventory_identity(record)]
+        active_keys = [
+            inventory_service.inventory_ledger_identity(record)
+            for record in active_inventory
+            if inventory_service.inventory_ledger_identity(record)
+        ]
         duplicate_active_keys = sorted({key for key in active_keys if active_keys.count(key) > 1})
         active_key_set = set(active_keys)
-        sold_key_set = {inventory_identity(record) for record in sold_profit if inventory_identity(record)}
+        sold_key_set = {
+            inventory_service.inventory_ledger_identity(record)
+            for record in sold_profit
+            if inventory_service.inventory_ledger_identity(record)
+        }
         active_sold_overlap = sorted(active_key_set & sold_key_set)
         raw_without_id = [
             str(record.get("card_title") or record.get("source_sheet") or "raw card")
@@ -13865,16 +13839,10 @@ class CardPipelineApp(tk.Tk):
             save_cache()
 
     def _accounted_source_key(self, value: object) -> str:
-        return Path(str(value or "")).name.strip().lower()
+        return sheet_lifecycle_service.accounted_source_key(value)
 
     def _accounted_identity_key(self, cert: object = "", item_id: object = "") -> str:
-        cert_key = scan_to_cert(cert)
-        if cert_key:
-            return f"cert:{cert_key}"
-        item_key = str(item_id or "").strip().lower()
-        if item_key:
-            return f"item:{item_key}"
-        return ""
+        return sheet_lifecycle_service.accounted_identity_key(cert, item_id)
 
     def _add_accounted_identity(self, index: dict[str, set[str]], source_sheet: object, cert: object = "", item_id: object = "") -> None:
         source_key = self._accounted_source_key(source_sheet)
@@ -14821,10 +14789,7 @@ class CardPipelineApp(tk.Tk):
         return bool(person) and person.lower() != "unassigned"
 
     def _payout_offsets_display(self, values: dict[str, object]) -> str:
-        expense_offsets = float(values.get("unpaid_expenses") or 0.0)
-        if abs(expense_offsets) < 0.005:
-            return ""
-        return f"-{format_money(abs(expense_offsets))}"
+        return payout_service.payout_expenses_display(values)
 
     def _summary_unpaid_net_profit_for_item(self, item: dict[str, object]) -> float:
         if item.get("payout_kind") not in {"team_card", "team_expense"}:
@@ -19201,15 +19166,7 @@ class CardPipelineApp(tk.Tk):
         return matches[0] if len(matches) == 1 else {}
 
     def _receive_row_ref_key(self, match: dict[str, object]) -> str:
-        sheet_name = str(match.get("sheet") or "").strip()
-        workbook_sheet = str(match.get("workbook_sheet") or "").strip()
-        try:
-            workbook_row = int(match.get("workbook_row") or 0)
-        except (TypeError, ValueError):
-            workbook_row = 0
-        if not sheet_name or not workbook_sheet or workbook_row <= 0:
-            return ""
-        return f"raw:{sheet_name.lower()}:{workbook_sheet.lower()}:{workbook_row}"
+        return receive_service.receive_row_ref_key(match)
 
     def _incoming_raw_match(self, row: dict[str, object]) -> dict[str, object]:
         if not hasattr(self, "_incoming_raw_matches"):
@@ -19255,18 +19212,15 @@ class CardPipelineApp(tk.Tk):
             setattr(row, "_receive_workbook_row", 0)
 
     def _receive_row_ref(self, row: WorkbookRow) -> tuple[str, str, int] | None:
-        sheet_name = str(getattr(row, "_receive_sheet", "") or self.review_sheet_sources.get(row.excel_row, "") or "").strip()
-        workbook_sheet = str(getattr(row, "_receive_workbook_sheet", "") or "").strip()
-        try:
-            workbook_row = int(getattr(row, "_receive_workbook_row", 0) or 0)
-        except (TypeError, ValueError):
-            workbook_row = 0
-        if not sheet_name or not workbook_sheet or workbook_row <= 0:
-            return None
-        return (Path(sheet_name).name, workbook_sheet, workbook_row)
+        sheet_sources = getattr(self, "review_sheet_sources", {})
+        return receive_service.receive_row_ref(row, sheet_sources.get(row.excel_row, ""))
 
     def _receive_row_is_sheet_matched(self, row: WorkbookRow) -> bool:
-        return self._receive_row_ref(row) is not None
+        sheet_sources = getattr(self, "review_sheet_sources", {})
+        return receive_service.receive_row_is_sheet_matched(row, sheet_sources.get(row.excel_row, ""))
+
+    def _receive_rows_missing_sheet_refs(self, rows: list[WorkbookRow]) -> list[WorkbookRow]:
+        return receive_service.receive_rows_missing_sheet_refs(rows, getattr(self, "review_sheet_sources", {}))
 
     def _receive_row_for_excel_row(self, excel_row: int) -> WorkbookRow | None:
         for row in self.review_rows:
@@ -19433,8 +19387,23 @@ class CardPipelineApp(tk.Tk):
 
     def mark_review_received_in_sheets(self) -> None:
         perf_start = time.perf_counter()
-        certs = {scan_to_cert(row.cert_number) for row in self.review_rows if scan_to_cert(row.cert_number)}
-        row_refs = {row_ref for row in self.review_rows if not scan_to_cert(row.cert_number) for row_ref in [self._receive_row_ref(row)] if row_ref}
+        target_rows = receive_service.receive_target_rows(self.review_rows)
+        missing_sheet_refs = self._receive_rows_missing_sheet_refs(target_rows)
+        if missing_sheet_refs:
+            names = [
+                str(row.card_title or row.cert_number or row.item_id or f"row {row.excel_row}").strip()
+                for row in missing_sheet_refs[:6]
+            ]
+            detail = ", ".join(name for name in names if name) or f"{len(missing_sheet_refs)} row(s)"
+            messagebox.showinfo(
+                "Sheet match required",
+                "Receive can only mark cards that are selected from Incoming or Working sheets. "
+                f"Search and choose the sheet row first for: {detail}",
+            )
+            self.review_status.set("Select the matching Incoming/Working sheet row before marking received.")
+            return
+        certs = {scan_to_cert(row.cert_number) for row in target_rows if scan_to_cert(row.cert_number)}
+        row_refs = {row_ref for row in target_rows if not scan_to_cert(row.cert_number) for row_ref in [self._receive_row_ref(row)] if row_ref}
         if not certs and not row_refs:
             messagebox.showinfo("No received cards", "Scan/load certed cards or load/match raw rows in Receive before marking sheets.")
             return

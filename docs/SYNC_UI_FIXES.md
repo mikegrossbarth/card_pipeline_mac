@@ -13,6 +13,17 @@
 - When a change lands only in Mac or only in Windows, update this file in the repo where the change lands so the other platform's follow-up is visible during the next pull/audit.
 - If an old local note conflicts with this file, treat the old local note as stale unless Michael explicitly says otherwise.
 
+## LUCAS Ledger Guardrails / Service Split / Receive Lock
+
+- Origin: Mac
+- Implemented on origin: Yes
+- Mirrored to other platform: Windows pending
+- Source commit/repo: Current Mac `mikegrossbarth/card_pipeline_mac` after `3fb25bb Add LUCAS ledger guardrails`
+- Target to mirror: Windows LUCAS `mikegrossbarth/card_pipeline`
+- Summary: The current Mac guardrail work has three parts that must stay together for parity: full test-suite cleanup plus read-only Ledger Health, Home Refresh staying read-only unless explicit reconcile/archive buttons are used, operation/activity journal IDs for Receive/Mark Sold/Refund/Trade/Sheet Move, and a first service split out of `app.py` for receive, inventory, payout, sheet lifecycle, Instagram, and photo-state helper logic.
+- Receive safety: `Mark Received in Sheets` now requires each actionable Receive row to have a real Incoming/Working workbook row reference before any workbook, company-sheet, or inventory write occurs. Manual/free-floating rows are allowed only as search/select input; once matched, the row stays immutable from the sheet. This is the hard save-path guard that prevents manually typed or stale Receive data from becoming inventory.
+- Notes / avoid porting: Do not restore Receive behavior that marks by cert alone. Certed and raw rows must both be tied to a workbook row before marking received. Keep the UI edit lock and the save-path lock; the edit lock alone is not enough.
+
 ## Team Profit Balance-Share People Filter
 
 - Origin: Windows

@@ -3180,6 +3180,22 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             self.assertEqual(result["row_refs_marked"], {("mixed lot.xlsx", "cards", 2)})
             self.assertEqual(result["row_ref_certs"], {("mixed lot.xlsx", "cards", 2): "63710659"})
 
+    def test_receive_requires_sheet_ref_before_marking_received(self) -> None:
+        class Dummy:
+            _receive_rows_missing_sheet_refs = app.CardPipelineApp._receive_rows_missing_sheet_refs
+            _receive_row_ref = app.CardPipelineApp._receive_row_ref
+
+        dummy = Dummy()
+        manual_row = WorkbookRow(excel_row=2, cert_number="12345678", grader="PSA", card_title="Manual PSA 10")
+        matched_row = WorkbookRow(excel_row=3, cert_number="87654321", grader="PSA", card_title="Matched PSA 10")
+        setattr(matched_row, "_receive_sheet", "Lot A.xlsx")
+        setattr(matched_row, "_receive_workbook_sheet", "Cards")
+        setattr(matched_row, "_receive_workbook_row", 2)
+        dummy.review_sheet_sources = {2: "NO SHEET FOUND", 3: "Lot A.xlsx"}
+
+        self.assertEqual(dummy._receive_rows_missing_sheet_refs([manual_row, matched_row]), [manual_row])
+        self.assertEqual(dummy._receive_row_ref(matched_row), ("Lot A.xlsx", "Cards", 2))
+
     def test_receive_row_ref_hydration_prevents_certed_row_from_becoming_raw_inventory(self) -> None:
         class Dummy:
             _receive_row_ref = app.CardPipelineApp._receive_row_ref
