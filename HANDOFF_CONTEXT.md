@@ -262,7 +262,7 @@ Do not commit:
 
 ### Home
 
-Home lists `Incoming`, `Working`, and `Received` sheets. It supports right-click move between `Incoming`, `Working`, and `Received`. Moving a sheet out of `Received` clears received/paid marker state, clears workbook received marks, removes company-sheet rows created from that source sheet, and removes matching profit ledger rows. Payment state is handled in `Payouts/Tabs`.
+Home lists `Incoming`, `Working`, and `Received` sheets. Sheet stage changes are intentionally handled through `Edit Markers` only; the Home right-click menu no longer exposes direct sheet moves. Moving a sheet out of `Received` through marker save clears received/paid marker state, clears workbook received marks, removes company-sheet rows created from that source sheet, and removes matching inventory/profit ledger rows. Payment state is handled in `Payouts/Tabs`.
 
 ### Create
 

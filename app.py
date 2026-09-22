@@ -16393,17 +16393,7 @@ class CardPipelineApp(tk.Tk):
         self.home_sheet_list.activate(index)
         self._load_home_selected_marker()
         menu = tk.Menu(self, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
-        kind, _name = self._split_home_sheet_key(self.home_selected_sheet_key)
         menu.add_command(label="Review Sheet", command=self.review_selected_home_sheet)
-        menu.add_separator()
-        move_menu = tk.Menu(menu, tearoff=False, bg="#1f1f1f", fg="#ffffff", activebackground="#1ed760", activeforeground="#000000")
-        for target_stage in ("Incoming", "Working", "Received"):
-            move_menu.add_command(
-                label=f"Move to {target_stage}",
-                command=lambda stage=target_stage: self.move_selected_home_sheet_to_stage(stage),
-                state=tk.DISABLED if target_stage == kind else tk.NORMAL,
-            )
-        menu.add_cascade(label="Move Sheet", menu=move_menu)
         menu.add_separator()
         menu.add_command(label="Delete Sheet", command=self.delete_selected_home_sheet)
         try:
@@ -16562,97 +16552,6 @@ class CardPipelineApp(tk.Tk):
         finally:
             menu.grab_release()
         return "break"
-
-    def move_selected_home_sheet_to_stage(self, target_stage: str) -> None:
-        move_started = time.perf_counter()
-        move_phases: list[str] = []
-        inventory_rows_added = 0
-        inventory_candidate_rows = 0
-        if not self.home_selected_sheet_key:
-            messagebox.showinfo("Choose sheet", "Choose a sheet on Home before moving.")
-            return
-        source_stage, name = self._split_home_sheet_key(self.home_selected_sheet_key)
-        if source_stage not in {"Incoming", "Working", "Received"} or not name:
-            messagebox.showinfo("Cannot move", "Only Incoming, Working, and Received sheets can be moved from Home.")
-            return
-        if target_stage not in {"Incoming", "Working", "Received"}:
-            messagebox.showinfo("Cannot move", "Choose Incoming, Working, or Received.")
-            return
-        if source_stage == target_stage:
-            return
-        path = self._sheet_path_for_stage(source_stage, name)
-        if not self._sheet_path_is_visible_home_sheet(source_stage, path):
-            messagebox.showerror("Move blocked", f"Move is only allowed inside {source_stage} sheets.")
-            return
-        if not self._confirm_home_stage_move(source_stage, target_stage, name):
-            return
-        try:
-            lock_started = time.perf_counter()
-            with shared_lock(CARD_PIPELINE_DIR, "sheet-stage-move", self.lucas_identity):
-                move_phases.append(f"lock_wait={time.perf_counter() - lock_started:.3f}s")
-                phase_started = time.perf_counter()
-                moved_key, cleanup = self._move_home_sheet_to_stage(self.home_selected_sheet_key, target_stage)
-                move_phases.append(f"move={time.perf_counter() - phase_started:.3f}s")
-                self.home_selected_sheet_key = moved_key
-                self.home_sheet_kind.set(target_stage)
-                if target_stage == "Received" and moved_key:
-                    received_stage, received_name = self._split_home_sheet_key(moved_key)
-                    marker = self.home_sheet_markers.get(moved_key, {})
-                    owner_for_marker = getattr(self, "_inventory_owner_for_sheet_marker", None)
-                    fallback_person = str(marker.get("assigned_person") or "").strip() or "Unassigned"
-                    person = owner_for_marker(marker, fallback_person) if callable(owner_for_marker) else fallback_person
-                    if received_stage == "Received" and received_name:
-                        phase_started = time.perf_counter()
-                        inventory_rows_added, inventory_candidate_rows = self._sync_received_sheet_inventory_to_ledger(
-                            received_stage,
-                            self._sheet_path_for_stage(received_stage, received_name),
-                            person,
-                        )
-                        move_phases.append(f"inventory_sync={time.perf_counter() - phase_started:.3f}s")
-                phase_started = time.perf_counter()
-                self._save_sheet_markers()
-                move_phases.append(f"save_markers={time.perf_counter() - phase_started:.3f}s")
-        except Exception as error:
-            record_performance_event("home.stage_move.failed", move_started, f"sheet={name} from={source_stage} to={target_stage} error={error}", force=True)
-            messagebox.showerror("Move failed", str(error))
-            return
-        phase_started = time.perf_counter()
-        self._refresh_after_home_stage_move(name, source_stage, target_stage)
-        move_phases.append(f"refresh={time.perf_counter() - phase_started:.3f}s")
-        cleanup_note = ""
-        if cleanup:
-            cleanup_note = (
-                f" Cleared {cleanup.get('received_rows_cleared', 0)} received mark(s), "
-                f"removed {cleanup.get('company_rows_removed', 0)} company row(s), "
-                f"removed {cleanup.get('profit_rows_removed', 0)} profit ledger row(s), "
-                f"and removed {cleanup.get('inventory_rows_removed', 0)} inventory row(s)."
-            )
-        inventory_note = ""
-        if inventory_rows_added:
-            inventory_note = f" Added {inventory_rows_added} inventory row(s)."
-        elif inventory_candidate_rows:
-            inventory_note = " Inventory was already up to date."
-        self.status_var.set(f"Moved {name} from {source_stage} to {target_stage}.{cleanup_note}{inventory_note}")
-        phase_started = time.perf_counter()
-        self._append_activity(
-            "Sheet Move",
-            f"Moved {name} from {source_stage} to {target_stage}.",
-            {
-                "sheet": name,
-                "from": source_stage,
-                "to": target_stage,
-                "cleanup": cleanup,
-                "inventory_rows_added": inventory_rows_added,
-                "inventory_candidate_rows": inventory_candidate_rows,
-            },
-        )
-        move_phases.append(f"activity={time.perf_counter() - phase_started:.3f}s")
-        record_performance_event(
-            "home.stage_move.total",
-            move_started,
-            f"sheet={name} from={source_stage} to={target_stage} {' '.join(move_phases)}",
-            force=True,
-        )
 
     def _confirm_home_stage_move(self, source_stage: str, target_stage: str, name: str) -> bool:
         if source_stage == "Received" and target_stage != "Received":
