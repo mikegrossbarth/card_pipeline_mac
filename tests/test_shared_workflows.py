@@ -4246,6 +4246,7 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
             _marker_for_stage = app.CardPipelineApp._marker_for_stage
             _sheet_path_for_stage = app.CardPipelineApp._sheet_path_for_stage
             _move_home_sheet_to_stage = app.CardPipelineApp._move_home_sheet_to_stage
+            _unique_stage_destination = app.CardPipelineApp._unique_stage_destination
             _assign_sheet_to_seller = app.CardPipelineApp._assign_sheet_to_seller
             _active_payout_balance = app.CardPipelineApp._active_payout_balance
             _payout_sheet_status = app.CardPipelineApp._payout_sheet_status
@@ -4319,7 +4320,11 @@ class AppSharedWorkflowLogicTests(unittest.TestCase):
                 dummy.home_sheet_summaries = {moved_key: {"row_count": 2, "received_count": 0, "purchase_total": 123.45, "estimated_payout_total": 200.0}}
 
                 payout_items = dummy._payout_sheet_items()
-                self.assertEqual(payout_items, [])
+                self.assertEqual(len(payout_items), 1)
+                self.assertEqual(payout_items[0]["person"], "John Seller")
+                self.assertEqual(payout_items[0]["stage"], "Incoming")
+                self.assertFalse(payout_items[0]["payable"])
+                self.assertEqual(payout_items[0]["payout_balance"], 0.0)
 
                 received_key, cleanup = dummy._move_home_sheet_to_stage(moved_key, "Received")
                 self.assertEqual(received_key, "Received|Lot A.xlsx")
