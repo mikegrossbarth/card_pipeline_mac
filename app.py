@@ -19572,38 +19572,37 @@ class CardPipelineApp(tk.Tk):
         if self._network_mode_enabled() and hasattr(self, "seller_terms_seller_var"):
             seller = self.seller_terms_seller_var.get().strip()
             seller_sheet_type = self.seller_terms_sheet_type_var.get().strip() if hasattr(self, "seller_terms_sheet_type_var") else ""
-            if seller or seller_sheet_type:
-                if not seller or not seller_sheet_type:
-                    messagebox.showinfo(
-                        "Seller terms required",
-                        "Network Mode person buys need both Person and Sheet Type. Leave both blank for a normal Open Team sheet.",
+            if not seller or not seller_sheet_type:
+                messagebox.showinfo(
+                    "Seller terms required",
+                    "Network Mode sheets need both Person and Sheet Type so the sheet is automatically assigned for payouts.",
+                )
+                return
+            seller_term = self._seller_terms_match(seller, seller_sheet_type)
+            if not seller_term:
+                messagebox.showinfo(
+                    "Seller terms not found",
+                    f"No People Rules were found for {seller} / {seller_sheet_type}. Open People Rules or turn Network Mode off for a normal Open Team sheet.",
+                )
+                return
+            rate = self._money_value(seller_term.get("rate"))
+            deduction = self._money_value(seller_term.get("deduction"))
+            applicable_rows = 0
+            for row in self.intake_rows:
+                row_term, _decision = self._seller_terms_match_for_row(seller, seller_sheet_type, row)
+                seller_price = (
+                    self._seller_terms_company_price(row, seller_sheet_type, term=row_term)
+                    if row_term is not None
+                    else (
+                        self._seller_terms_company_price(row, seller_sheet_type, deduction=deduction)
+                        if deduction is not None
+                        else self._seller_terms_company_price(row, seller_sheet_type, rate=rate)
                     )
-                    return
-                seller_term = self._seller_terms_match(seller, seller_sheet_type)
-                if not seller_term:
-                    messagebox.showinfo(
-                        "Seller terms not found",
-                        f"No People Rules were found for {seller} / {seller_sheet_type}. Open People Rules or leave both fields blank.",
-                    )
-                    return
-                rate = self._money_value(seller_term.get("rate"))
-                deduction = self._money_value(seller_term.get("deduction"))
-                applicable_rows = 0
-                for row in self.intake_rows:
-                    row_term, _decision = self._seller_terms_match_for_row(seller, seller_sheet_type, row)
-                    seller_price = (
-                        self._seller_terms_company_price(row, seller_sheet_type, term=row_term)
-                        if row_term is not None
-                        else (
-                            self._seller_terms_company_price(row, seller_sheet_type, deduction=deduction)
-                            if deduction is not None
-                            else self._seller_terms_company_price(row, seller_sheet_type, rate=rate)
-                        )
-                    )
-                    if seller_price is not None:
-                        applicable_rows += 1
-                if applicable_rows <= 0:
-                    self.status_var.set(self._seller_terms_no_match_message(self.intake_rows, seller_sheet_type, deduction))
+                )
+                if seller_price is not None:
+                    applicable_rows += 1
+            if applicable_rows <= 0:
+                self.status_var.set(self._seller_terms_no_match_message(self.intake_rows, seller_sheet_type, deduction))
         self.apply_create_seller_terms(show_status=False)
         path = working_sheet_path(WORKING_SHEETS_DIR, title)
         saved_row_ids = {id(row) for row in self.intake_rows}
